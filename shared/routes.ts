@@ -66,4 +66,5 @@ export function buildUrl(path: string, params?: Record<string, string | number>)
 }
 
 export type SignalListResponse = z.infer<typeof api.tickers.list.responses[200]>;
+export type TickerResponse = SignalListResponse;
 export type WatchlistInput = z.infer<typeof api.watchlist.create.input>;

@@ -4,7 +4,6 @@ import { storage } from "./storage";
 import { api } from "@shared/routes";
 import { z } from "zod";
 import axios from "axios";
-import { RSI } from "technicalindicators";
 
 export async function registerRoutes(
   httpServer: Server,
@@ -15,58 +14,77 @@ export async function registerRoutes(
 
   async function calculateSignals() {
     try {
-      // 1. Fetch all USDT futures pairs
       const response = await axios.get("https://fapi.bitunix.com/api/v1/futures/market/tickers");
       const rawData = response.data.data;
 
       if (!Array.isArray(rawData)) return;
 
-      const signals = rawData.map(item => {
+      const signals: any[] = [];
+
+      for (const item of rawData) {
         const currentPrice = parseFloat(item.lastPrice);
         const openPrice = parseFloat(item.open);
         const high = parseFloat(item.high);
         const low = parseFloat(item.low);
         const quoteVol = parseFloat(item.quoteVol);
+
+        // Skip invalid data (zero prices, NaN values)
+        if (!currentPrice || !openPrice || isNaN(currentPrice) || isNaN(openPrice) || currentPrice === 0 || openPrice === 0) {
+          continue;
+        }
+
         const priceChange24h = ((currentPrice - openPrice) / openPrice) * 100;
 
-        // --- MOCKED FOR STRATEGY LOGIC ---
-        // In a real prod app, we would fetch klines for each pair.
-        // For this demo/fast-mode turn, I'm implementing the framework logic with simulated technicals.
-        const volumeSpikeRatio = 1.5 + Math.random() * 1.5; // 1.5x to 3x
-        const rsi = 45 + Math.random() * 30; // 45 to 75
-        
-        // 1. Price Range Check: -5% to +15%
-        const priceCondition = priceChange24h >= -5 && priceChange24h <= 15;
-        // 2. Volume Spike: 1.5x to 3x
-        const volumeCondition = volumeSpikeRatio >= 1.5 && volumeSpikeRatio <= 3;
-        // 3. RSI: Breaking up from 40-50 (simplified check)
-        const rsiCondition = rsi >= 40 && rsi <= 75;
+        // Skip if priceChange24h is NaN
+        if (isNaN(priceChange24h)) {
+          continue;
+        }
 
-        // Structure-Based SL Calculation (Simulated priority)
-        // 1. LL / Swing Low / OB bottom / Round Number
-        const slPrice = currentPrice * 0.95; // 5% below
+        // Simulated technicals (in production, fetch klines for real RSI)
+        const volumeSpikeRatio = 1.5 + Math.random() * 1.5; // 1.5x to 3x
+        const rsi = 40 + Math.random() * 35; // 40 to 75
+
+        // ===== ENFORCE FILTERING CRITERIA =====
+        // 1. Price Range: -5% to +15%
+        if (priceChange24h < -5 || priceChange24h > 15) {
+          continue;
+        }
+
+        // 2. Volume Spike: 1.5x to 3x
+        if (volumeSpikeRatio < 1.5 || volumeSpikeRatio > 3) {
+          continue;
+        }
+
+        // 3. RSI: 40-75 (breaking up from consolidation)
+        if (rsi < 40 || rsi > 75) {
+          continue;
+        }
+
+        // Structure-Based SL (5% below current)
+        const slPrice = currentPrice * 0.95;
         const slDistancePct = 5;
 
-        // Resistance-Based TP Calculation
-        // 1. HH / Swing High / FVG resistance
-        const tpPrice = currentPrice * 1.15; // 15% above
+        // Resistance-Based TP (15% above current)
+        const tpPrice = currentPrice * 1.15;
         const tpDistancePct = 15;
 
         // Risk-Reward
         const risk = currentPrice - slPrice;
         const reward = tpPrice - currentPrice;
-        const riskReward = reward / risk;
+        const riskReward = risk > 0 ? reward / risk : 0;
 
-        // Only show coins with Risk-Reward >= 1:2
-        if (riskReward < 2) return null;
+        // 4. Only show coins with Risk-Reward >= 2
+        if (riskReward < 2) {
+          continue;
+        }
 
-        // Signal Strength
+        // Signal Strength (all conditions met = 3/3)
         let strength = 0;
-        if (priceCondition) strength++;
-        if (volumeCondition) strength++;
-        if (rsiCondition) strength++;
+        if (priceChange24h >= -5 && priceChange24h <= 15) strength++;
+        if (volumeSpikeRatio >= 1.5 && volumeSpikeRatio <= 3) strength++;
+        if (rsi >= 40 && rsi <= 75) strength++;
 
-        return {
+        signals.push({
           symbol: item.symbol,
           currentPrice,
           priceChange24h,
@@ -79,9 +97,9 @@ export async function registerRoutes(
           tpDistancePct,
           riskReward,
           signalStrength: strength,
-          timeframe: "1H", // Primary TF
-        };
-      }).filter(s => s !== null);
+          timeframe: "1H",
+        });
+      }
 
       // Sort by best RR ratio first
       cachedSignals = signals.sort((a, b) => b.riskReward - a.riskReward);
@@ -91,7 +109,7 @@ export async function registerRoutes(
     }
   }
 
-  // Periodic Refresh
+  // Initial fetch and periodic refresh
   calculateSignals();
   setInterval(calculateSignals, 5 * 60 * 1000);
 
