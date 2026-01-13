@@ -1,9 +1,6 @@
 import { z } from 'zod';
-import { insertWatchlistItemSchema, watchlistItems, tickerSchema } from './schema';
+import { insertWatchlistItemSchema, watchlistItems, signalSchema } from './schema';
 
-// ============================================
-// SHARED ERROR SCHEMAS
-// ============================================
 export const errorSchemas = {
   validation: z.object({
     message: z.string(),
@@ -17,16 +14,13 @@ export const errorSchemas = {
   }),
 };
 
-// ============================================
-// API CONTRACT
-// ============================================
 export const api = {
   tickers: {
     list: {
       method: 'GET' as const,
       path: '/api/tickers',
       responses: {
-        200: z.array(tickerSchema),
+        200: z.array(signalSchema),
         500: errorSchemas.internal,
       },
     },
@@ -59,9 +53,6 @@ export const api = {
   },
 };
 
-// ============================================
-// REQUIRED: buildUrl helper
-// ============================================
 export function buildUrl(path: string, params?: Record<string, string | number>): string {
   let url = path;
   if (params) {
@@ -74,8 +65,5 @@ export function buildUrl(path: string, params?: Record<string, string | number>)
   return url;
 }
 
-// ============================================
-// TYPE HELPERS
-// ============================================
-export type TickerListResponse = z.infer<typeof api.tickers.list.responses[200]>;
+export type SignalListResponse = z.infer<typeof api.tickers.list.responses[200]>;
 export type WatchlistInput = z.infer<typeof api.watchlist.create.input>;
