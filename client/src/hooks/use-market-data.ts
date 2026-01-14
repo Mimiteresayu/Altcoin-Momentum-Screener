@@ -6,11 +6,18 @@ export function useTickers() {
   return useQuery<SignalListResponse>({
     queryKey: [api.tickers.list.path],
     queryFn: async () => {
-      const res = await fetch(api.tickers.list.path);
+      // Add cache buster to prevent stale data
+      const url = `${api.tickers.list.path}?t=${Date.now()}`;
+      const res = await fetch(url, {
+        cache: 'no-store',
+        headers: { 'Cache-Control': 'no-cache' }
+      });
       if (!res.ok) throw new Error("Failed to fetch market data");
       return res.json();
     },
-    refetchInterval: 30000,
+    refetchInterval: 15000, // Refresh every 15 seconds
+    refetchOnWindowFocus: true,
+    staleTime: 0, // Always consider data stale
   });
 }
 
