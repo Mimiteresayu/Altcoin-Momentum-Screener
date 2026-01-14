@@ -2,6 +2,7 @@ import type { Express } from "express";
 import type { Server } from "http";
 import { storage } from "./storage";
 import { api } from "@shared/routes";
+import { backtestingService } from "./backtest";
 import axios from "axios";
 import { RSI } from "technicalindicators";
 
@@ -545,12 +546,24 @@ export async function registerRoutes(
       lastUpdated = new Date();
       console.log(`Signal calculation complete. Found ${cachedSignals.length} signals (${majorSignals.length} major).`);
       
+      // Process signals for backtesting
+      try {
+        await backtestingService.processSignals(cachedSignals);
+      } catch (err) {
+        console.error("Backtest processing error:", err);
+      }
+      
     } catch (error) {
       console.error("Signal calculation error:", error);
     }
     
     isCalculating = false;
   }
+
+  // Initialize backtesting service
+  backtestingService.initialize().then(() => {
+    backtestingService.startMonitoring(60000);
+  });
 
   calculateSignals();
   setInterval(calculateSignals, UPDATE_FREQUENCY_MINUTES * 60 * 1000);
@@ -590,6 +603,64 @@ export async function registerRoutes(
   app.delete(api.watchlist.delete.path, async (req, res) => {
     await storage.removeFromWatchlist(Number(req.params.id));
     res.status(204).send();
+  });
+
+  // ============================================
+  // BACKTESTING API ENDPOINTS
+  // ============================================
+  
+  app.get("/api/backtest/stats", async (req, res) => {
+    try {
+      const stats = await backtestingService.getStats();
+      res.json(stats);
+    } catch (error) {
+      console.error("Error fetching backtest stats:", error);
+      res.status(500).json({ message: "Failed to fetch backtest stats" });
+    }
+  });
+
+  app.get("/api/backtest/trades", async (req, res) => {
+    try {
+      const limit = parseInt(req.query.limit as string) || 50;
+      const trades = await backtestingService.getTrades(limit);
+      res.json(trades);
+    } catch (error) {
+      console.error("Error fetching trades:", error);
+      res.status(500).json({ message: "Failed to fetch trades" });
+    }
+  });
+
+  app.get("/api/backtest/equity", async (req, res) => {
+    try {
+      const limit = parseInt(req.query.limit as string) || 100;
+      const curve = await backtestingService.getEquityCurve(limit);
+      res.json(curve);
+    } catch (error) {
+      console.error("Error fetching equity curve:", error);
+      res.status(500).json({ message: "Failed to fetch equity curve" });
+    }
+  });
+
+  app.get("/api/backtest/signals", async (req, res) => {
+    try {
+      const symbol = req.query.symbol as string | undefined;
+      const limit = parseInt(req.query.limit as string) || 100;
+      const signals = await backtestingService.getSignalHistory(symbol, limit);
+      res.json(signals);
+    } catch (error) {
+      console.error("Error fetching signal history:", error);
+      res.status(500).json({ message: "Failed to fetch signal history" });
+    }
+  });
+
+  app.post("/api/backtest/report/daily", async (req, res) => {
+    try {
+      const report = await backtestingService.getDailyReport();
+      res.json(report);
+    } catch (error) {
+      console.error("Error generating daily report:", error);
+      res.status(500).json({ message: "Failed to generate daily report" });
+    }
   });
 
   return httpServer;
