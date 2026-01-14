@@ -388,22 +388,49 @@ export async function registerRoutes(
 
       const signals: any[] = [];
       
+      // Get watchlist to prioritize those symbols
+      const watchlist = await storage.getWatchlist();
+      const watchlistSymbols = watchlist.map(w => w.symbol);
+      
       const allSymbols = rawData.filter((t: any) => {
         const price = parseFloat(t.lastPrice);
         const open = parseFloat(t.open);
         return price > 0 && open > 0 && !isNaN(price) && !isNaN(open);
       });
       
+      // Priority 1: Major pairs (BTC, ETH)
       const majorSymbols = allSymbols.filter((t: any) => MAJOR_SYMBOLS.includes(t.symbol));
+      
+      // Priority 2: Watchlist symbols (always analyze regardless of volume)
+      const watchedSymbols = allSymbols.filter((t: any) => 
+        watchlistSymbols.includes(t.symbol) && !MAJOR_SYMBOLS.includes(t.symbol)
+      );
+      
+      // Priority 3: Top 50 by volume (excluding already selected)
+      const selectedSymbols = new Set([...MAJOR_SYMBOLS, ...watchlistSymbols]);
       const otherSymbols = allSymbols
-        .filter((t: any) => !MAJOR_SYMBOLS.includes(t.symbol))
+        .filter((t: any) => !selectedSymbols.has(t.symbol))
         .sort((a: any, b: any) => parseFloat(b.quoteVol) - parseFloat(a.quoteVol))
         .slice(0, 50);
       
-      const symbolsToProcess = [...majorSymbols, ...otherSymbols];
-      console.log(`Processing ${symbolsToProcess.length} symbols (${majorSymbols.length} major, ${otherSymbols.length} others)...`);
+      // Priority 4: High movers (>10% change) not already selected - catch early spikes!
+      const highMovers = allSymbols
+        .filter((t: any) => {
+          if (selectedSymbols.has(t.symbol)) return false;
+          const price = parseFloat(t.lastPrice);
+          const open = parseFloat(t.open);
+          const change = ((price - open) / open) * 100;
+          return change >= 10 || change <= -10; // Big movers either direction
+        })
+        .slice(0, 20);
+      
+      const symbolsToProcess = [...majorSymbols, ...watchedSymbols, ...otherSymbols, ...highMovers];
+      // Remove duplicates
+      const uniqueSymbols = Array.from(new Map(symbolsToProcess.map(s => [s.symbol, s])).values());
+      
+      console.log(`Processing ${uniqueSymbols.length} symbols (${majorSymbols.length} major, ${watchedSymbols.length} watched, ${otherSymbols.length} top volume, ${highMovers.length} high movers)...`);
 
-      for (const item of symbolsToProcess) {
+      for (const item of uniqueSymbols) {
         try {
           const currentPrice = parseFloat(item.lastPrice);
           const openPrice = parseFloat(item.open);
