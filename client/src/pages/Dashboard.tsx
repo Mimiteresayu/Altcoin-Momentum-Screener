@@ -2,16 +2,18 @@ import { useTickers } from "@/hooks/use-market-data";
 import { SignalTable } from "@/components/SignalTable";
 import { WatchlistSidebar } from "@/components/WatchlistSidebar";
 import { MetricCard } from "@/components/MetricCard";
-import { Activity, BarChart3, Target, Layers, TrendingUp } from "lucide-react";
+import { Activity, BarChart3, Target, Layers, TrendingUp, Zap } from "lucide-react";
 
 export default function Dashboard() {
   const { data: signals, isLoading, isError } = useTickers();
 
-  const metrics = signals ? {
+  const metrics = signals && signals.length > 0 ? {
     activeSignals: signals.length,
-    avgRR: signals.length > 0 ? (signals.reduce((acc, s) => acc + s.riskReward, 0) / signals.length).toFixed(2) : "0",
-    strongSignals: signals.filter(s => s.signalStrength === 3).length,
-    bullish: signals.filter(s => s.priceChange24h > 0).length,
+    avgRR: (signals.reduce((acc, s) => acc + s.riskReward, 0) / signals.length).toFixed(1),
+    strongSignals: signals.filter(s => s.signalStrength >= 4).length,
+    multiTFConfirmed: signals.filter(s => s.confirmedTimeframes.length >= 2).length,
+    withFVG: signals.filter(s => s.leadingIndicators.hasFVG).length,
+    withOB: signals.filter(s => s.leadingIndicators.hasOrderBlock).length,
   } : null;
 
   if (isError) {
@@ -56,29 +58,40 @@ export default function Dashboard() {
         <div className="flex-1 overflow-y-auto custom-scrollbar">
           <div className="max-w-[1920px] mx-auto p-6 space-y-6">
             
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
               <MetricCard 
-                label="Active Signals" 
+                label="Quality Signals" 
                 value={metrics?.activeSignals.toString() || "0"} 
                 icon={<Layers className="w-4 h-4" />}
                 loading={isLoading}
               />
               <MetricCard 
                 label="Avg Risk-Reward" 
-                value={metrics?.avgRR || "--"}
+                value={metrics ? `1:${metrics.avgRR}` : "--"}
                 icon={<Target className="w-4 h-4" />}
                 loading={isLoading}
               />
               <MetricCard 
-                label="Strong Signals (3/3)" 
+                label="Strong (4+/5)" 
                 value={metrics?.strongSignals.toString() || "0"}
+                icon={<Zap className="w-4 h-4" />}
+                loading={isLoading}
+              />
+              <MetricCard 
+                label="Multi-TF Confirmed" 
+                value={metrics?.multiTFConfirmed.toString() || "0"}
                 icon={<Activity className="w-4 h-4" />}
                 loading={isLoading}
               />
               <MetricCard 
-                label="Bullish Bias" 
-                value={metrics && signals ? `${((metrics.bullish / signals.length) * 100).toFixed(0)}%` : "--"}
-                trend={metrics ? metrics.bullish : 0}
+                label="With FVG" 
+                value={metrics?.withFVG.toString() || "0"}
+                icon={<BarChart3 className="w-4 h-4" />}
+                loading={isLoading}
+              />
+              <MetricCard 
+                label="With Order Block" 
+                value={metrics?.withOB.toString() || "0"}
                 icon={<TrendingUp className="w-4 h-4" />}
                 loading={isLoading}
               />
@@ -88,12 +101,18 @@ export default function Dashboard() {
               <h2 className="text-lg font-semibold flex items-center gap-2">
                 <BarChart3 className="w-5 h-5 text-primary" />
                 Pre-Spike Signals
+                <span className="text-xs text-muted-foreground font-normal ml-2">
+                  Sorted by Risk-Reward ratio
+                </span>
               </h2>
               {isLoading ? (
                 <div className="space-y-4 animate-pulse">
                   <div className="h-12 bg-white/5 rounded-lg w-full" />
                   <div className="h-12 bg-white/5 rounded-lg w-full" />
                   <div className="h-12 bg-white/5 rounded-lg w-full" />
+                  <div className="text-center text-muted-foreground py-8">
+                    Analyzing 100+ coins across multiple timeframes...
+                  </div>
                 </div>
               ) : (
                 <SignalTable signals={signals || []} />
