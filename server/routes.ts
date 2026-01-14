@@ -371,6 +371,21 @@ export async function registerRoutes(
   let cachedSignals: any[] = [];
   let isCalculating = false;
   let lastUpdated: Date = new Date();
+  
+  // Track when each symbol first appeared on the signal list
+  const symbolFirstSeen: Map<string, Date> = new Map();
+  // Track when a symbol was last seen on the list (for grace period cleanup)
+  const symbolLastSeen: Map<string, Date> = new Map();
+  // Grace period before removing a symbol from tracking (30 minutes)
+  const TRACKING_GRACE_PERIOD_MS = 30 * 60 * 1000;
+  
+  // Calculate spike readiness based on time on list
+  function getSpikeReadiness(minutesOnList: number): "warming" | "primed" | "hot" | "overdue" {
+    if (minutesOnList < 5) return "warming";      // Just appeared, building momentum
+    if (minutesOnList >= 5 && minutesOnList < 15) return "primed";  // Optimal window for spike
+    if (minutesOnList >= 15 && minutesOnList < 30) return "hot";    // Spike likely imminent
+    return "overdue";  // May have already spiked or false signal
+  }
 
   async function calculateSignals() {
     if (isCalculating) return;
@@ -516,6 +531,18 @@ export async function registerRoutes(
 
           const hasLiquidityZone = liquidityClusters.length > 0;
 
+          // Track time on list for this symbol
+          const now = new Date();
+          if (!symbolFirstSeen.has(item.symbol)) {
+            symbolFirstSeen.set(item.symbol, now);
+          }
+          // Update last seen time for grace period tracking
+          symbolLastSeen.set(item.symbol, now);
+          
+          const firstSeen = symbolFirstSeen.get(item.symbol)!;
+          const timeOnListMinutes = Math.floor((now.getTime() - firstSeen.getTime()) / 60000);
+          const spikeReadiness = getSpikeReadiness(timeOnListMinutes);
+          
           signals.push({
             symbol: item.symbol,
             currentPrice,
@@ -571,6 +598,9 @@ export async function registerRoutes(
             ],
             confirmedTimeframes,
             isMajor,
+            firstSeenAt: firstSeen.toISOString(),
+            timeOnListMinutes,
+            spikeReadiness,
           });
 
           await new Promise(resolve => setTimeout(resolve, 30));
@@ -584,7 +614,28 @@ export async function registerRoutes(
       
       cachedSignals = [...majorSignals, ...otherSignals];
       lastUpdated = new Date();
+      
+      // Cleanup: Remove symbols from tracking only after grace period expires
+      // This prevents losing time history for coins that briefly drop off the list
+      const now = new Date();
+      Array.from(symbolFirstSeen.keys()).forEach(symbol => {
+        const lastSeen = symbolLastSeen.get(symbol);
+        if (lastSeen && (now.getTime() - lastSeen.getTime()) > TRACKING_GRACE_PERIOD_MS) {
+          symbolFirstSeen.delete(symbol);
+          symbolLastSeen.delete(symbol);
+        }
+      });
+      
+      // Count spike readiness distribution
+      const readinessCount = {
+        warming: signals.filter(s => s.spikeReadiness === "warming").length,
+        primed: signals.filter(s => s.spikeReadiness === "primed").length,
+        hot: signals.filter(s => s.spikeReadiness === "hot").length,
+        overdue: signals.filter(s => s.spikeReadiness === "overdue").length,
+      };
+      
       console.log(`Signal calculation complete. Found ${cachedSignals.length} signals (${majorSignals.length} major).`);
+      console.log(`Spike readiness: ${readinessCount.warming} warming, ${readinessCount.primed} primed, ${readinessCount.hot} hot, ${readinessCount.overdue} overdue`);
       
       // Process signals for backtesting
       try {

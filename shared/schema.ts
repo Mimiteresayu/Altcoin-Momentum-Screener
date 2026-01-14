@@ -190,6 +190,9 @@ export const signalSchema = z.object({
   timeframes: z.array(timeframeDataSchema),
   confirmedTimeframes: z.array(z.string()),
   isMajor: z.boolean(),
+  firstSeenAt: z.string().optional(),
+  timeOnListMinutes: z.number().optional(),
+  spikeReadiness: z.enum(["warming", "primed", "hot", "overdue"]).optional(),
 });
 
 export type Signal = z.infer<typeof signalSchema>;

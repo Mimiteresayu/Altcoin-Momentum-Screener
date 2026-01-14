@@ -1,6 +1,6 @@
 import { useState, useMemo } from "react";
 import { type Signal } from "@shared/schema";
-import { ArrowUp, ArrowDown, ArrowUpDown, Star, Search, TrendingUp, TrendingDown, Activity, Target, ShieldAlert, Zap, BarChart3, Clock, Check, X, Waves, Crown } from "lucide-react";
+import { ArrowUp, ArrowDown, ArrowUpDown, Star, Search, TrendingUp, TrendingDown, Activity, Target, ShieldAlert, Zap, BarChart3, Clock, Check, X, Waves, Crown, Timer, Flame } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { clsx } from "clsx";
 import { useWatchlist, useAddToWatchlist, useRemoveFromWatchlist } from "@/hooks/use-market-data";
@@ -11,7 +11,7 @@ interface SignalTableProps {
   signals: Signal[];
 }
 
-type SortKey = "symbol" | "currentPrice" | "priceChange24h" | "volumeSpikeRatio" | "rsi" | "riskReward" | "signalStrength";
+type SortKey = "symbol" | "currentPrice" | "priceChange24h" | "volumeSpikeRatio" | "rsi" | "riskReward" | "signalStrength" | "timeOnListMinutes";
 type SortDirection = 'asc' | 'desc';
 
 export function SignalTable({ signals }: SignalTableProps) {
@@ -90,6 +90,88 @@ export function SignalTable({ signals }: SignalTableProps) {
     if (strength === 4) return <Badge className="bg-teal-500/20 text-teal-400 border-teal-500/30 font-bold">{strength}/5</Badge>;
     if (strength === 3) return <Badge className="bg-amber-500/20 text-amber-400 border-amber-500/30 font-bold">{strength}/5</Badge>;
     return <Badge className="bg-slate-500/20 text-slate-400 border-slate-500/30 font-bold">{strength}/5</Badge>;
+  };
+
+  const getSpikeReadinessBadge = (readiness: Signal["spikeReadiness"], minutes: number | undefined) => {
+    const mins = minutes ?? 0;
+    const timeStr = mins < 60 ? `${mins}m` : `${Math.floor(mins / 60)}h ${mins % 60}m`;
+    
+    switch (readiness) {
+      case "warming":
+        return (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Badge className="bg-blue-500/20 text-blue-400 border-blue-500/30 cursor-help">
+                <Timer className="w-3 h-3 mr-1" />
+                {timeStr}
+              </Badge>
+            </TooltipTrigger>
+            <TooltipContent>
+              <div className="text-xs">
+                <div className="font-semibold text-blue-400">Warming Up</div>
+                <div className="text-muted-foreground">Just appeared on list. Building momentum...</div>
+                <div className="mt-1">Wait for 5-15 min window for optimal entry</div>
+              </div>
+            </TooltipContent>
+          </Tooltip>
+        );
+      case "primed":
+        return (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Badge className="bg-emerald-500/20 text-emerald-400 border-emerald-500/30 animate-pulse cursor-help">
+                <Flame className="w-3 h-3 mr-1" />
+                {timeStr}
+              </Badge>
+            </TooltipTrigger>
+            <TooltipContent>
+              <div className="text-xs">
+                <div className="font-semibold text-emerald-400">PRIMED - Optimal Window!</div>
+                <div className="text-muted-foreground">5-15 minutes on list</div>
+                <div className="mt-1 font-bold">High probability spike window</div>
+              </div>
+            </TooltipContent>
+          </Tooltip>
+        );
+      case "hot":
+        return (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Badge className="bg-orange-500/20 text-orange-400 border-orange-500/30 cursor-help">
+                <Flame className="w-3 h-3 mr-1" />
+                {timeStr}
+              </Badge>
+            </TooltipTrigger>
+            <TooltipContent>
+              <div className="text-xs">
+                <div className="font-semibold text-orange-400">HOT - Spike Imminent!</div>
+                <div className="text-muted-foreground">15-30 minutes on list</div>
+                <div className="mt-1">May spike any moment or already moving</div>
+              </div>
+            </TooltipContent>
+          </Tooltip>
+        );
+      case "overdue":
+        return (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Badge className="bg-slate-500/20 text-slate-400 border-slate-500/30 cursor-help">
+                <Clock className="w-3 h-3 mr-1" />
+                {timeStr}
+              </Badge>
+            </TooltipTrigger>
+            <TooltipContent>
+              <div className="text-xs">
+                <div className="font-semibold text-slate-400">Overdue</div>
+                <div className="text-muted-foreground">30+ minutes on list</div>
+                <div className="mt-1">May have already spiked or false signal</div>
+              </div>
+            </TooltipContent>
+          </Tooltip>
+        );
+      default:
+        return <Badge className="bg-slate-500/20 text-slate-400">{timeStr}</Badge>;
+    }
   };
 
   const StrengthBreakdown = ({ breakdown }: { breakdown: Signal["strengthBreakdown"] }) => (
@@ -200,6 +282,9 @@ export function SignalTable({ signals }: SignalTableProps) {
                 </th>
                 <th className="px-2 py-3 text-center cursor-pointer hover:text-primary transition-colors" onClick={() => handleSort('signalStrength')}>
                   <div className="flex items-center justify-center gap-1"><Zap className="w-3 h-3" /> Str <SortIcon column="signalStrength" /></div>
+                </th>
+                <th className="px-2 py-3 text-center cursor-pointer hover:text-primary transition-colors" onClick={() => handleSort('timeOnListMinutes')}>
+                  <div className="flex items-center justify-center gap-1"><Timer className="w-3 h-3" /> Time <SortIcon column="timeOnListMinutes" /></div>
                 </th>
               </tr>
             </thead>
@@ -368,6 +453,9 @@ export function SignalTable({ signals }: SignalTableProps) {
                             <StrengthBreakdown breakdown={signal.strengthBreakdown} />
                           </TooltipContent>
                         </Tooltip>
+                      </td>
+                      <td className="px-2 py-2 text-center" data-testid={`time-on-list-${signal.symbol}`}>
+                        {getSpikeReadinessBadge(signal.spikeReadiness, signal.timeOnListMinutes)}
                       </td>
                     </motion.tr>
                   );
