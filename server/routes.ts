@@ -560,15 +560,28 @@ export async function registerRoutes(
     isCalculating = false;
   }
 
+  // Track if initial calculation is done
+  let initialCalculationDone = false;
+  let initialCalculationPromise: Promise<void> | null = null;
+
   // Initialize backtesting service
   backtestingService.initialize().then(() => {
     backtestingService.startMonitoring(60000);
   });
 
-  calculateSignals();
+  // Start initial calculation and track completion
+  initialCalculationPromise = calculateSignals().then(() => {
+    initialCalculationDone = true;
+  });
   setInterval(calculateSignals, UPDATE_FREQUENCY_MINUTES * 60 * 1000);
 
   app.get(api.tickers.list.path, async (req, res) => {
+    // Wait for initial calculation if not done yet (max 30 seconds)
+    if (!initialCalculationDone && initialCalculationPromise) {
+      const timeout = new Promise<void>((resolve) => setTimeout(resolve, 30000));
+      await Promise.race([initialCalculationPromise, timeout]);
+    }
+    
     const nextUpdate = new Date(lastUpdated.getTime() + UPDATE_FREQUENCY_MINUTES * 60 * 1000);
     
     res.json({

@@ -49,7 +49,7 @@ function Router() {
     <Switch>
       <Route path="/" component={Dashboard} />
       <Route path="/backtest" component={Backtest} />
-      <Route component={NotFound} />
+      <Route path="/:rest*" component={NotFound} />
     </Switch>
   );
 }
