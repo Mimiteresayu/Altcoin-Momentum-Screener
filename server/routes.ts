@@ -448,13 +448,26 @@ export async function registerRoutes(
           const reward = tpLevels[1]?.price ? tpLevels[1].price - currentPrice : currentPrice * 0.1;
           const riskReward = risk > 0 ? reward / risk : 0;
 
-          const priceInRange = priceChange24h >= -5 && priceChange24h <= 15;
-          const volumeInRange = volumeSpikeRatio >= 1.5 && volumeSpikeRatio <= 3;
-          const rsiInRange = rsi >= 50 && rsi <= 75;
-          const rrInRange = riskReward >= 2;
-          const hasLeadingIndicators = (fvg !== null || ob !== null || bidAskRatio > 1.2 || liquidityClusters.length > 0);
+          // RELAXED FILTERS to catch more pre-spike opportunities
+          // Price: Allow up to +30% (was +15%) to catch momentum plays
+          // RSI: Allow 40-80 (was 50-75) for earlier entries and continued momentum
+          // R:R: Allow >= 1.5 (was >= 2) for more opportunities
+          const priceInRange = priceChange24h >= -5 && priceChange24h <= 30;
+          const volumeInRange = volumeSpikeRatio >= 1.5;  // Removed upper limit
+          const rsiInRange = rsi >= 40 && rsi <= 80;
+          const rrInRange = riskReward >= 1.5;
+          const hasLeadingIndicators = (fvg !== null || ob !== null || bidAskRatio > 1.1 || liquidityClusters.length > 0);
 
-          if (!isMajor && (!priceInRange || !rsiInRange || !rrInRange)) {
+          // Relaxed filter: require only 2 of 3 conditions (was all 3)
+          // OR if it has strong leading indicators, allow it through
+          const passesMinCriteria = [priceInRange, rsiInRange, rrInRange].filter(Boolean).length >= 2;
+          const hasStrongMomentum = priceChange24h >= 5 && volumeSpikeRatio >= 1.2;
+          
+          if (!isMajor && !passesMinCriteria && !hasStrongMomentum) {
+            // Log why it was filtered for debugging
+            if (priceChange24h >= 5) {
+              console.log(`[FILTERED] ${item.symbol}: price=${priceChange24h.toFixed(1)}% rsi=${rsi.toFixed(0)} rr=${riskReward.toFixed(2)} vol=${volumeSpikeRatio.toFixed(2)}x`);
+            }
             continue;
           }
 
