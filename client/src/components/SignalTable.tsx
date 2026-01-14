@@ -259,6 +259,23 @@ export function SignalTable({ signals }: SignalTableProps) {
                 <th className="px-2 py-3 text-right cursor-pointer hover:text-primary transition-colors" onClick={() => handleSort('priceChange24h')}>
                   <div className="flex items-center justify-end">24h <SortIcon column="priceChange24h" /></div>
                 </th>
+                <th className="px-2 py-3 text-right cursor-pointer hover:text-primary transition-colors" onClick={() => handleSort('volumeSpikeRatio')}>
+                  <div className="flex items-center justify-end">VOL <SortIcon column="volumeSpikeRatio" /></div>
+                </th>
+                <th className="px-2 py-3 text-center">
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <div className="flex items-center justify-center gap-1 cursor-help"><Zap className="w-3 h-3 text-amber-400" /> Accel</div>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <div className="text-xs max-w-[200px]">
+                        <div className="font-semibold text-amber-400">Volume Acceleration</div>
+                        <div className="text-muted-foreground">Current 1H volume / Avg 4H volume</div>
+                        <div className="mt-1">2.0x+ = Volume spike starting NOW</div>
+                      </div>
+                    </TooltipContent>
+                  </Tooltip>
+                </th>
                 <th className="px-2 py-3 text-right cursor-pointer hover:text-primary transition-colors" onClick={() => handleSort('rsi')}>
                   <div className="flex items-center justify-end">RSI <SortIcon column="rsi" /></div>
                 </th>
@@ -342,6 +359,26 @@ export function SignalTable({ signals }: SignalTableProps) {
                           {isNegative && <TrendingDown className="w-2.5 h-2.5" />}
                           {signal.priceChange24h.toFixed(1)}%
                         </div>
+                      </td>
+                      <td className="px-2 py-2 text-right font-mono text-xs">
+                        <span className={clsx(
+                          signal.volumeSpikeRatio >= 1.5 ? "text-emerald-400" : 
+                          signal.volumeSpikeRatio >= 0.8 ? "text-amber-400" : "text-muted-foreground"
+                        )}>
+                          {signal.volumeSpikeRatio.toFixed(1)}x
+                        </span>
+                      </td>
+                      <td className="px-2 py-2 text-center">
+                        {signal.isAccelerating ? (
+                          <Badge className="bg-amber-500/20 text-amber-400 border-amber-500/30 text-[10px] px-1.5 animate-pulse">
+                            <Zap className="w-2.5 h-2.5 mr-0.5" />
+                            {(signal.volAccel ?? 1).toFixed(1)}x
+                          </Badge>
+                        ) : (
+                          <span className="text-muted-foreground text-xs font-mono">
+                            {(signal.volAccel ?? 1).toFixed(1)}x
+                          </span>
+                        )}
                       </td>
                       <td className="px-2 py-2 text-right font-mono text-muted-foreground text-xs">
                         {signal.rsi.toFixed(0)}

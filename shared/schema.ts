@@ -171,6 +171,8 @@ export const signalSchema = z.object({
   currentPrice: z.number(),
   priceChange24h: z.number(),
   volumeSpikeRatio: z.number(),
+  volAccel: z.number().optional(),  // Volume acceleration: current1H / avg4H
+  isAccelerating: z.boolean().optional(),  // True if volAccel >= 2.0x
   rsi: z.number(),
   entryPrice: z.number(),
   slPrice: z.number(),
