@@ -81,7 +81,7 @@ export default function Dashboard() {
             </div>
             <div>
               <h1 className="text-lg font-bold font-display tracking-tight leading-none" data-testid="text-app-title">Signal Scanner</h1>
-              <p className="text-[10px] text-muted-foreground font-mono uppercase tracking-widest">Pre-Spike Detection</p>
+              <p className="text-[10px] text-muted-foreground font-mono uppercase tracking-widest">Pre-Spike Detection v2.1</p>
             </div>
           </div>
           

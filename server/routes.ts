@@ -490,12 +490,13 @@ export async function registerRoutes(
           const reward = tpLevels[1]?.price ? tpLevels[1].price - currentPrice : currentPrice * 0.1;
           const riskReward = risk > 0 ? reward / risk : 0;
 
-          // RELAXED FILTERS to catch more pre-spike opportunities
-          // Price: Allow up to +30% (was +15%) to catch momentum plays
-          // RSI: Allow 40-80 (was 50-75) for earlier entries and continued momentum
-          // R:R: Allow >= 1.5 (was >= 2) for more opportunities
+          // OPTIMIZED FILTERS based on backtest analysis
+          // Volume: 0.8+ catches consolidation coins before spike (backtest showed 0.3-1.4 profitable range)
+          // Price: Allow up to +30% to catch momentum plays
+          // RSI: Allow 40-80 for earlier entries and continued momentum
+          // R:R: Allow >= 1.5 for more opportunities
           const priceInRange = priceChange24h >= -5 && priceChange24h <= 30;
-          const volumeInRange = volumeSpikeRatio >= 1.5;  // Removed upper limit
+          const volumeInRange = volumeSpikeRatio >= 0.8;  // Lowered from 1.5 to catch consolidation pre-spike
           const rsiInRange = rsi >= 40 && rsi <= 80;
           const rrInRange = riskReward >= 1.5;
           const hasLeadingIndicators = (fvg !== null || ob !== null || bidAskRatio > 1.1 || liquidityClusters.length > 0);
@@ -503,7 +504,7 @@ export async function registerRoutes(
           // Relaxed filter: require only 2 of 3 conditions (was all 3)
           // OR if it has strong leading indicators, allow it through
           const passesMinCriteria = [priceInRange, rsiInRange, rrInRange].filter(Boolean).length >= 2;
-          const hasStrongMomentum = priceChange24h >= 5 && volumeSpikeRatio >= 1.2;
+          const hasStrongMomentum = priceChange24h >= 5 && volumeSpikeRatio >= 1.2;  // Keep at 1.2 for high movers
           
           if (!isMajor && !passesMinCriteria && !hasStrongMomentum) {
             // Log why it was filtered for debugging
@@ -520,8 +521,9 @@ export async function registerRoutes(
           if (rrInRange) signalStrength++;
           if (hasLeadingIndicators) signalStrength++;
 
-          const tf1HConfirmed = rsi1H >= 50 && rsi1H <= 75 && volumeSpike1H >= 1.5;
-          const tf15MConfirmed = rsi15M >= 50 && rsi15M <= 75 && volumeSpike15M >= 1.5;
+          // Timeframe confirmation: lowered volume threshold to 0.8 based on backtest
+          const tf1HConfirmed = rsi1H >= 50 && rsi1H <= 75 && volumeSpike1H >= 0.8;
+          const tf15MConfirmed = rsi15M >= 50 && rsi15M <= 75 && volumeSpike15M >= 0.8;
           
           const confirmedTimeframes: string[] = [];
           if (tf1HConfirmed) confirmedTimeframes.push("1H");
