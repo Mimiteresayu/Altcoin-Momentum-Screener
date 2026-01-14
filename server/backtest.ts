@@ -1,5 +1,5 @@
 import { storage } from "./storage";
-import type { Signal, BacktestTrade, TradeEvent, BacktestSummary, TradeDisplay, Exit } from "@shared/schema";
+import type { Signal, BacktestTrade, BacktestSummary, TradeDisplay, Exit } from "@shared/schema";
 import axios from "axios";
 
 // ============================================
@@ -22,6 +22,7 @@ const CONFIG = {
 // ============================================
 class PositionManager {
   private capital: number = CONFIG.INITIAL_CAPITAL;
+  private reservedCapital: number = 0;
   private peakEquity: number = CONFIG.INITIAL_CAPITAL;
   private maxDrawdown: number = 0;
 
@@ -31,32 +32,58 @@ class PositionManager {
       this.capital = latestEquity.equity;
       this.peakEquity = Math.max(this.peakEquity, this.capital);
     }
+    
+    const activeTrades = await storage.getActiveTrades();
+    this.reservedCapital = activeTrades.reduce((sum, t) => sum + t.capitalUsed, 0);
   }
 
   getAvailableCapital(): number {
+    return this.capital - this.reservedCapital;
+  }
+
+  getTotalEquity(): number {
     return this.capital;
+  }
+
+  reserveCapital(amount: number) {
+    this.reservedCapital += amount;
+  }
+
+  releaseCapital(amount: number) {
+    this.reservedCapital = Math.max(0, this.reservedCapital - amount);
   }
 
   calculatePositionSize(entryPrice: number, slPrice: number): { size: number; capitalUsed: number } {
     const riskPerUnit = Math.abs(entryPrice - slPrice);
-    const riskPct = riskPerUnit / entryPrice;
     
-    let capitalToRisk = this.capital * CONFIG.DEFAULT_RISK_PCT;
+    if (riskPerUnit === 0) {
+      return { size: 0, capitalUsed: 0 };
+    }
+    
+    const availableCapital = this.getAvailableCapital();
+    let capitalToRisk = availableCapital * CONFIG.DEFAULT_RISK_PCT;
     capitalToRisk = Math.max(
-      this.capital * CONFIG.RISK_PER_TRADE_MIN,
-      Math.min(capitalToRisk, this.capital * CONFIG.RISK_PER_TRADE_MAX)
+      availableCapital * CONFIG.RISK_PER_TRADE_MIN,
+      Math.min(capitalToRisk, availableCapital * CONFIG.RISK_PER_TRADE_MAX)
     );
     
     const size = capitalToRisk / riskPerUnit;
     const capitalUsed = size * entryPrice;
     
+    if (capitalUsed > availableCapital * 0.2) {
+      const adjustedSize = (availableCapital * 0.2) / entryPrice;
+      return { size: adjustedSize, capitalUsed: adjustedSize * entryPrice };
+    }
+    
     return { size, capitalUsed };
   }
 
-  async updateEquity(pnlDelta: number) {
+  async updateEquity(pnlDelta: number, capitalReleased: number = 0) {
     this.capital += pnlDelta;
+    this.releaseCapital(capitalReleased);
+    
     this.peakEquity = Math.max(this.peakEquity, this.capital);
-    const currentDrawdown = (this.peakEquity - this.capital) / this.peakEquity;
+    const currentDrawdown = this.peakEquity > 0 ? (this.peakEquity - this.capital) / this.peakEquity : 0;
     this.maxDrawdown = Math.max(this.maxDrawdown, currentDrawdown);
     
     await storage.addEquityPoint({
@@ -79,6 +106,12 @@ class PositionManager {
 // STATISTICS ENGINE
 // ============================================
 class StatisticsEngine {
+  private positionManager: PositionManager;
+
+  constructor(positionManager: PositionManager) {
+    this.positionManager = positionManager;
+  }
+
   async calculateStats(): Promise<BacktestSummary> {
     const trades = await storage.getAllTrades(1000);
     const equityCurve = await storage.getEquityCurve(365);
@@ -104,12 +137,9 @@ class StatisticsEngine {
     const maxDrawdown = this.calculateMaxDrawdown(equityCurve);
     const sharpeRatio = this.calculateSharpeRatio(equityCurve);
     
-    const latestEquity = await storage.getLatestEquity();
-    const currentCapital = latestEquity?.equity || CONFIG.INITIAL_CAPITAL;
-    
     return {
-      totalCapital: currentCapital,
-      availableCapital: currentCapital,
+      totalCapital: this.positionManager.getTotalEquity(),
+      availableCapital: this.positionManager.getAvailableCapital(),
       totalTrades: trades.length,
       activeTrades: activeTrades.length,
       closedTrades: closedTrades.length,
@@ -251,20 +281,28 @@ class PriceMonitor {
 
   private async evaluateTrade(trade: BacktestTrade, currentPrice: number) {
     const riskPerUnit = trade.entryPrice - trade.originalSlPrice;
-    let totalPnl = 0;
-    let remainingSize = trade.positionSize;
+    
+    if (riskPerUnit <= 0) return;
+    
+    let accumulatedPnl = 0;
+    let exitedSize = 0;
     
     const events = await storage.getTradeEvents(trade.tradeId);
     for (const event of events) {
-      if (event.size) {
-        remainingSize -= event.size;
-        totalPnl += event.pnlDelta || 0;
+      if (event.eventType !== "ENTRY" && event.size) {
+        exitedSize += event.size;
+        accumulatedPnl += event.pnlDelta || 0;
       }
     }
     
+    const remainingSize = trade.positionSize - exitedSize;
+    
+    if (remainingSize <= 0) return;
+    
     if (currentPrice <= trade.currentSlPrice && !trade.slHit) {
       const slPnl = (trade.currentSlPrice - trade.entryPrice) * remainingSize;
-      totalPnl += slPnl;
+      const totalPnl = accumulatedPnl + slPnl;
+      const rMultiple = totalPnl / (riskPerUnit * trade.positionSize);
       
       await storage.addTradeEvent({
         tradeId: trade.tradeId,
@@ -274,8 +312,6 @@ class PriceMonitor {
         pnlDelta: slPnl,
       });
       
-      const rMultiple = totalPnl / (riskPerUnit * trade.positionSize);
-      
       await storage.updateTrade(trade.tradeId, {
         status: "closed",
         slHit: true,
@@ -284,7 +320,7 @@ class PriceMonitor {
         rMultiple,
       });
       
-      await this.positionManager.updateEquity(totalPnl);
+      await this.positionManager.updateEquity(slPnl, trade.capitalUsed);
       console.log(`[BACKTEST] ${trade.symbol} SL HIT at ${trade.currentSlPrice}, PnL: $${totalPnl.toFixed(2)}, R: ${rMultiple.toFixed(2)}`);
       return;
     }
@@ -306,7 +342,8 @@ class PriceMonitor {
         currentSlPrice: trade.entryPrice,
       });
       
-      await this.positionManager.updateEquity(tp1Pnl);
+      const partialCapitalReleased = trade.capitalUsed * CONFIG.TP1_EXIT_PCT;
+      await this.positionManager.updateEquity(tp1Pnl, partialCapitalReleased);
       console.log(`[BACKTEST] ${trade.symbol} TP1 HIT at ${trade.tp1Price}, Partial PnL: $${tp1Pnl.toFixed(2)}, SL moved to entry`);
     }
     
@@ -326,18 +363,21 @@ class PriceMonitor {
         tp2Hit: true,
       });
       
-      await this.positionManager.updateEquity(tp2Pnl);
+      const partialCapitalReleased = trade.capitalUsed * CONFIG.TP2_EXIT_PCT;
+      await this.positionManager.updateEquity(tp2Pnl, partialCapitalReleased);
       console.log(`[BACKTEST] ${trade.symbol} TP2 HIT at ${trade.tp2Price}, Partial PnL: $${tp2Pnl.toFixed(2)}`);
     }
     
     if (currentPrice >= trade.tp3Price && !trade.tp3Hit && trade.tp2Hit) {
       const exitSize = trade.positionSize * CONFIG.TP3_EXIT_PCT;
       const tp3Pnl = (trade.tp3Price - trade.entryPrice) * exitSize;
-      totalPnl = 0;
       
+      let totalPnl = 0;
       const allEvents = await storage.getTradeEvents(trade.tradeId);
       for (const event of allEvents) {
-        totalPnl += event.pnlDelta || 0;
+        if (event.eventType !== "ENTRY") {
+          totalPnl += event.pnlDelta || 0;
+        }
       }
       totalPnl += tp3Pnl;
       
@@ -359,7 +399,8 @@ class PriceMonitor {
         rMultiple,
       });
       
-      await this.positionManager.updateEquity(tp3Pnl);
+      const partialCapitalReleased = trade.capitalUsed * CONFIG.TP3_EXIT_PCT;
+      await this.positionManager.updateEquity(tp3Pnl, partialCapitalReleased);
       console.log(`[BACKTEST] ${trade.symbol} TP3 HIT at ${trade.tp3Price}, Final PnL: $${totalPnl.toFixed(2)}, R: ${rMultiple.toFixed(2)}`);
     }
   }
@@ -377,14 +418,14 @@ export class BacktestingService {
 
   constructor() {
     this.positionManager = new PositionManager();
-    this.statisticsEngine = new StatisticsEngine();
+    this.statisticsEngine = new StatisticsEngine(this.positionManager);
     this.signalTracker = new SignalTracker();
     this.priceMonitor = new PriceMonitor(this.positionManager);
   }
 
   async initialize() {
     await this.positionManager.initialize();
-    console.log(`[BACKTEST] Initialized with capital: $${this.positionManager.getCurrentEquity().toFixed(2)}`);
+    console.log(`[BACKTEST] Initialized with capital: $${this.positionManager.getCurrentEquity().toFixed(2)}, available: $${this.positionManager.getAvailableCapital().toFixed(2)}`);
   }
 
   async processSignals(signals: Signal[]) {
@@ -398,17 +439,24 @@ export class BacktestingService {
       return;
     }
     
-    for (const signal of signals) {
-      if (activeSymbols.has(signal.symbol)) continue;
-      if (signal.signalStrength < CONFIG.SIGNAL_STRENGTH_MIN) continue;
-      if (signal.riskReward < 2) continue;
-      
+    const eligibleSignals = signals.filter(signal => 
+      !activeSymbols.has(signal.symbol) &&
+      signal.signalStrength >= CONFIG.SIGNAL_STRENGTH_MIN &&
+      signal.riskReward >= 2
+    );
+    
+    for (const signal of eligibleSignals) {
       const { size, capitalUsed } = this.positionManager.calculatePositionSize(
         signal.entryPrice,
         signal.slPrice
       );
       
-      if (capitalUsed > this.positionManager.getAvailableCapital() * 0.2) {
+      if (size <= 0 || capitalUsed <= 0) {
+        continue;
+      }
+      
+      if (capitalUsed > this.positionManager.getAvailableCapital()) {
+        console.log(`[BACKTEST] Insufficient capital for ${signal.symbol}, need $${capitalUsed.toFixed(2)}, available $${this.positionManager.getAvailableCapital().toFixed(2)}`);
         continue;
       }
       
@@ -429,6 +477,10 @@ export class BacktestingService {
         positionSize: size,
         capitalUsed,
         status: "active",
+        tp1Hit: false,
+        tp2Hit: false,
+        tp3Hit: false,
+        slHit: false,
       });
       
       await storage.addTradeEvent({
@@ -439,9 +491,12 @@ export class BacktestingService {
         pnlDelta: 0,
       });
       
+      this.positionManager.reserveCapital(capitalUsed);
+      
       console.log(`[BACKTEST] NEW TRADE: ${signal.symbol} @ $${signal.entryPrice.toFixed(6)}, Size: ${size.toFixed(4)}, Capital: $${capitalUsed.toFixed(2)}`);
       
-      if (activeTrades.length + 1 >= CONFIG.MAX_CONCURRENT_TRADES) break;
+      const currentActiveTrades = await storage.getActiveTrades();
+      if (currentActiveTrades.length >= CONFIG.MAX_CONCURRENT_TRADES) break;
     }
   }
 
@@ -475,10 +530,11 @@ export class BacktestingService {
       if (trade.status === "active") {
         currentPrice = await this.priceMonitor.fetchCurrentPrice(trade.symbol) || undefined;
         if (currentPrice) {
-          let remainingSize = trade.positionSize;
+          let exitedSize = 0;
           for (const exit of exits) {
-            remainingSize -= exit.size;
+            exitedSize += exit.size;
           }
+          const remainingSize = trade.positionSize - exitedSize;
           unrealizedPnl = (currentPrice - trade.entryPrice) * remainingSize;
         }
       }
