@@ -86,6 +86,18 @@ function calculateVolumeSpike(volumes: number[]): number {
   return avgVolume > 0 ? recentVolume / avgVolume : 1;
 }
 
+// Volume Acceleration Detector: catches spike as it starts
+// Compares current 1H volume to average of last 4 hours
+function calculateVolumeAcceleration(volumes: number[]): number {
+  if (volumes.length < 5) return 1;
+  
+  const current1HVolume = volumes[volumes.length - 1];
+  const last4HVolumes = volumes.slice(-5, -1);
+  const avg4HVolume = last4HVolumes.reduce((a, b) => a + b, 0) / 4;
+  
+  return avg4HVolume > 0 ? current1HVolume / avg4HVolume : 1;
+}
+
 function findSwingLows(klines: Kline[], count: number = 3): number[] {
   if (klines.length < 10) return [klines[klines.length - 1]?.low || 0];
   
@@ -471,6 +483,10 @@ export async function registerRoutes(
           const rsi15M = calculateRSI(closes15M);
           const volumeSpike1H = calculateVolumeSpike(volumes1H);
           const volumeSpike15M = calculateVolumeSpike(volumes15M);
+          
+          // Volume Acceleration: catches spike as it starts (current1H / avg4H)
+          const volAccel = calculateVolumeAcceleration(volumes1H);
+          const isAccelerating = volAccel >= 2.0;  // Flag if volume is 2x+ the 4H average
 
           const swingLows = findSwingLows(klines1H, 3);
           const swingHighs = findSwingHighs(klines1H, 3);
@@ -490,21 +506,21 @@ export async function registerRoutes(
           const reward = tpLevels[1]?.price ? tpLevels[1].price - currentPrice : currentPrice * 0.1;
           const riskReward = risk > 0 ? reward / risk : 0;
 
-          // OPTIMIZED FILTERS based on backtest analysis
-          // Volume: 0.8+ catches consolidation coins before spike (backtest showed 0.3-1.4 profitable range)
-          // Price: Allow up to +30% to catch momentum plays
-          // RSI: Allow 40-80 for earlier entries and continued momentum
+          // AGGRESSIVE FILTERS based on Bitunix mega-spike analysis (4USDT +1057%, RIVERUSDT +452%)
+          // Volume: 0.3+ catches consolidation coins before spike (mega-spikers had 0.3-0.7x VOL)
+          // Price: -8/+20% range to catch more pre-spike setups
+          // RSI: 35-80 for earlier entries and continued momentum
           // R:R: Allow >= 1.5 for more opportunities
-          const priceInRange = priceChange24h >= -5 && priceChange24h <= 30;
-          const volumeInRange = volumeSpikeRatio >= 0.8;  // Lowered from 1.5 to catch consolidation pre-spike
-          const rsiInRange = rsi >= 40 && rsi <= 80;
+          const priceInRange = priceChange24h >= -8 && priceChange24h <= 20;
+          const volumeInRange = volumeSpikeRatio >= 0.3;  // Ultra-low to catch mega-spike consolidation
+          const rsiInRange = rsi >= 35 && rsi <= 80;
           const rrInRange = riskReward >= 1.5;
           const hasLeadingIndicators = (fvg !== null || ob !== null || bidAskRatio > 1.1 || liquidityClusters.length > 0);
 
           // Relaxed filter: require only 2 of 3 conditions (was all 3)
           // OR if it has strong leading indicators, allow it through
           const passesMinCriteria = [priceInRange, rsiInRange, rrInRange].filter(Boolean).length >= 2;
-          const hasStrongMomentum = priceChange24h >= 5 && volumeSpikeRatio >= 1.2;  // Keep at 1.2 for high movers
+          const hasStrongMomentum = priceChange24h >= 5 && volumeSpikeRatio >= 0.3;  // Match aggressive 0.3x baseline
           
           if (!isMajor && !passesMinCriteria && !hasStrongMomentum) {
             // Log why it was filtered for debugging
@@ -521,9 +537,9 @@ export async function registerRoutes(
           if (rrInRange) signalStrength++;
           if (hasLeadingIndicators) signalStrength++;
 
-          // Timeframe confirmation: lowered volume threshold to 0.8 based on backtest
-          const tf1HConfirmed = rsi1H >= 50 && rsi1H <= 75 && volumeSpike1H >= 0.8;
-          const tf15MConfirmed = rsi15M >= 50 && rsi15M <= 75 && volumeSpike15M >= 0.8;
+          // Timeframe confirmation: ultra-low volume threshold for consolidation detection
+          const tf1HConfirmed = rsi1H >= 35 && rsi1H <= 80 && volumeSpike1H >= 0.3;
+          const tf15MConfirmed = rsi15M >= 35 && rsi15M <= 80 && volumeSpike15M >= 0.3;
           
           const confirmedTimeframes: string[] = [];
           if (tf1HConfirmed) confirmedTimeframes.push("1H");
@@ -550,6 +566,8 @@ export async function registerRoutes(
             currentPrice,
             priceChange24h,
             volumeSpikeRatio,
+            volAccel,  // Volume acceleration: current1H / avg4H
+            isAccelerating,  // True if volAccel >= 2.0x
             rsi,
             entryPrice: currentPrice,
             slPrice: sl,
