@@ -4,20 +4,28 @@ import { useToast } from "@/hooks/use-toast";
 
 export function useTickers() {
   return useQuery<SignalListResponse>({
-    queryKey: [api.tickers.list.path],
+    queryKey: ['tickers', 'live'],
     queryFn: async () => {
       // Add cache buster to prevent stale data
       const url = `${api.tickers.list.path}?t=${Date.now()}`;
       const res = await fetch(url, {
         cache: 'no-store',
-        headers: { 'Cache-Control': 'no-cache' }
+        headers: { 
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          'Pragma': 'no-cache',
+          'Expires': '0'
+        }
       });
       if (!res.ok) throw new Error("Failed to fetch market data");
-      return res.json();
+      const data = await res.json();
+      console.log('[useTickers] Received', data.signals?.length || 0, 'signals from API');
+      return data;
     },
-    refetchInterval: 15000, // Refresh every 15 seconds
+    refetchInterval: 10000, // Refresh every 10 seconds
     refetchOnWindowFocus: true,
+    refetchOnMount: 'always',
     staleTime: 0, // Always consider data stale
+    gcTime: 0, // Don't cache at all
   });
 }
 
@@ -34,7 +42,7 @@ export function useRefreshSignals() {
       return res.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: [api.tickers.list.path] });
+      queryClient.invalidateQueries({ queryKey: ['tickers', 'live'] });
       toast({
         title: "Refresh Triggered",
         description: "Signal data is being recalculated...",

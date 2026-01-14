@@ -15,6 +15,12 @@ export default function Dashboard() {
   const lastUpdated = data?.lastUpdated ? new Date(data.lastUpdated) : null;
   const nextUpdate = data?.nextUpdate ? new Date(data.nextUpdate) : null;
 
+  // Debug logging - check console for signal count
+  console.log('[Dashboard] Total signals:', signals.length, 
+    '| RIVER:', signals.some(s => s.symbol === 'RIVERUSDT'),
+    '| 4USDT:', signals.some(s => s.symbol === '4USDT'),
+    '| EDEN:', signals.some(s => s.symbol === 'EDENUSDT'));
+
   useEffect(() => {
     const interval = setInterval(() => {
       if (nextUpdate) {
