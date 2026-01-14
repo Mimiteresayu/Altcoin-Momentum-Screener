@@ -5,11 +5,18 @@ import { WatchlistSidebar } from "@/components/WatchlistSidebar";
 import { MetricCard } from "@/components/MetricCard";
 import { Activity, BarChart3, Target, Layers, Zap, RefreshCw, Clock, Waves, Crown } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { queryClient } from "@/lib/queryClient";
 
 export default function Dashboard() {
-  const { data, isLoading, isError } = useTickers();
+  const { data, isLoading, isError, refetch } = useTickers();
   const refreshSignals = useRefreshSignals();
   const [countdown, setCountdown] = useState("");
+
+  // Clear cache on mount to force fresh data
+  useEffect(() => {
+    queryClient.invalidateQueries({ queryKey: ['tickers', 'live'] });
+    refetch();
+  }, []);
 
   const signals = data?.signals || [];
   const lastUpdated = data?.lastUpdated ? new Date(data.lastUpdated) : null;
