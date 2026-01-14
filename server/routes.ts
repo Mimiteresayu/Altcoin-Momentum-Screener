@@ -624,6 +624,16 @@ export async function registerRoutes(
     
     const nextUpdate = new Date(lastUpdated.getTime() + UPDATE_FREQUENCY_MINUTES * 60 * 1000);
     
+    console.log(`[API] Returning ${cachedSignals.length} signals to client`);
+    
+    // Prevent any caching
+    res.set({
+      'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+      'Pragma': 'no-cache',
+      'Expires': '0',
+      'Surrogate-Control': 'no-store'
+    });
+    
     res.json({
       signals: cachedSignals,
       lastUpdated: lastUpdated.toISOString(),
