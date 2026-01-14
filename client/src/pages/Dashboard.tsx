@@ -7,10 +7,15 @@ import { Activity, BarChart3, Target, Layers, Zap, RefreshCw, Clock, Waves, Crow
 import { Button } from "@/components/ui/button";
 import { queryClient } from "@/lib/queryClient";
 
+function getHKTime() {
+  return new Date().toLocaleTimeString('en-HK', { timeZone: 'Asia/Hong_Kong', hour12: false });
+}
+
 export default function Dashboard() {
   const { data, isLoading, isError, refetch } = useTickers();
   const refreshSignals = useRefreshSignals();
   const [countdown, setCountdown] = useState("");
+  const [hkTime, setHkTime] = useState(getHKTime());
 
   // Clear cache on mount to force fresh data
   useEffect(() => {
@@ -30,6 +35,7 @@ export default function Dashboard() {
 
   useEffect(() => {
     const interval = setInterval(() => {
+      setHkTime(getHKTime());
       if (nextUpdate) {
         const now = new Date();
         const diff = nextUpdate.getTime() - now.getTime();
@@ -84,7 +90,7 @@ export default function Dashboard() {
               <Clock className="w-3.5 h-3.5" />
               <div className="flex flex-col">
                 <span className="text-[10px]">
-                  Updated: {lastUpdated ? lastUpdated.toLocaleTimeString() : "--:--:--"}
+                  Updated: {lastUpdated ? lastUpdated.toLocaleTimeString('en-HK', { timeZone: 'Asia/Hong_Kong', hour12: false }) : "--:--:--"} HKT
                 </span>
                 <span className="text-[10px] text-primary">
                   Next: {countdown || "--"}
@@ -109,7 +115,10 @@ export default function Dashboard() {
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                 <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
               </span>
-              <span className="hidden sm:inline">Live</span>
+              <span className="hidden sm:inline">Live Feed</span>
+              <span className="font-mono text-[10px]" data-testid="text-hk-time">
+                HKT {hkTime}
+              </span>
             </div>
           </div>
         </div>
@@ -170,6 +179,10 @@ export default function Dashboard() {
               <div className="flex items-center gap-2">
                 <Crown className="w-3.5 h-3.5 text-amber-400" />
                 <span>BTC & ETH always shown</span>
+              </div>
+              <div className="flex items-center gap-2 ml-auto text-primary font-medium">
+                <Activity className="w-3.5 h-3.5" />
+                <span data-testid="text-filtered-count">{signals.length} quality signals (filtered from 500+)</span>
               </div>
             </div>
 
