@@ -40,10 +40,18 @@ export function SignalTable({ signals }: SignalTableProps) {
       data = data.filter(s => s.symbol.toLowerCase().includes(q));
     }
 
-    const majorSignals = data.filter(s => s.isMajor);
-    const otherSignals = data.filter(s => !s.isMajor);
-
-    otherSignals.sort((a, b) => {
+    // Sort by signalType priority: MAJOR first, then ACTIVE, then PRE
+    // Within each category, sort by the user-selected column
+    const typePriority: Record<string, number> = { "MAJOR": 0, "ACTIVE": 1, "PRE": 2 };
+    
+    data.sort((a, b) => {
+      const aPriority = typePriority[a.signalType ?? "PRE"] ?? 3;
+      const bPriority = typePriority[b.signalType ?? "PRE"] ?? 3;
+      
+      // First sort by signal type priority
+      if (aPriority !== bPriority) return aPriority - bPriority;
+      
+      // Within same type, sort by selected column
       const aVal = a[sortConfig.key];
       const bVal = b[sortConfig.key];
 
@@ -56,7 +64,7 @@ export function SignalTable({ signals }: SignalTableProps) {
       return 0;
     });
 
-    return [...majorSignals, ...otherSignals];
+    return data;
   }, [signals, search, sortConfig]);
 
   const handleSort = (key: SortKey) => {
@@ -320,7 +328,9 @@ export function SignalTable({ signals }: SignalTableProps) {
                       exit={{ opacity: 0 }}
                       className={clsx(
                         "group hover:bg-white/[0.02] transition-colors",
-                        signal.isMajor && "bg-amber-500/5"
+                        signal.signalType === "MAJOR" && "bg-amber-500/5",
+                        signal.signalType === "ACTIVE" && "bg-emerald-500/5",
+                        signal.signalType === "PRE" && "bg-blue-500/5"
                       )}
                       data-testid={`row-signal-${signal.symbol}`}
                     >
@@ -338,10 +348,22 @@ export function SignalTable({ signals }: SignalTableProps) {
                       </td>
                       <td className="px-2 py-2 font-medium text-foreground">
                         <div className="flex items-center gap-1.5">
-                          {signal.isMajor && (
+                          {signal.signalType === "MAJOR" && (
                             <Badge className="bg-amber-500/20 text-amber-400 border-amber-500/30 text-[9px] px-1 py-0">
                               <Crown className="w-2.5 h-2.5 mr-0.5" />
                               MAJOR
+                            </Badge>
+                          )}
+                          {signal.signalType === "ACTIVE" && (
+                            <Badge className="bg-emerald-500/20 text-emerald-400 border-emerald-500/30 text-[9px] px-1 py-0 animate-pulse">
+                              <Zap className="w-2.5 h-2.5 mr-0.5" />
+                              ACTIVE
+                            </Badge>
+                          )}
+                          {signal.signalType === "PRE" && (
+                            <Badge className="bg-blue-500/20 text-blue-400 border-blue-500/30 text-[9px] px-1 py-0">
+                              <Timer className="w-2.5 h-2.5 mr-0.5" />
+                              PRE
                             </Badge>
                           )}
                           <span className="font-mono tracking-tight">{signal.symbol.replace("USDT", "")}</span>

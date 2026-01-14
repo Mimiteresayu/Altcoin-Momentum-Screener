@@ -506,31 +506,51 @@ export async function registerRoutes(
           const reward = tpLevels[1]?.price ? tpLevels[1].price - currentPrice : currentPrice * 0.1;
           const riskReward = risk > 0 ? reward / risk : 0;
 
-          // AGGRESSIVE FILTERS based on Bitunix mega-spike analysis (4USDT +1057%, RIVERUSDT +452%)
-          // Volume: 0.3+ catches consolidation coins before spike (mega-spikers had 0.3-0.7x VOL)
-          // Price: -8/+20% range to catch more pre-spike setups
-          // RSI: 35-80 for earlier entries and continued momentum
-          // R:R: Allow >= 1.5 for more opportunities
-          const priceInRange = priceChange24h >= -8 && priceChange24h <= 20;
-          const volumeInRange = volumeSpikeRatio >= 0.3;  // Ultra-low to catch mega-spike consolidation
-          const rsiInRange = rsi >= 35 && rsi <= 80;
-          const rrInRange = riskReward >= 1.5;
-          const hasLeadingIndicators = (fvg !== null || ob !== null || bidAskRatio > 1.1 || liquidityClusters.length > 0);
-
-          // Relaxed filter: require only 2 of 3 conditions (was all 3)
-          // OR if it has strong leading indicators, allow it through
-          const passesMinCriteria = [priceInRange, rsiInRange, rrInRange].filter(Boolean).length >= 2;
-          const hasStrongMomentum = priceChange24h >= 5 && volumeSpikeRatio >= 0.3;  // Match aggressive 0.3x baseline
+          // THREE SIGNAL CATEGORIES for comprehensive coverage
+          // 1. ACTIVE MOMENTUM: Coins spiking NOW (high vol, high price change)
+          // 2. PRE-CONSOLIDATION: Coins before spike (low-mid vol, consolidating)
+          // 3. MAJOR: BTC/ETH with relaxed criteria
           
-          if (!isMajor && !passesMinCriteria && !hasStrongMomentum) {
-            // Log why it was filtered for debugging
-            if (priceChange24h >= 5) {
-              console.log(`[FILTERED] ${item.symbol}: price=${priceChange24h.toFixed(1)}% rsi=${rsi.toFixed(0)} rr=${riskReward.toFixed(2)} vol=${volumeSpikeRatio.toFixed(2)}x`);
+          const hasLeadingIndicators = (fvg !== null || ob !== null || bidAskRatio > 1.1 || liquidityClusters.length > 0);
+          
+          // ACTIVE MOMENTUM criteria (Priority 1): VOL >= 1.5x, Price +5% to +60%, RSI 50-85
+          const isActiveMomentum = volumeSpikeRatio >= 1.5 && 
+                                   priceChange24h >= 5 && priceChange24h <= 60 && 
+                                   rsi >= 50 && rsi <= 85;
+          
+          // PRE-CONSOLIDATION criteria (Priority 2): VOL 0.3-1.5x, Price -8% to +15%, RSI 35-65
+          const isPreConsolidation = volumeSpikeRatio >= 0.3 && volumeSpikeRatio < 1.5 &&
+                                     priceChange24h >= -8 && priceChange24h <= 15 &&
+                                     rsi >= 35 && rsi <= 65;
+          
+          // MAJOR criteria: VOL >= 0.5x, any price range
+          const isMajorQualified = isMajor && volumeSpikeRatio >= 0.5;
+          
+          // Determine signal type
+          let signalType: "ACTIVE" | "PRE" | "MAJOR" | null = null;
+          if (isMajorQualified) {
+            signalType = "MAJOR";
+          } else if (isActiveMomentum) {
+            signalType = "ACTIVE";
+          } else if (isPreConsolidation) {
+            signalType = "PRE";
+          }
+          
+          // Filter out if doesn't match any category
+          if (signalType === null) {
+            if (priceChange24h >= 10 || volumeSpikeRatio >= 2.0) {
+              console.log(`[FILTERED] ${item.symbol}: price=${priceChange24h.toFixed(1)}% rsi=${rsi.toFixed(0)} vol=${volumeSpikeRatio.toFixed(2)}x - no category match`);
             }
             continue;
           }
 
+          // Calculate signal strength based on category
           let signalStrength = 0;
+          const priceInRange = signalType === "ACTIVE" ? (priceChange24h >= 5 && priceChange24h <= 60) : (priceChange24h >= -8 && priceChange24h <= 15);
+          const volumeInRange = signalType === "ACTIVE" ? volumeSpikeRatio >= 1.5 : (volumeSpikeRatio >= 0.3 && volumeSpikeRatio < 1.5);
+          const rsiInRange = signalType === "ACTIVE" ? (rsi >= 50 && rsi <= 85) : (rsi >= 35 && rsi <= 65);
+          const rrInRange = riskReward >= 1.5;
+          
           if (priceInRange) signalStrength++;
           if (volumeInRange) signalStrength++;
           if (rsiInRange) signalStrength++;
@@ -568,6 +588,7 @@ export async function registerRoutes(
             volumeSpikeRatio,
             volAccel,  // Volume acceleration: current1H / avg4H
             isAccelerating,  // True if volAccel >= 2.0x
+            signalType,  // "ACTIVE" | "PRE" | "MAJOR"
             rsi,
             entryPrice: currentPrice,
             slPrice: sl,
@@ -629,10 +650,24 @@ export async function registerRoutes(
         }
       }
 
-      const majorSignals = signals.filter(s => s.isMajor);
-      const otherSignals = signals.filter(s => !s.isMajor).sort((a, b) => b.riskReward - a.riskReward);
+      // Sort by signalType priority: MAJOR first, then ACTIVE, then PRE
+      // Within each category, sort by R:R descending
+      const typePriority = { "MAJOR": 0, "ACTIVE": 1, "PRE": 2 };
+      const sortedSignals = signals.sort((a, b) => {
+        const aPriority = typePriority[a.signalType as keyof typeof typePriority] ?? 3;
+        const bPriority = typePriority[b.signalType as keyof typeof typePriority] ?? 3;
+        if (aPriority !== bPriority) return aPriority - bPriority;
+        return b.riskReward - a.riskReward;
+      });
       
-      cachedSignals = [...majorSignals, ...otherSignals];
+      cachedSignals = sortedSignals;
+      
+      // Count by signal type
+      const typeCount = {
+        MAJOR: signals.filter(s => s.signalType === "MAJOR").length,
+        ACTIVE: signals.filter(s => s.signalType === "ACTIVE").length,
+        PRE: signals.filter(s => s.signalType === "PRE").length,
+      };
       lastUpdated = new Date();
       
       // Cleanup: Remove symbols from tracking only after grace period expires
@@ -654,7 +689,7 @@ export async function registerRoutes(
         overdue: signals.filter(s => s.spikeReadiness === "overdue").length,
       };
       
-      console.log(`Signal calculation complete. Found ${cachedSignals.length} signals (${majorSignals.length} major).`);
+      console.log(`Signal calculation complete. Found ${cachedSignals.length} signals (${typeCount.MAJOR} MAJOR, ${typeCount.ACTIVE} ACTIVE, ${typeCount.PRE} PRE).`);
       console.log(`Spike readiness: ${readinessCount.warming} warming, ${readinessCount.primed} primed, ${readinessCount.hot} hot, ${readinessCount.overdue} overdue`);
       
       // Process signals for backtesting
