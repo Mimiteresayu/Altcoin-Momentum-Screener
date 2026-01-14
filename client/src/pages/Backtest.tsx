@@ -379,7 +379,7 @@ export default function Backtest() {
             <EquityChart 
               data={equity?.map(e => ({
                 ...e,
-                timestamp: e.timestamp?.toISOString() || new Date().toISOString(),
+                timestamp: typeof e.timestamp === "string" ? e.timestamp : (e.timestamp?.toISOString?.() || new Date().toISOString()),
               })) || []} 
               loading={loadingEquity} 
             />
