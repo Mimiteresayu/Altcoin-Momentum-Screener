@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { insertWatchlistItemSchema, watchlistItems, signalSchema } from './schema';
+import { insertWatchlistItemSchema, watchlistItems, signalResponseSchema } from './schema';
 
 export const errorSchemas = {
   validation: z.object({
@@ -20,7 +20,15 @@ export const api = {
       method: 'GET' as const,
       path: '/api/tickers',
       responses: {
-        200: z.array(signalSchema),
+        200: signalResponseSchema,
+        500: errorSchemas.internal,
+      },
+    },
+    refresh: {
+      method: 'POST' as const,
+      path: '/api/tickers/refresh',
+      responses: {
+        200: z.object({ message: z.string() }),
         500: errorSchemas.internal,
       },
     },
@@ -66,5 +74,4 @@ export function buildUrl(path: string, params?: Record<string, string | number>)
 }
 
 export type SignalListResponse = z.infer<typeof api.tickers.list.responses[200]>;
-export type TickerResponse = SignalListResponse;
 export type WatchlistInput = z.infer<typeof api.watchlist.create.input>;

@@ -22,6 +22,9 @@ export const leadingIndicatorsSchema = z.object({
   hasOrderBlock: z.boolean(),
   obLevel: z.number().nullable(),
   obType: z.enum(["bullish", "bearish"]).nullable(),
+  hasLiquidityZone: z.boolean(),
+  liquidityLevel: z.number().nullable(),
+  liquidityStrength: z.number(),
 });
 
 export type LeadingIndicators = z.infer<typeof leadingIndicatorsSchema>;
@@ -38,6 +41,15 @@ export const timeframeDataSchema = z.object({
 
 export type TimeframeData = z.infer<typeof timeframeDataSchema>;
 
+export const tpLevelSchema = z.object({
+  label: z.string(),
+  price: z.number(),
+  pct: z.number(),
+  reason: z.string(),
+});
+
+export type TPLevel = z.infer<typeof tpLevelSchema>;
+
 export const signalSchema = z.object({
   symbol: z.string(),
   currentPrice: z.number(),
@@ -48,9 +60,7 @@ export const signalSchema = z.object({
   slPrice: z.number(),
   slDistancePct: z.number(),
   slReason: z.string(),
-  tpPrice: z.number(),
-  tpDistancePct: z.number(),
-  tpReason: z.string(),
+  tpLevels: z.array(tpLevelSchema),
   riskReward: z.number(),
   signalStrength: z.number(),
   strengthBreakdown: z.object({
@@ -63,6 +73,16 @@ export const signalSchema = z.object({
   leadingIndicators: leadingIndicatorsSchema,
   timeframes: z.array(timeframeDataSchema),
   confirmedTimeframes: z.array(z.string()),
+  isMajor: z.boolean(),
 });
 
 export type Signal = z.infer<typeof signalSchema>;
+
+export const signalResponseSchema = z.object({
+  signals: z.array(signalSchema),
+  lastUpdated: z.string(),
+  nextUpdate: z.string(),
+  updateFrequencyMinutes: z.number(),
+});
+
+export type SignalResponse = z.infer<typeof signalResponseSchema>;

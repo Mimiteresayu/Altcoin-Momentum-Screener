@@ -19,10 +19,18 @@ interface OrderBookData {
   asks: [string, string][];
 }
 
+interface LiquidityCluster {
+  price: number;
+  strength: number;
+}
+
+const MAJOR_SYMBOLS = ["BTCUSDT", "ETHUSDT"];
+const UPDATE_FREQUENCY_MINUTES = 5;
+
 async function fetchKlines(symbol: string, interval: string, limit: number = 100): Promise<Kline[]> {
   try {
     const url = `https://fapi.bitunix.com/api/v1/futures/market/kline?symbol=${symbol}&interval=${interval}&limit=${limit}`;
-    const response = await axios.get(url, { timeout: 5000 });
+    const response = await axios.get(url, { timeout: 8000 });
     
     if (response.data?.data && Array.isArray(response.data.data)) {
       return response.data.data.map((k: any) => ({
@@ -42,7 +50,7 @@ async function fetchKlines(symbol: string, interval: string, limit: number = 100
 
 async function fetchOrderBook(symbol: string): Promise<OrderBookData | null> {
   try {
-    const url = `https://fapi.bitunix.com/api/v1/futures/market/depth?symbol=${symbol}&limit=15`;
+    const url = `https://fapi.bitunix.com/api/v1/futures/market/depth?symbol=${symbol}&limit=50`;
     const response = await axios.get(url, { timeout: 5000 });
     
     if (response.data?.data) {
@@ -77,50 +85,52 @@ function calculateVolumeSpike(volumes: number[]): number {
   return avgVolume > 0 ? recentVolume / avgVolume : 1;
 }
 
-function findSwingLow(klines: Kline[], lookback: number = 20): number {
-  if (klines.length < lookback) return klines[klines.length - 1]?.low || 0;
+function findSwingLows(klines: Kline[], count: number = 3): number[] {
+  if (klines.length < 10) return [klines[klines.length - 1]?.low || 0];
   
-  const recentKlines = klines.slice(-lookback);
-  let swingLow = Infinity;
+  const swingLows: number[] = [];
   
-  for (let i = 2; i < recentKlines.length - 2; i++) {
-    const current = recentKlines[i];
+  for (let i = 2; i < klines.length - 2 && swingLows.length < count; i++) {
+    const current = klines[i];
     if (
-      current.low < recentKlines[i - 1].low &&
-      current.low < recentKlines[i - 2].low &&
-      current.low < recentKlines[i + 1].low &&
-      current.low < recentKlines[i + 2].low
+      current.low < klines[i - 1].low &&
+      current.low < klines[i - 2].low &&
+      current.low < klines[i + 1].low &&
+      current.low < klines[i + 2].low
     ) {
-      if (current.low < swingLow) {
-        swingLow = current.low;
-      }
+      swingLows.push(current.low);
     }
   }
   
-  return swingLow === Infinity ? Math.min(...recentKlines.map(k => k.low)) : swingLow;
+  if (swingLows.length === 0) {
+    swingLows.push(Math.min(...klines.slice(-20).map(k => k.low)));
+  }
+  
+  return swingLows.sort((a, b) => b - a);
 }
 
-function findSwingHigh(klines: Kline[], lookback: number = 20): number {
-  if (klines.length < lookback) return klines[klines.length - 1]?.high || 0;
+function findSwingHighs(klines: Kline[], count: number = 3): number[] {
+  if (klines.length < 10) return [klines[klines.length - 1]?.high || 0];
   
-  const recentKlines = klines.slice(-lookback);
-  let swingHigh = 0;
+  const swingHighs: number[] = [];
   
-  for (let i = 2; i < recentKlines.length - 2; i++) {
-    const current = recentKlines[i];
+  for (let i = 2; i < klines.length - 2 && swingHighs.length < count; i++) {
+    const current = klines[i];
     if (
-      current.high > recentKlines[i - 1].high &&
-      current.high > recentKlines[i - 2].high &&
-      current.high > recentKlines[i + 1].high &&
-      current.high > recentKlines[i + 2].high
+      current.high > klines[i - 1].high &&
+      current.high > klines[i - 2].high &&
+      current.high > klines[i + 1].high &&
+      current.high > klines[i + 2].high
     ) {
-      if (current.high > swingHigh) {
-        swingHigh = current.high;
-      }
+      swingHighs.push(current.high);
     }
   }
   
-  return swingHigh === 0 ? Math.max(...recentKlines.map(k => k.high)) : swingHigh;
+  if (swingHighs.length === 0) {
+    swingHighs.push(Math.max(...klines.slice(-20).map(k => k.high)));
+  }
+  
+  return swingHighs.sort((a, b) => a - b);
 }
 
 interface FVG {
@@ -196,6 +206,33 @@ function detectOrderBlock(klines: Kline[]): OrderBlock | null {
   return null;
 }
 
+function detectLiquidityClusters(orderBook: OrderBookData | null, currentPrice: number): LiquidityCluster[] {
+  if (!orderBook || !orderBook.asks.length) return [];
+  
+  const clusters: LiquidityCluster[] = [];
+  let totalAskVolume = 0;
+  
+  for (const [price, qty] of orderBook.asks) {
+    totalAskVolume += parseFloat(qty);
+  }
+  
+  const avgAskVolume = totalAskVolume / orderBook.asks.length;
+  
+  for (const [price, qty] of orderBook.asks) {
+    const priceNum = parseFloat(price);
+    const qtyNum = parseFloat(qty);
+    
+    if (qtyNum > avgAskVolume * 2 && priceNum > currentPrice) {
+      clusters.push({
+        price: priceNum,
+        strength: qtyNum / avgAskVolume,
+      });
+    }
+  }
+  
+  return clusters.sort((a, b) => a.price - b.price).slice(0, 3);
+}
+
 function calculateOrderBookImbalance(orderBook: OrderBookData | null): { imbalance: number; bidAskRatio: number } {
   if (!orderBook || !orderBook.bids.length || !orderBook.asks.length) {
     return { imbalance: 0, bidAskRatio: 1 };
@@ -211,13 +248,103 @@ function calculateOrderBookImbalance(orderBook: OrderBookData | null): { imbalan
   return { imbalance, bidAskRatio };
 }
 
-function calculateStructuredSLTP(
+interface TPLevels {
+  levels: { label: string; price: number; pct: number; reason: string }[];
+}
+
+function calculateMultipleTPLevels(
   currentPrice: number,
-  swingLow: number,
-  swingHigh: number,
+  swingHighs: number[],
+  liquidityClusters: LiquidityCluster[],
   fvg: FVG | null,
   ob: OrderBlock | null
-): { sl: number; slReason: string; tp: number; tpReason: string } {
+): TPLevels {
+  const targets: { price: number; reason: string }[] = [];
+  
+  for (const high of swingHighs) {
+    if (high > currentPrice && high < currentPrice * 1.5) {
+      targets.push({ price: high, reason: "Swing High" });
+    }
+  }
+  
+  for (const cluster of liquidityClusters) {
+    if (cluster.price > currentPrice && cluster.price < currentPrice * 1.5) {
+      targets.push({ price: cluster.price, reason: "Liquidity Zone" });
+    }
+  }
+  
+  if (fvg && fvg.type === "bearish" && fvg.level > currentPrice) {
+    targets.push({ price: fvg.level, reason: "FVG Resistance" });
+  }
+  
+  if (ob && ob.type === "bearish" && ob.level > currentPrice) {
+    targets.push({ price: ob.level, reason: "Order Block" });
+  }
+  
+  targets.sort((a, b) => a.price - b.price);
+  
+  const levels: { label: string; price: number; pct: number; reason: string }[] = [];
+  
+  if (targets.length >= 1) {
+    const tp1 = targets[0];
+    levels.push({
+      label: "TP1",
+      price: tp1.price,
+      pct: ((tp1.price - currentPrice) / currentPrice) * 100,
+      reason: tp1.reason,
+    });
+  } else {
+    levels.push({
+      label: "TP1",
+      price: currentPrice * 1.05,
+      pct: 5,
+      reason: "5% Target",
+    });
+  }
+  
+  if (targets.length >= 2) {
+    const tp2 = targets[1];
+    levels.push({
+      label: "TP2",
+      price: tp2.price,
+      pct: ((tp2.price - currentPrice) / currentPrice) * 100,
+      reason: tp2.reason,
+    });
+  } else {
+    levels.push({
+      label: "TP2",
+      price: currentPrice * 1.10,
+      pct: 10,
+      reason: "10% Target",
+    });
+  }
+  
+  if (targets.length >= 3) {
+    const tp3 = targets[2];
+    levels.push({
+      label: "TP3",
+      price: tp3.price,
+      pct: ((tp3.price - currentPrice) / currentPrice) * 100,
+      reason: tp3.reason,
+    });
+  } else {
+    levels.push({
+      label: "TP3",
+      price: currentPrice * 1.15,
+      pct: 15,
+      reason: "15% Target",
+    });
+  }
+  
+  return { levels };
+}
+
+function calculateSL(
+  currentPrice: number,
+  swingLows: number[],
+  fvg: FVG | null,
+  ob: OrderBlock | null
+): { sl: number; slReason: string } {
   let sl = currentPrice * 0.95;
   let slReason = "5% below entry";
   
@@ -227,26 +354,12 @@ function calculateStructuredSLTP(
   } else if (fvg && fvg.type === "bullish" && fvg.level < currentPrice && fvg.level > currentPrice * 0.92) {
     sl = fvg.level * 0.995;
     slReason = "Below FVG";
-  } else if (swingLow < currentPrice && swingLow > currentPrice * 0.92) {
-    sl = swingLow * 0.995;
+  } else if (swingLows.length > 0 && swingLows[0] < currentPrice && swingLows[0] > currentPrice * 0.92) {
+    sl = swingLows[0] * 0.995;
     slReason = "Below Swing Low";
   }
   
-  let tp = currentPrice * 1.15;
-  let tpReason = "15% above entry";
-  
-  if (swingHigh > currentPrice && swingHigh < currentPrice * 1.25) {
-    tp = swingHigh * 0.995;
-    tpReason = "At Swing High";
-  } else if (fvg && fvg.type === "bearish" && fvg.level > currentPrice && fvg.level < currentPrice * 1.25) {
-    tp = fvg.level * 0.995;
-    tpReason = "At FVG Resistance";
-  } else if (ob && ob.type === "bearish" && ob.level > currentPrice && ob.level < currentPrice * 1.25) {
-    tp = ob.level * 0.995;
-    tpReason = "At Order Block";
-  }
-  
-  return { sl, slReason, tp, tpReason };
+  return { sl, slReason };
 }
 
 export async function registerRoutes(
@@ -256,6 +369,7 @@ export async function registerRoutes(
   
   let cachedSignals: any[] = [];
   let isCalculating = false;
+  let lastUpdated: Date = new Date();
 
   async function calculateSignals() {
     if (isCalculating) return;
@@ -272,21 +386,27 @@ export async function registerRoutes(
       }
 
       const signals: any[] = [];
-      const topSymbols = rawData
-        .filter((t: any) => {
-          const price = parseFloat(t.lastPrice);
-          const open = parseFloat(t.open);
-          return price > 0 && open > 0 && !isNaN(price) && !isNaN(open);
-        })
+      
+      const allSymbols = rawData.filter((t: any) => {
+        const price = parseFloat(t.lastPrice);
+        const open = parseFloat(t.open);
+        return price > 0 && open > 0 && !isNaN(price) && !isNaN(open);
+      });
+      
+      const majorSymbols = allSymbols.filter((t: any) => MAJOR_SYMBOLS.includes(t.symbol));
+      const otherSymbols = allSymbols
+        .filter((t: any) => !MAJOR_SYMBOLS.includes(t.symbol))
         .sort((a: any, b: any) => parseFloat(b.quoteVol) - parseFloat(a.quoteVol))
-        .slice(0, 100);
+        .slice(0, 50);
+      
+      const symbolsToProcess = [...majorSymbols, ...otherSymbols];
+      console.log(`Processing ${symbolsToProcess.length} symbols (${majorSymbols.length} major, ${otherSymbols.length} others)...`);
 
-      console.log(`Processing ${topSymbols.length} symbols...`);
-
-      for (const item of topSymbols) {
+      for (const item of symbolsToProcess) {
         try {
           const currentPrice = parseFloat(item.lastPrice);
           const openPrice = parseFloat(item.open);
+          const isMajor = MAJOR_SYMBOLS.includes(item.symbol);
           
           if (!currentPrice || !openPrice || currentPrice === 0 || openPrice === 0) continue;
 
@@ -309,33 +429,31 @@ export async function registerRoutes(
           const volumeSpike1H = calculateVolumeSpike(volumes1H);
           const volumeSpike15M = calculateVolumeSpike(volumes15M);
 
-          const swingLow1H = findSwingLow(klines1H);
-          const swingHigh1H = findSwingHigh(klines1H);
-          const swingLow15M = findSwingLow(klines15M);
-          const swingHigh15M = findSwingHigh(klines15M);
+          const swingLows = findSwingLows(klines1H, 3);
+          const swingHighs = findSwingHighs(klines1H, 3);
 
           const fvg = detectFairValueGap(klines1H);
           const ob = detectOrderBlock(klines1H);
+          const liquidityClusters = detectLiquidityClusters(orderBook, currentPrice);
           const { imbalance, bidAskRatio } = calculateOrderBookImbalance(orderBook);
 
           const rsi = rsi1H;
           const volumeSpikeRatio = volumeSpike1H;
 
-          const { sl, slReason, tp, tpReason } = calculateStructuredSLTP(
-            currentPrice, swingLow1H, swingHigh1H, fvg, ob
-          );
+          const { sl, slReason } = calculateSL(currentPrice, swingLows, fvg, ob);
+          const { levels: tpLevels } = calculateMultipleTPLevels(currentPrice, swingHighs, liquidityClusters, fvg, ob);
 
           const risk = currentPrice - sl;
-          const reward = tp - currentPrice;
+          const reward = tpLevels[1]?.price ? tpLevels[1].price - currentPrice : currentPrice * 0.1;
           const riskReward = risk > 0 ? reward / risk : 0;
 
           const priceInRange = priceChange24h >= -5 && priceChange24h <= 15;
           const volumeInRange = volumeSpikeRatio >= 1.5 && volumeSpikeRatio <= 3;
           const rsiInRange = rsi >= 50 && rsi <= 75;
           const rrInRange = riskReward >= 2;
-          const hasLeadingIndicators = (fvg !== null || ob !== null || bidAskRatio > 1.2);
+          const hasLeadingIndicators = (fvg !== null || ob !== null || bidAskRatio > 1.2 || liquidityClusters.length > 0);
 
-          if (!priceInRange || !rsiInRange || !rrInRange) {
+          if (!isMajor && (!priceInRange || !rsiInRange || !rrInRange)) {
             continue;
           }
 
@@ -354,7 +472,8 @@ export async function registerRoutes(
           if (tf15MConfirmed) confirmedTimeframes.push("15M");
 
           const slDistancePct = ((currentPrice - sl) / currentPrice) * 100;
-          const tpDistancePct = ((tp - currentPrice) / currentPrice) * 100;
+
+          const hasLiquidityZone = liquidityClusters.length > 0;
 
           signals.push({
             symbol: item.symbol,
@@ -366,9 +485,7 @@ export async function registerRoutes(
             slPrice: sl,
             slDistancePct,
             slReason,
-            tpPrice: tp,
-            tpDistancePct,
-            tpReason,
+            tpLevels,
             riskReward,
             signalStrength,
             strengthBreakdown: {
@@ -387,6 +504,9 @@ export async function registerRoutes(
               hasOrderBlock: ob !== null,
               obLevel: ob?.level ?? null,
               obType: ob?.type ?? null,
+              hasLiquidityZone,
+              liquidityLevel: liquidityClusters[0]?.price ?? null,
+              liquidityStrength: liquidityClusters[0]?.strength ?? 0,
             },
             timeframes: [
               {
@@ -395,8 +515,8 @@ export async function registerRoutes(
                 volumeSpike: volumeSpike1H,
                 priceChange: priceChange24h,
                 confirmed: tf1HConfirmed,
-                swingLow: swingLow1H,
-                swingHigh: swingHigh1H,
+                swingLow: swingLows[0] || 0,
+                swingHigh: swingHighs[0] || 0,
               },
               {
                 timeframe: "15M",
@@ -404,21 +524,26 @@ export async function registerRoutes(
                 volumeSpike: volumeSpike15M,
                 priceChange: priceChange24h,
                 confirmed: tf15MConfirmed,
-                swingLow: swingLow15M,
-                swingHigh: swingHigh15M,
+                swingLow: swingLows[0] || 0,
+                swingHigh: swingHighs[0] || 0,
               },
             ],
             confirmedTimeframes,
+            isMajor,
           });
 
-          await new Promise(resolve => setTimeout(resolve, 50));
+          await new Promise(resolve => setTimeout(resolve, 30));
         } catch (err) {
           continue;
         }
       }
 
-      cachedSignals = signals.sort((a, b) => b.riskReward - a.riskReward);
-      console.log(`Signal calculation complete. Found ${cachedSignals.length} quality signals.`);
+      const majorSignals = signals.filter(s => s.isMajor);
+      const otherSignals = signals.filter(s => !s.isMajor).sort((a, b) => b.riskReward - a.riskReward);
+      
+      cachedSignals = [...majorSignals, ...otherSignals];
+      lastUpdated = new Date();
+      console.log(`Signal calculation complete. Found ${cachedSignals.length} signals (${majorSignals.length} major).`);
       
     } catch (error) {
       console.error("Signal calculation error:", error);
@@ -428,10 +553,27 @@ export async function registerRoutes(
   }
 
   calculateSignals();
-  setInterval(calculateSignals, 5 * 60 * 1000);
+  setInterval(calculateSignals, UPDATE_FREQUENCY_MINUTES * 60 * 1000);
 
   app.get(api.tickers.list.path, async (req, res) => {
-    res.json(cachedSignals);
+    const nextUpdate = new Date(lastUpdated.getTime() + UPDATE_FREQUENCY_MINUTES * 60 * 1000);
+    
+    res.json({
+      signals: cachedSignals,
+      lastUpdated: lastUpdated.toISOString(),
+      nextUpdate: nextUpdate.toISOString(),
+      updateFrequencyMinutes: UPDATE_FREQUENCY_MINUTES,
+    });
+  });
+
+  app.post(api.tickers.refresh.path, async (req, res) => {
+    if (isCalculating) {
+      res.json({ message: "Calculation already in progress" });
+      return;
+    }
+    
+    calculateSignals();
+    res.json({ message: "Refresh triggered" });
   });
 
   app.get(api.watchlist.list.path, async (req, res) => {

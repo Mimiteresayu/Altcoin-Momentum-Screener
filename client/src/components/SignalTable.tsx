@@ -1,6 +1,6 @@
 import { useState, useMemo } from "react";
 import { type Signal } from "@shared/schema";
-import { ArrowUp, ArrowDown, ArrowUpDown, Star, Search, TrendingUp, TrendingDown, Activity, Target, ShieldAlert, Zap, BarChart3, Clock, Check, X } from "lucide-react";
+import { ArrowUp, ArrowDown, ArrowUpDown, Star, Search, TrendingUp, TrendingDown, Activity, Target, ShieldAlert, Zap, BarChart3, Clock, Check, X, Waves, Crown } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { clsx } from "clsx";
 import { useWatchlist, useAddToWatchlist, useRemoveFromWatchlist } from "@/hooks/use-market-data";
@@ -40,7 +40,10 @@ export function SignalTable({ signals }: SignalTableProps) {
       data = data.filter(s => s.symbol.toLowerCase().includes(q));
     }
 
-    data.sort((a, b) => {
+    const majorSignals = data.filter(s => s.isMajor);
+    const otherSignals = data.filter(s => !s.isMajor);
+
+    otherSignals.sort((a, b) => {
       const aVal = a[sortConfig.key];
       const bVal = b[sortConfig.key];
 
@@ -53,7 +56,7 @@ export function SignalTable({ signals }: SignalTableProps) {
       return 0;
     });
 
-    return data;
+    return [...majorSignals, ...otherSignals];
   }, [signals, search, sortConfig]);
 
   const handleSort = (key: SortKey) => {
@@ -63,11 +66,11 @@ export function SignalTable({ signals }: SignalTableProps) {
     }));
   };
 
-  const isWatched = (symbol: string) => watchlist?.some(w => w.symbol === symbol);
+  const isWatched = (symbol: string) => watchlist?.some((w: any) => w.symbol === symbol);
 
   const toggleWatchlist = (e: React.MouseEvent, symbol: string) => {
     e.stopPropagation();
-    const existing = watchlist?.find(w => w.symbol === symbol);
+    const existing = watchlist?.find((w: any) => w.symbol === symbol);
     if (existing) {
       removeFromWatchlist.mutate(existing.id);
     } else {
@@ -114,41 +117,25 @@ export function SignalTable({ signals }: SignalTableProps) {
     </div>
   );
 
-  const LeadingIndicatorsTooltip = ({ indicators }: { indicators: Signal["leadingIndicators"] }) => (
-    <div className="text-xs space-y-1.5 p-2 min-w-[180px]">
-      <div className="font-semibold border-b border-white/10 pb-1 mb-1">Order Book</div>
-      <div className="flex justify-between">
-        <span className="text-muted-foreground">Imbalance:</span>
-        <span className={indicators.orderBookImbalance > 0 ? "text-emerald-400" : "text-rose-400"}>
-          {(indicators.orderBookImbalance * 100).toFixed(1)}%
-        </span>
-      </div>
-      <div className="flex justify-between">
-        <span className="text-muted-foreground">Bid/Ask Ratio:</span>
-        <span className={indicators.bidAskRatio > 1 ? "text-emerald-400" : "text-rose-400"}>
-          {indicators.bidAskRatio.toFixed(2)}
-        </span>
-      </div>
-      <div className="font-semibold border-b border-white/10 pb-1 mb-1 mt-2">Structure</div>
-      <div className="flex justify-between">
-        <span className="text-muted-foreground">FVG:</span>
-        {indicators.hasFVG ? (
-          <span className={indicators.fvgType === "bullish" ? "text-emerald-400" : "text-rose-400"}>
-            {indicators.fvgType} @ {formatPrice(indicators.fvgLevel!)}
+  const TPLevelsDisplay = ({ levels }: { levels: Signal["tpLevels"] }) => (
+    <div className="text-xs space-y-1.5 p-2 min-w-[200px]">
+      {levels.map((tp, idx) => (
+        <div key={idx} className="flex justify-between items-center">
+          <span className={clsx(
+            "font-semibold",
+            idx === 0 ? "text-emerald-400" : idx === 1 ? "text-teal-400" : "text-cyan-400"
+          )}>
+            {tp.label}:
           </span>
-        ) : (
-          <span className="text-slate-500">None</span>
-        )}
-      </div>
-      <div className="flex justify-between">
-        <span className="text-muted-foreground">Order Block:</span>
-        {indicators.hasOrderBlock ? (
-          <span className={indicators.obType === "bullish" ? "text-emerald-400" : "text-rose-400"}>
-            {indicators.obType} @ {formatPrice(indicators.obLevel!)}
-          </span>
-        ) : (
-          <span className="text-slate-500">None</span>
-        )}
+          <span className="font-mono">${formatPrice(tp.price)} (+{tp.pct.toFixed(1)}%)</span>
+        </div>
+      ))}
+      <div className="border-t border-white/10 pt-1 mt-1">
+        {levels.map((tp, idx) => (
+          <div key={idx} className="text-muted-foreground text-[10px]">
+            {tp.label}: {tp.reason}
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -169,7 +156,7 @@ export function SignalTable({ signals }: SignalTableProps) {
         </div>
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
           <Activity className="w-4 h-4" />
-          <span data-testid="text-signal-count">{processedData.length} quality signals (filtered from 500+)</span>
+          <span data-testid="text-signal-count">{processedData.length} signals</span>
         </div>
       </div>
 
@@ -178,40 +165,40 @@ export function SignalTable({ signals }: SignalTableProps) {
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-muted/30 border-b border-white/5 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                <th className="px-3 py-4 w-10 text-center">
-                  <Star className="w-4 h-4 mx-auto" />
+                <th className="px-2 py-3 w-8 text-center">
+                  <Star className="w-3 h-3 mx-auto" />
                 </th>
-                <th className="px-3 py-4 cursor-pointer hover:text-primary transition-colors" onClick={() => handleSort('symbol')}>
+                <th className="px-2 py-3 cursor-pointer hover:text-primary transition-colors" onClick={() => handleSort('symbol')}>
                   <div className="flex items-center">Symbol <SortIcon column="symbol" /></div>
                 </th>
-                <th className="px-3 py-4 text-right cursor-pointer hover:text-primary transition-colors" onClick={() => handleSort('currentPrice')}>
+                <th className="px-2 py-3 text-right cursor-pointer hover:text-primary transition-colors" onClick={() => handleSort('currentPrice')}>
                   <div className="flex items-center justify-end">Price <SortIcon column="currentPrice" /></div>
                 </th>
-                <th className="px-3 py-4 text-right cursor-pointer hover:text-primary transition-colors" onClick={() => handleSort('priceChange24h')}>
+                <th className="px-2 py-3 text-right cursor-pointer hover:text-primary transition-colors" onClick={() => handleSort('priceChange24h')}>
                   <div className="flex items-center justify-end">24h <SortIcon column="priceChange24h" /></div>
                 </th>
-                <th className="px-3 py-4 text-right cursor-pointer hover:text-primary transition-colors" onClick={() => handleSort('volumeSpikeRatio')}>
-                  <div className="flex items-center justify-end">Vol <SortIcon column="volumeSpikeRatio" /></div>
-                </th>
-                <th className="px-3 py-4 text-right cursor-pointer hover:text-primary transition-colors" onClick={() => handleSort('rsi')}>
+                <th className="px-2 py-3 text-right cursor-pointer hover:text-primary transition-colors" onClick={() => handleSort('rsi')}>
                   <div className="flex items-center justify-end">RSI <SortIcon column="rsi" /></div>
                 </th>
-                <th className="px-3 py-4 text-center">
+                <th className="px-2 py-3 text-center">
                   <div className="flex items-center justify-center gap-1"><Clock className="w-3 h-3" /> TF</div>
                 </th>
-                <th className="px-3 py-4 text-right">
+                <th className="px-2 py-3 text-right">
                   <div className="flex items-center justify-end gap-1"><ShieldAlert className="w-3 h-3" /> SL</div>
                 </th>
-                <th className="px-3 py-4 text-right">
-                  <div className="flex items-center justify-end gap-1"><Target className="w-3 h-3" /> TP</div>
+                <th className="px-2 py-3 text-center">
+                  <div className="flex items-center justify-center gap-1"><Target className="w-3 h-3" /> TP1/2/3</div>
                 </th>
-                <th className="px-3 py-4 text-right cursor-pointer hover:text-primary transition-colors" onClick={() => handleSort('riskReward')}>
+                <th className="px-2 py-3 text-right cursor-pointer hover:text-primary transition-colors" onClick={() => handleSort('riskReward')}>
                   <div className="flex items-center justify-end">R:R <SortIcon column="riskReward" /></div>
                 </th>
-                <th className="px-3 py-4 text-center">
+                <th className="px-2 py-3 text-center">
+                  <div className="flex items-center justify-center gap-1"><Waves className="w-3 h-3" /> LIQ</div>
+                </th>
+                <th className="px-2 py-3 text-center">
                   <div className="flex items-center justify-center gap-1"><BarChart3 className="w-3 h-3" /> Ind</div>
                 </th>
-                <th className="px-3 py-4 text-center cursor-pointer hover:text-primary transition-colors" onClick={() => handleSort('signalStrength')}>
+                <th className="px-2 py-3 text-center cursor-pointer hover:text-primary transition-colors" onClick={() => handleSort('signalStrength')}>
                   <div className="flex items-center justify-center gap-1"><Zap className="w-3 h-3" /> Str <SortIcon column="signalStrength" /></div>
                 </th>
               </tr>
@@ -229,61 +216,69 @@ export function SignalTable({ signals }: SignalTableProps) {
                       initial={{ opacity: 0 }}
                       animate={{ opacity: 1 }}
                       exit={{ opacity: 0 }}
-                      className="group hover:bg-white/[0.02] transition-colors"
+                      className={clsx(
+                        "group hover:bg-white/[0.02] transition-colors",
+                        signal.isMajor && "bg-amber-500/5"
+                      )}
                       data-testid={`row-signal-${signal.symbol}`}
                     >
-                      <td className="px-3 py-3 text-center">
+                      <td className="px-2 py-2 text-center">
                         <button 
                           onClick={(e) => toggleWatchlist(e, signal.symbol)}
                           data-testid={`button-watchlist-${signal.symbol}`}
                           className={clsx(
-                            "p-1.5 rounded-full hover:bg-white/10 transition-all",
+                            "p-1 rounded-full hover:bg-white/10 transition-all",
                             watched ? "text-yellow-400" : "text-muted-foreground/20 hover:text-yellow-400/50"
                           )}
                         >
-                          <Star className={clsx("w-4 h-4", watched && "fill-current")} />
+                          <Star className={clsx("w-3 h-3", watched && "fill-current")} />
                         </button>
                       </td>
-                      <td className="px-3 py-3 font-medium text-foreground">
-                        <span className="font-mono tracking-tight">{signal.symbol.replace("USDT", "")}</span>
+                      <td className="px-2 py-2 font-medium text-foreground">
+                        <div className="flex items-center gap-1.5">
+                          {signal.isMajor && (
+                            <Badge className="bg-amber-500/20 text-amber-400 border-amber-500/30 text-[9px] px-1 py-0">
+                              <Crown className="w-2.5 h-2.5 mr-0.5" />
+                              MAJOR
+                            </Badge>
+                          )}
+                          <span className="font-mono tracking-tight">{signal.symbol.replace("USDT", "")}</span>
+                        </div>
                       </td>
-                      <td className="px-3 py-3 text-right font-mono text-foreground font-bold">
+                      <td className="px-2 py-2 text-right font-mono text-foreground font-bold text-xs">
                         ${formatPrice(signal.currentPrice)}
                       </td>
-                      <td className="px-3 py-3 text-right font-mono">
+                      <td className="px-2 py-2 text-right font-mono">
                         <div className={clsx(
-                          "inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-bold",
+                          "inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-bold",
                           isPositive ? "text-emerald-400 bg-emerald-500/10" : isNegative ? "text-rose-400 bg-rose-500/10" : "text-muted-foreground"
                         )}>
-                          {isPositive && <TrendingUp className="w-3 h-3" />}
-                          {isNegative && <TrendingDown className="w-3 h-3" />}
+                          {isPositive && <TrendingUp className="w-2.5 h-2.5" />}
+                          {isNegative && <TrendingDown className="w-2.5 h-2.5" />}
                           {signal.priceChange24h.toFixed(1)}%
                         </div>
                       </td>
-                      <td className="px-3 py-3 text-right font-mono text-amber-400">
-                        {signal.volumeSpikeRatio.toFixed(1)}x
-                      </td>
-                      <td className="px-3 py-3 text-right font-mono text-muted-foreground">
+                      <td className="px-2 py-2 text-right font-mono text-muted-foreground text-xs">
                         {signal.rsi.toFixed(0)}
                       </td>
-                      <td className="px-3 py-3 text-center">
-                        <div className="flex items-center justify-center gap-1">
+                      <td className="px-2 py-2 text-center">
+                        <div className="flex items-center justify-center gap-0.5">
                           {signal.confirmedTimeframes.map(tf => (
-                            <Badge key={tf} variant="outline" className="text-[10px] px-1.5 py-0 bg-primary/10 border-primary/30 text-primary">
+                            <Badge key={tf} variant="outline" className="text-[9px] px-1 py-0 bg-primary/10 border-primary/30 text-primary">
                               {tf}
                             </Badge>
                           ))}
                           {signal.confirmedTimeframes.length === 0 && (
-                            <span className="text-muted-foreground text-xs">-</span>
+                            <span className="text-muted-foreground text-[10px]">-</span>
                           )}
                         </div>
                       </td>
-                      <td className="px-3 py-3 text-right font-mono">
+                      <td className="px-2 py-2 text-right font-mono">
                         <Tooltip>
                           <TooltipTrigger asChild>
-                            <div className="cursor-help">
+                            <div className="cursor-help text-xs">
                               <div className="text-rose-400">${formatPrice(signal.slPrice)}</div>
-                              <div className="text-[10px] text-rose-400/60">-{signal.slDistancePct.toFixed(1)}%</div>
+                              <div className="text-[9px] text-rose-400/60">-{signal.slDistancePct.toFixed(1)}%</div>
                             </div>
                           </TooltipTrigger>
                           <TooltipContent side="top" className="bg-card border-white/10">
@@ -291,57 +286,78 @@ export function SignalTable({ signals }: SignalTableProps) {
                           </TooltipContent>
                         </Tooltip>
                       </td>
-                      <td className="px-3 py-3 text-right font-mono">
+                      <td className="px-2 py-2 text-center">
                         <Tooltip>
                           <TooltipTrigger asChild>
-                            <div className="cursor-help">
-                              <div className="text-emerald-400">${formatPrice(signal.tpPrice)}</div>
-                              <div className="text-[10px] text-emerald-400/60">+{signal.tpDistancePct.toFixed(1)}%</div>
+                            <div className="cursor-help text-xs">
+                              <div className="flex items-center justify-center gap-1">
+                                {signal.tpLevels.slice(0, 3).map((tp, idx) => (
+                                  <span key={idx} className={clsx(
+                                    "font-mono",
+                                    idx === 0 ? "text-emerald-400" : idx === 1 ? "text-teal-400" : "text-cyan-400"
+                                  )}>
+                                    +{tp.pct.toFixed(0)}%
+                                  </span>
+                                ))}
+                              </div>
                             </div>
                           </TooltipTrigger>
-                          <TooltipContent side="top" className="bg-card border-white/10">
-                            <p className="text-xs">{signal.tpReason}</p>
+                          <TooltipContent side="top" className="bg-card border-white/10 p-0">
+                            <TPLevelsDisplay levels={signal.tpLevels} />
                           </TooltipContent>
                         </Tooltip>
                       </td>
-                      <td className="px-3 py-3 text-right font-mono">
+                      <td className="px-2 py-2 text-right font-mono">
                         <Badge className={clsx(
-                          "font-bold",
+                          "font-bold text-[10px]",
                           signal.riskReward >= 3 ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/30" : "bg-slate-500/20 text-slate-300 border-slate-500/30"
                         )}>
                           1:{signal.riskReward.toFixed(1)}
                         </Badge>
                       </td>
-                      <td className="px-3 py-3 text-center">
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <div className="flex items-center justify-center gap-1 cursor-help">
-                              {signal.leadingIndicators.hasFVG && (
-                                <Badge variant="outline" className="text-[10px] px-1 py-0 bg-purple-500/10 border-purple-500/30 text-purple-400">
-                                  FVG
-                                </Badge>
-                              )}
-                              {signal.leadingIndicators.hasOrderBlock && (
-                                <Badge variant="outline" className="text-[10px] px-1 py-0 bg-blue-500/10 border-blue-500/30 text-blue-400">
-                                  OB
-                                </Badge>
-                              )}
-                              {signal.leadingIndicators.bidAskRatio > 1.2 && (
-                                <Badge variant="outline" className="text-[10px] px-1 py-0 bg-emerald-500/10 border-emerald-500/30 text-emerald-400">
-                                  BID+
-                                </Badge>
-                              )}
-                              {!signal.leadingIndicators.hasFVG && !signal.leadingIndicators.hasOrderBlock && signal.leadingIndicators.bidAskRatio <= 1.2 && (
-                                <span className="text-muted-foreground text-xs">-</span>
-                              )}
-                            </div>
-                          </TooltipTrigger>
-                          <TooltipContent side="top" className="bg-card border-white/10 p-0">
-                            <LeadingIndicatorsTooltip indicators={signal.leadingIndicators} />
-                          </TooltipContent>
-                        </Tooltip>
+                      <td className="px-2 py-2 text-center">
+                        {signal.leadingIndicators.hasLiquidityZone ? (
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Badge className="bg-purple-500/20 text-purple-400 border-purple-500/30 text-[9px] px-1 cursor-help">
+                                LIQ
+                              </Badge>
+                            </TooltipTrigger>
+                            <TooltipContent side="top" className="bg-card border-white/10">
+                              <p className="text-xs">
+                                Liquidity at ${formatPrice(signal.leadingIndicators.liquidityLevel || 0)}
+                                <br />
+                                Strength: {signal.leadingIndicators.liquidityStrength.toFixed(1)}x
+                              </p>
+                            </TooltipContent>
+                          </Tooltip>
+                        ) : (
+                          <span className="text-muted-foreground text-[10px]">-</span>
+                        )}
                       </td>
-                      <td className="px-3 py-3 text-center">
+                      <td className="px-2 py-2 text-center">
+                        <div className="flex items-center justify-center gap-0.5">
+                          {signal.leadingIndicators.hasFVG && (
+                            <Badge variant="outline" className="text-[9px] px-1 py-0 bg-purple-500/10 border-purple-500/30 text-purple-400">
+                              FVG
+                            </Badge>
+                          )}
+                          {signal.leadingIndicators.hasOrderBlock && (
+                            <Badge variant="outline" className="text-[9px] px-1 py-0 bg-blue-500/10 border-blue-500/30 text-blue-400">
+                              OB
+                            </Badge>
+                          )}
+                          {signal.leadingIndicators.bidAskRatio > 1.2 && (
+                            <Badge variant="outline" className="text-[9px] px-1 py-0 bg-emerald-500/10 border-emerald-500/30 text-emerald-400">
+                              B+
+                            </Badge>
+                          )}
+                          {!signal.leadingIndicators.hasFVG && !signal.leadingIndicators.hasOrderBlock && signal.leadingIndicators.bidAskRatio <= 1.2 && (
+                            <span className="text-muted-foreground text-[10px]">-</span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-2 py-2 text-center">
                         <Tooltip>
                           <TooltipTrigger asChild>
                             <div className="cursor-help">
@@ -362,7 +378,7 @@ export function SignalTable({ signals }: SignalTableProps) {
           
           {processedData.length === 0 && (
             <div className="p-12 text-center text-muted-foreground">
-              {search ? `No signals found matching "${search}"` : "Calculating signals... This may take a moment as we analyze market structure."}
+              {search ? `No signals found matching "${search}"` : "Calculating signals... This may take a moment."}
             </div>
           )}
         </div>
