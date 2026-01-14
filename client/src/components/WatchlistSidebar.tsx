@@ -5,24 +5,17 @@ import { motion, AnimatePresence } from "framer-motion";
 
 export function WatchlistSidebar() {
   const { data: watchlist, isLoading: loadingWatchlist } = useWatchlist();
-  const { data: tickers, isLoading: loadingTickers } = useTickers();
+  const { data: tickersData, isLoading: loadingTickers } = useTickers();
   const removeMutation = useRemoveFromWatchlist();
 
-  // Helper to get ticker data for a watched symbol
-  const getTicker = (symbol: string) => tickers?.find(t => t.symbol === symbol);
+  const signals = tickersData?.signals || [];
 
-  const getChange = (ticker: any) => {
-    if (!ticker) return 0;
-    const open = parseFloat(ticker.open);
-    const last = parseFloat(ticker.lastPrice);
-    if (open === 0) return 0;
-    return ((last - open) / open) * 100;
-  };
+  const getSignal = (symbol: string) => signals.find(s => s.symbol === symbol);
 
-  const formatPrice = (price: string) => {
-    const val = parseFloat(price);
-    if (val < 1) return val.toFixed(6);
-    return val.toFixed(2);
+  const formatPrice = (price: number) => {
+    if (price < 1) return price.toFixed(6);
+    if (price < 10) return price.toFixed(4);
+    return price.toFixed(2);
   };
 
   if (loadingWatchlist || loadingTickers) {
@@ -60,9 +53,9 @@ export function WatchlistSidebar() {
       
       <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-3">
         <AnimatePresence mode="popLayout">
-          {watchlist.map((item) => {
-            const ticker = getTicker(item.symbol);
-            const change = getChange(ticker);
+          {watchlist.map((item: any) => {
+            const signal = getSignal(item.symbol);
+            const change = signal?.priceChange24h || 0;
             const isPositive = change > 0;
             const isNegative = change < 0;
 
@@ -80,19 +73,20 @@ export function WatchlistSidebar() {
                   <button
                     onClick={() => removeMutation.mutate(item.id)}
                     className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-all p-1 -mr-2 -mt-2"
+                    data-testid={`button-remove-watchlist-${item.symbol}`}
                   >
                     <X className="w-4 h-4" />
                   </button>
                 </div>
 
-                {ticker ? (
+                {signal ? (
                   <div className="flex justify-between items-end">
                     <span className="text-lg font-mono-numbers font-medium text-foreground">
-                      ${formatPrice(ticker.lastPrice)}
+                      ${formatPrice(signal.currentPrice)}
                     </span>
                     <div className={clsx(
                       "flex items-center gap-1 text-xs font-bold px-1.5 py-0.5 rounded",
-                      isPositive ? "text-up bg-up/10" : isNegative ? "text-down bg-down/10" : "text-muted-foreground"
+                      isPositive ? "text-emerald-400 bg-emerald-500/10" : isNegative ? "text-rose-400 bg-rose-500/10" : "text-muted-foreground"
                     )}>
                       {isPositive ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
                       {Math.abs(change).toFixed(2)}%
