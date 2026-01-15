@@ -173,7 +173,9 @@ export const signalSchema = z.object({
   volumeSpikeRatio: z.number(),
   volAccel: z.number().optional(),  // Volume acceleration: current1H / avg4H
   isAccelerating: z.boolean().optional(),  // True if volAccel >= 2.0x
-  signalType: z.enum(["ACTIVE", "PRE", "MAJOR"]).optional(),  // Signal category
+  oiChange24h: z.number().optional(),  // Open Interest 24H change %
+  hasVolAlert: z.boolean().optional(),  // True if volume > 2.0x
+  signalType: z.enum(["HOT", "ACTIVE", "PRE", "MAJOR"]).optional(),  // Signal category (HOT = top priority)
   rsi: z.number(),
   entryPrice: z.number(),
   slPrice: z.number(),

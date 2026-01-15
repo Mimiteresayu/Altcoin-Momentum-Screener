@@ -40,13 +40,13 @@ export function SignalTable({ signals }: SignalTableProps) {
       data = data.filter(s => s.symbol.toLowerCase().includes(q));
     }
 
-    // Sort by signalType priority: MAJOR first, then ACTIVE, then PRE
+    // Sort by signalType priority: HOT first, then MAJOR, then ACTIVE, then PRE
     // Within each category, sort by the user-selected column
-    const typePriority: Record<string, number> = { "MAJOR": 0, "ACTIVE": 1, "PRE": 2 };
+    const typePriority: Record<string, number> = { "HOT": 0, "MAJOR": 1, "ACTIVE": 2, "PRE": 3 };
     
     data.sort((a, b) => {
-      const aPriority = typePriority[a.signalType ?? "PRE"] ?? 3;
-      const bPriority = typePriority[b.signalType ?? "PRE"] ?? 3;
+      const aPriority = typePriority[a.signalType ?? "PRE"] ?? 4;
+      const bPriority = typePriority[b.signalType ?? "PRE"] ?? 4;
       
       // First sort by signal type priority
       if (aPriority !== bPriority) return aPriority - bPriority;
@@ -284,6 +284,20 @@ export function SignalTable({ signals }: SignalTableProps) {
                     </TooltipContent>
                   </Tooltip>
                 </th>
+                <th className="px-2 py-3 text-center">
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <div className="flex items-center justify-center gap-1 cursor-help"><BarChart3 className="w-3 h-3 text-cyan-400" /> OI</div>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <div className="text-xs max-w-[200px]">
+                        <div className="font-semibold text-cyan-400">Open Interest 24H</div>
+                        <div className="text-muted-foreground">Change in open interest over 24 hours</div>
+                        <div className="mt-1">+10%+ indicates strong momentum</div>
+                      </div>
+                    </TooltipContent>
+                  </Tooltip>
+                </th>
                 <th className="px-2 py-3 text-right cursor-pointer hover:text-primary transition-colors" onClick={() => handleSort('rsi')}>
                   <div className="flex items-center justify-end">RSI <SortIcon column="rsi" /></div>
                 </th>
@@ -328,6 +342,7 @@ export function SignalTable({ signals }: SignalTableProps) {
                       exit={{ opacity: 0 }}
                       className={clsx(
                         "group hover:bg-white/[0.02] transition-colors",
+                        signal.signalType === "HOT" && "bg-rose-500/10 animate-pulse",
                         signal.signalType === "MAJOR" && "bg-amber-500/5",
                         signal.signalType === "ACTIVE" && "bg-emerald-500/5",
                         signal.signalType === "PRE" && "bg-blue-500/5"
@@ -348,6 +363,12 @@ export function SignalTable({ signals }: SignalTableProps) {
                       </td>
                       <td className="px-2 py-2 font-medium text-foreground">
                         <div className="flex items-center gap-1.5">
+                          {signal.signalType === "HOT" && (
+                            <Badge className="bg-rose-500/30 text-rose-300 border-rose-500/50 text-[9px] px-1 py-0 animate-pulse font-bold">
+                              <Flame className="w-2.5 h-2.5 mr-0.5" />
+                              HOT
+                            </Badge>
+                          )}
                           {signal.signalType === "MAJOR" && (
                             <Badge className="bg-amber-500/20 text-amber-400 border-amber-500/30 text-[9px] px-1 py-0">
                               <Crown className="w-2.5 h-2.5 mr-0.5" />
@@ -383,12 +404,20 @@ export function SignalTable({ signals }: SignalTableProps) {
                         </div>
                       </td>
                       <td className="px-2 py-2 text-right font-mono text-xs">
-                        <span className={clsx(
-                          signal.volumeSpikeRatio >= 1.5 ? "text-emerald-400" : 
-                          signal.volumeSpikeRatio >= 0.8 ? "text-amber-400" : "text-muted-foreground"
-                        )}>
-                          {signal.volumeSpikeRatio.toFixed(1)}x
-                        </span>
+                        <div className="flex items-center justify-end gap-1">
+                          {signal.hasVolAlert && (
+                            <Badge className="bg-rose-500/30 text-rose-300 border-rose-500/50 text-[9px] px-1 py-0 animate-pulse">
+                              ALERT
+                            </Badge>
+                          )}
+                          <span className={clsx(
+                            signal.volumeSpikeRatio >= 2.0 ? "text-rose-400 font-bold" :
+                            signal.volumeSpikeRatio >= 1.5 ? "text-emerald-400" : 
+                            signal.volumeSpikeRatio >= 1.0 ? "text-amber-400" : "text-muted-foreground"
+                          )}>
+                            {signal.volumeSpikeRatio.toFixed(1)}x
+                          </span>
+                        </div>
                       </td>
                       <td className="px-2 py-2 text-center">
                         {signal.isAccelerating ? (
@@ -400,6 +429,19 @@ export function SignalTable({ signals }: SignalTableProps) {
                           <span className="text-muted-foreground text-xs font-mono">
                             {(signal.volAccel ?? 1).toFixed(1)}x
                           </span>
+                        )}
+                      </td>
+                      <td className="px-2 py-2 text-center font-mono text-xs">
+                        {signal.oiChange24h != null ? (
+                          <span className={clsx(
+                            signal.oiChange24h >= 10 ? "text-emerald-400 font-bold" :
+                            signal.oiChange24h >= 5 ? "text-emerald-400" :
+                            signal.oiChange24h <= -5 ? "text-rose-400" : "text-muted-foreground"
+                          )}>
+                            {signal.oiChange24h >= 0 ? "+" : ""}{signal.oiChange24h.toFixed(1)}%
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground/50">-</span>
                         )}
                       </td>
                       <td className="px-2 py-2 text-right font-mono text-muted-foreground text-xs">

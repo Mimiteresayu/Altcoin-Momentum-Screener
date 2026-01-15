@@ -28,6 +28,56 @@ interface LiquidityCluster {
 const MAJOR_SYMBOLS = ["BTCUSDT", "ETHUSDT"];
 const UPDATE_FREQUENCY_MINUTES = 5;
 
+// Cache for OI data from Coinglass
+let oiDataCache: Map<string, number> = new Map();
+let oiLastFetched: Date | null = null;
+const OI_CACHE_DURATION_MS = 5 * 60 * 1000; // 5 minutes
+
+// Fetch Open Interest data from Coinglass API
+async function fetchOpenInterestData(): Promise<Map<string, number>> {
+  const apiKey = process.env.COINGLASS_API_KEY;
+  
+  // Return cached data if fresh
+  if (oiLastFetched && (Date.now() - oiLastFetched.getTime()) < OI_CACHE_DURATION_MS && oiDataCache.size > 0) {
+    return oiDataCache;
+  }
+  
+  if (!apiKey) {
+    console.log("[OI] No COINGLASS_API_KEY set - OI data unavailable");
+    return new Map();
+  }
+  
+  try {
+    // Fetch top coins OI data from Coinglass
+    const response = await axios.get("https://open-api-v4.coinglass.com/api/futures/open-interest/exchange-list", {
+      headers: { "CG-API-KEY": apiKey },
+      params: { symbol: "ALL" },
+      timeout: 10000,
+    });
+    
+    const newCache = new Map<string, number>();
+    
+    if (response.data?.data && Array.isArray(response.data.data)) {
+      for (const item of response.data.data) {
+        // Coinglass returns symbol without USDT suffix
+        const symbol = `${item.symbol}USDT`;
+        // Get 24H OI change percentage
+        const oiChange24h = item.open_interest_change_percent_24h ?? item.openInterestChangePercent24h ?? 0;
+        newCache.set(symbol, oiChange24h);
+      }
+      
+      oiDataCache = newCache;
+      oiLastFetched = new Date();
+      console.log(`[OI] Fetched OI data for ${newCache.size} symbols`);
+    }
+    
+    return newCache;
+  } catch (error: any) {
+    console.error("[OI] Failed to fetch Coinglass data:", error?.message || error);
+    return oiDataCache; // Return stale cache on error
+  }
+}
+
 async function fetchKlines(symbol: string, interval: string, limit: number = 100): Promise<Kline[]> {
   try {
     const url = `https://fapi.bitunix.com/api/v1/futures/market/kline?symbol=${symbol}&interval=${interval}&limit=${limit}`;
@@ -456,6 +506,9 @@ export async function registerRoutes(
       const uniqueSymbols = Array.from(new Map(symbolsToProcess.map(s => [s.symbol, s])).values());
       
       console.log(`Processing ${uniqueSymbols.length} symbols (${majorSymbols.length} major, ${watchedSymbols.length} watched, ${otherSymbols.length} top volume, ${highMovers.length} high movers)...`);
+      
+      // Fetch OI data for all symbols
+      const oiData = await fetchOpenInterestData();
 
       for (const item of uniqueSymbols) {
         try {
@@ -498,6 +551,10 @@ export async function registerRoutes(
 
           const rsi = rsi1H;
           const volumeSpikeRatio = volumeSpike1H;
+          
+          // Get OI data for this symbol
+          const oiChange24h = oiData.get(item.symbol) ?? null;
+          const hasVolAlert = volumeSpikeRatio > 2.0;  // VOL ALERT badge for > 2.0x
 
           const { sl, slReason } = calculateSL(currentPrice, swingLows, fvg, ob);
           const { levels: tpLevels } = calculateMultipleTPLevels(currentPrice, swingHighs, liquidityClusters, fvg, ob);
@@ -506,29 +563,40 @@ export async function registerRoutes(
           const reward = tpLevels[1]?.price ? tpLevels[1].price - currentPrice : currentPrice * 0.1;
           const riskReward = risk > 0 ? reward / risk : 0;
 
-          // THREE SIGNAL CATEGORIES for comprehensive coverage
-          // 1. ACTIVE MOMENTUM: Coins spiking NOW (high vol, high price change)
-          // 2. PRE-CONSOLIDATION: Coins before spike (low-mid vol, consolidating)
-          // 3. MAJOR: BTC/ETH with relaxed criteria
+          // FOUR SIGNAL CATEGORIES for comprehensive coverage
+          // Priority 0: HOT MOMENTUM - Big movers that are spiking hard (highest priority)
+          // Priority 1: ACTIVE MOMENTUM - Coins actively spiking
+          // Priority 2: PRE-CONSOLIDATION - Coins before spike
+          // Priority 3: MAJOR - BTC/ETH with relaxed criteria
           
           const hasLeadingIndicators = (fvg !== null || ob !== null || bidAskRatio > 1.1 || liquidityClusters.length > 0);
           
-          // ACTIVE MOMENTUM criteria (Priority 1): VOL >= 1.5x, Price +5% to +60%, RSI 50-85
-          const isActiveMomentum = volumeSpikeRatio >= 1.5 && 
+          // HOT MOMENTUM criteria (Priority 0): Price >= +15%, VOL >= 1.5x, OI >= +10% (if available)
+          // This catches coins like FHE (+61%), DOLO (+26%) that are big movers
+          const oiConditionMet = oiChange24h === null || oiChange24h >= 10; // Pass if no OI data or OI >= +10%
+          const isHotMomentum = priceChange24h >= 15 && 
+                                volumeSpikeRatio >= 1.5 && 
+                                oiConditionMet;
+          
+          // ACTIVE MOMENTUM criteria (Priority 1): VOL >= 1.0x (was 1.5x), Price +5% to +60%, RSI 50-85
+          const isActiveMomentum = !isHotMomentum && 
+                                   volumeSpikeRatio >= 1.0 && 
                                    priceChange24h >= 5 && priceChange24h <= 60 && 
                                    rsi >= 50 && rsi <= 85;
           
-          // PRE-CONSOLIDATION criteria (Priority 2): VOL 0.3-1.5x, Price -8% to +15%, RSI 35-65
-          const isPreConsolidation = volumeSpikeRatio >= 0.3 && volumeSpikeRatio < 1.5 &&
+          // PRE-CONSOLIDATION criteria (Priority 2): VOL 0.5-1.0x (was 0.3-1.5x), Price -8% to +15%, RSI 35-65
+          const isPreConsolidation = volumeSpikeRatio >= 0.5 && volumeSpikeRatio < 1.0 &&
                                      priceChange24h >= -8 && priceChange24h <= 15 &&
                                      rsi >= 35 && rsi <= 65;
           
           // MAJOR criteria: VOL >= 0.5x, any price range
           const isMajorQualified = isMajor && volumeSpikeRatio >= 0.5;
           
-          // Determine signal type
-          let signalType: "ACTIVE" | "PRE" | "MAJOR" | null = null;
-          if (isMajorQualified) {
+          // Determine signal type (priority order: HOT > MAJOR > ACTIVE > PRE)
+          let signalType: "HOT" | "ACTIVE" | "PRE" | "MAJOR" | null = null;
+          if (isHotMomentum) {
+            signalType = "HOT";
+          } else if (isMajorQualified) {
             signalType = "MAJOR";
           } else if (isActiveMomentum) {
             signalType = "ACTIVE";
@@ -539,16 +607,19 @@ export async function registerRoutes(
           // Filter out if doesn't match any category
           if (signalType === null) {
             if (priceChange24h >= 10 || volumeSpikeRatio >= 2.0) {
-              console.log(`[FILTERED] ${item.symbol}: price=${priceChange24h.toFixed(1)}% rsi=${rsi.toFixed(0)} vol=${volumeSpikeRatio.toFixed(2)}x - no category match`);
+              console.log(`[FILTERED] ${item.symbol}: price=${priceChange24h.toFixed(1)}% rsi=${rsi.toFixed(0)} vol=${volumeSpikeRatio.toFixed(2)}x oi=${oiChange24h?.toFixed(1) ?? 'N/A'}% - no category match`);
             }
             continue;
           }
 
           // Calculate signal strength based on category
           let signalStrength = 0;
-          const priceInRange = signalType === "ACTIVE" ? (priceChange24h >= 5 && priceChange24h <= 60) : (priceChange24h >= -8 && priceChange24h <= 15);
-          const volumeInRange = signalType === "ACTIVE" ? volumeSpikeRatio >= 1.5 : (volumeSpikeRatio >= 0.3 && volumeSpikeRatio < 1.5);
-          const rsiInRange = signalType === "ACTIVE" ? (rsi >= 50 && rsi <= 85) : (rsi >= 35 && rsi <= 65);
+          const priceInRange = signalType === "HOT" ? priceChange24h >= 15 : 
+                               signalType === "ACTIVE" ? (priceChange24h >= 5 && priceChange24h <= 60) : 
+                               (priceChange24h >= -8 && priceChange24h <= 15);
+          const volumeInRange = signalType === "HOT" || signalType === "ACTIVE" ? volumeSpikeRatio >= 1.0 : 
+                                (volumeSpikeRatio >= 0.5 && volumeSpikeRatio < 1.0);
+          const rsiInRange = signalType === "HOT" || signalType === "ACTIVE" ? (rsi >= 50 && rsi <= 85) : (rsi >= 35 && rsi <= 65);
           const rrInRange = riskReward >= 1.5;
           
           if (priceInRange) signalStrength++;
@@ -588,7 +659,9 @@ export async function registerRoutes(
             volumeSpikeRatio,
             volAccel,  // Volume acceleration: current1H / avg4H
             isAccelerating,  // True if volAccel >= 2.0x
-            signalType,  // "ACTIVE" | "PRE" | "MAJOR"
+            oiChange24h,  // Open Interest 24H change %
+            hasVolAlert,  // True if volume > 2.0x
+            signalType,  // "HOT" | "ACTIVE" | "PRE" | "MAJOR"
             rsi,
             entryPrice: currentPrice,
             slPrice: sl,
@@ -650,12 +723,12 @@ export async function registerRoutes(
         }
       }
 
-      // Sort by signalType priority: MAJOR first, then ACTIVE, then PRE
+      // Sort by signalType priority: HOT first, then MAJOR, then ACTIVE, then PRE
       // Within each category, sort by R:R descending
-      const typePriority = { "MAJOR": 0, "ACTIVE": 1, "PRE": 2 };
+      const typePriority = { "HOT": 0, "MAJOR": 1, "ACTIVE": 2, "PRE": 3 };
       const sortedSignals = signals.sort((a, b) => {
-        const aPriority = typePriority[a.signalType as keyof typeof typePriority] ?? 3;
-        const bPriority = typePriority[b.signalType as keyof typeof typePriority] ?? 3;
+        const aPriority = typePriority[a.signalType as keyof typeof typePriority] ?? 4;
+        const bPriority = typePriority[b.signalType as keyof typeof typePriority] ?? 4;
         if (aPriority !== bPriority) return aPriority - bPriority;
         return b.riskReward - a.riskReward;
       });
@@ -664,6 +737,7 @@ export async function registerRoutes(
       
       // Count by signal type
       const typeCount = {
+        HOT: signals.filter(s => s.signalType === "HOT").length,
         MAJOR: signals.filter(s => s.signalType === "MAJOR").length,
         ACTIVE: signals.filter(s => s.signalType === "ACTIVE").length,
         PRE: signals.filter(s => s.signalType === "PRE").length,
@@ -689,7 +763,7 @@ export async function registerRoutes(
         overdue: signals.filter(s => s.spikeReadiness === "overdue").length,
       };
       
-      console.log(`Signal calculation complete. Found ${cachedSignals.length} signals (${typeCount.MAJOR} MAJOR, ${typeCount.ACTIVE} ACTIVE, ${typeCount.PRE} PRE).`);
+      console.log(`Signal calculation complete. Found ${cachedSignals.length} signals (${typeCount.HOT} HOT, ${typeCount.MAJOR} MAJOR, ${typeCount.ACTIVE} ACTIVE, ${typeCount.PRE} PRE).`);
       console.log(`Spike readiness: ${readinessCount.warming} warming, ${readinessCount.primed} primed, ${readinessCount.hot} hot, ${readinessCount.overdue} overdue`);
       
       // Process signals for backtesting
