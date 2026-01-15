@@ -571,12 +571,9 @@ export async function registerRoutes(
           
           const hasLeadingIndicators = (fvg !== null || ob !== null || bidAskRatio > 1.1 || liquidityClusters.length > 0);
           
-          // HOT MOMENTUM criteria (Priority 0): Price >= +15%, VOL >= 1.5x, OI >= +10% (if available)
-          // This catches coins like FHE (+61%), DOLO (+26%) that are big movers
-          const oiConditionMet = oiChange24h === null || oiChange24h >= 10; // Pass if no OI data or OI >= +10%
-          const isHotMomentum = priceChange24h >= 15 && 
-                                volumeSpikeRatio >= 1.5 && 
-                                oiConditionMet;
+          // HOT MOMENTUM criteria (Priority 0): Price >= +20%, VOL >= 2.0x
+          // This catches coins like FHE (+61%), DOLO (+26%) that are big movers with explosive volume
+          const isHotMomentum = priceChange24h >= 20 && volumeSpikeRatio >= 2.0;
           
           // ACTIVE MOMENTUM criteria (Priority 1): VOL >= 1.0x (was 1.5x), Price +5% to +60%, RSI 50-85
           const isActiveMomentum = !isHotMomentum && 
@@ -614,12 +611,13 @@ export async function registerRoutes(
 
           // Calculate signal strength based on category
           let signalStrength = 0;
-          const priceInRange = signalType === "HOT" ? priceChange24h >= 15 : 
+          const priceInRange = signalType === "HOT" ? priceChange24h >= 20 : 
                                signalType === "ACTIVE" ? (priceChange24h >= 5 && priceChange24h <= 60) : 
                                (priceChange24h >= -8 && priceChange24h <= 15);
-          const volumeInRange = signalType === "HOT" || signalType === "ACTIVE" ? volumeSpikeRatio >= 1.0 : 
+          const volumeInRange = signalType === "HOT" ? volumeSpikeRatio >= 2.0 :
+                                signalType === "ACTIVE" ? volumeSpikeRatio >= 1.0 : 
                                 (volumeSpikeRatio >= 0.5 && volumeSpikeRatio < 1.0);
-          const rsiInRange = signalType === "HOT" || signalType === "ACTIVE" ? (rsi >= 50 && rsi <= 85) : (rsi >= 35 && rsi <= 65);
+          const rsiInRange = signalType === "ACTIVE" ? (rsi >= 50 && rsi <= 85) : (rsi >= 35 && rsi <= 65);
           const rrInRange = riskReward >= 1.5;
           
           if (priceInRange) signalStrength++;
