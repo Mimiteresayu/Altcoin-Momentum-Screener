@@ -1,5 +1,5 @@
-import { storage } from "./storage";
 import type { Signal, BacktestTrade, BacktestSummary, TradeDisplay, Exit } from "@shared/schema";
+import { storage } from "./storage";
 import axios from "axios";
 
 // ============================================
@@ -10,11 +10,14 @@ const CONFIG = {
   RISK_PER_TRADE_MIN: 0.02,
   RISK_PER_TRADE_MAX: 0.05,
   DEFAULT_RISK_PCT: 0.03,
-  TP1_EXIT_PCT: 0.35,
+  TP1_EXIT_PCT: 0.25,       // Reduced from 0.35 - take less profit early
   TP2_EXIT_PCT: 0.35,
-  TP3_EXIT_PCT: 0.30,
+  TP3_EXIT_PCT: 0.40,       // Increased to let winners run
   MAX_CONCURRENT_TRADES: 10,
-  SIGNAL_STRENGTH_MIN: 3,
+  SIGNAL_STRENGTH_MIN: 4,   // Increased from 3 - require stronger confluence
+  MIN_TP1_R_MULTIPLE: 0.5,  // Minimum R-multiple before taking TP1
+  TRAILING_STOP_ACTIVATION_R: 1.0, // Activate trailing stop after 1R profit
+  TRAILING_STOP_DISTANCE_PCT: 0.02, // 2% trailing distance
 };
 
 // ============================================
@@ -326,25 +329,49 @@ class PriceMonitor {
     }
     
     if (currentPrice >= trade.tp1Price && !trade.tp1Hit) {
+      // Check minimum R-multiple before taking TP1
+      const currentRMultiple = (currentPrice - trade.entryPrice) / riskPerUnit;
+      
+      if (currentRMultiple < CONFIG.MIN_TP1_R_MULTIPLE) {
+        // Don't take TP1 yet - not enough R achieved, wait for better exit
+        return;
+      }
+      
       const exitSize = trade.positionSize * CONFIG.TP1_EXIT_PCT;
-      const tp1Pnl = (trade.tp1Price - trade.entryPrice) * exitSize;
+      const tp1Pnl = (currentPrice - trade.entryPrice) * exitSize;
       
       await storage.addTradeEvent({
         tradeId: trade.tradeId,
         eventType: "TP1",
-        price: trade.tp1Price,
+        price: currentPrice,
         size: exitSize,
         pnlDelta: tp1Pnl,
       });
       
+      // After TP1, move SL to breakeven (not trailing yet)
       await storage.updateTrade(trade.tradeId, {
         tp1Hit: true,
-        currentSlPrice: trade.entryPrice,
+        currentSlPrice: trade.entryPrice, // Breakeven after TP1
       });
       
       const partialCapitalReleased = trade.capitalUsed * CONFIG.TP1_EXIT_PCT;
       await this.positionManager.updateEquity(tp1Pnl, partialCapitalReleased);
-      console.log(`[BACKTEST] ${trade.symbol} TP1 HIT at ${trade.tp1Price}, Partial PnL: $${tp1Pnl.toFixed(2)}, SL moved to entry`);
+      console.log(`[BACKTEST] ${trade.symbol} TP1 HIT at $${currentPrice.toFixed(6)} (${currentRMultiple.toFixed(2)}R), Partial PnL: $${tp1Pnl.toFixed(2)}, SL moved to breakeven`);
+    }
+    
+    // Trailing stop: only activate after TP1 hit AND reaching trailing activation threshold
+    if (trade.tp1Hit && !trade.slHit && !trade.tp3Hit) {
+      const currentRMultiple = (currentPrice - trade.entryPrice) / riskPerUnit;
+      
+      // Only trail after reaching the activation threshold
+      if (currentRMultiple >= CONFIG.TRAILING_STOP_ACTIVATION_R) {
+        const trailingSlPrice = currentPrice * (1 - CONFIG.TRAILING_STOP_DISTANCE_PCT);
+        if (trailingSlPrice > trade.currentSlPrice) {
+          await storage.updateTrade(trade.tradeId, {
+            currentSlPrice: trailingSlPrice,
+          });
+        }
+      }
     }
     
     if (currentPrice >= trade.tp2Price && !trade.tp2Hit && trade.tp1Hit) {

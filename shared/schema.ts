@@ -198,6 +198,11 @@ export const signalSchema = z.object({
   firstSeenAt: z.string().optional(),
   timeOnListMinutes: z.number().optional(),
   spikeReadiness: z.enum(["warming", "primed", "hot", "overdue"]).optional(),
+  liquidationLevels: z.array(z.object({
+    price: z.number(),
+    volume: z.number(),
+    direction: z.string(),
+  })).optional(),
 });
 
 export type Signal = z.infer<typeof signalSchema>;

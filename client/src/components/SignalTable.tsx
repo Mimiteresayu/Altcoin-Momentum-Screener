@@ -525,10 +525,11 @@ export function SignalTable({ signals }: SignalTableProps) {
             </thead>
             <tbody className="divide-y divide-white/5">
               <AnimatePresence initial={false}>
-                {processedData.map((signal) => {
+                {processedData.map((signal, rowIndex) => {
                   const isPositive = signal.priceChange24h > 0;
                   const isNegative = signal.priceChange24h < 0;
                   const watched = isWatched(signal.symbol);
+                  const tooltipSide = rowIndex < 2 ? "bottom" : "top";
 
                   return (
                     <motion.tr
@@ -705,7 +706,7 @@ export function SignalTable({ signals }: SignalTableProps) {
                             </div>
                           </TooltipTrigger>
                           <TooltipContent
-                            side="top"
+                            side={tooltipSide as "top" | "bottom"}
                             className="bg-card border-white/10"
                           >
                             <p className="text-xs">{signal.slReason}</p>
@@ -736,7 +737,7 @@ export function SignalTable({ signals }: SignalTableProps) {
                             </div>
                           </TooltipTrigger>
                           <TooltipContent
-                            side="top"
+                            side={tooltipSide as "top" | "bottom"}
                             className="bg-card border-white/10 p-0"
                           >
                             <TPLevelsDisplay levels={signal.tpLevels} />
@@ -764,7 +765,7 @@ export function SignalTable({ signals }: SignalTableProps) {
                               </Badge>
                             </TooltipTrigger>
                             <TooltipContent
-                              side="top"
+                              side={tooltipSide as "top" | "bottom"}
                               className="bg-card border-white/10"
                             >
                               <p className="text-xs">
@@ -830,7 +831,7 @@ export function SignalTable({ signals }: SignalTableProps) {
                             </div>
                           </TooltipTrigger>
                           <TooltipContent
-                            side="top"
+                            side={tooltipSide as "top" | "bottom"}
                             className="bg-card border-white/10 p-0"
                           >
                             <StrengthBreakdown

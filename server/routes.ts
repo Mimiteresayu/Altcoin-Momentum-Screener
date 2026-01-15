@@ -28,54 +28,161 @@ interface LiquidityCluster {
 const MAJOR_SYMBOLS = ["BTCUSDT", "ETHUSDT"];
 const UPDATE_FREQUENCY_MINUTES = 5;
 
-// Cache for OI data from Coinglass
+// Cache for OI data from Coinglass/Binance
 let oiDataCache: Map<string, number> = new Map();
+let binanceOiHistory: Map<string, number> = new Map(); // Binance-only history for change calculation
 let oiLastFetched: Date | null = null;
+let oiDataSource: "coinglass" | "binance" | null = null;
 const OI_CACHE_DURATION_MS = 5 * 60 * 1000; // 5 minutes
 
-// Fetch Open Interest data from Coinglass API
-async function fetchOpenInterestData(): Promise<Map<string, number>> {
-  const apiKey = process.env.COINGLASS_API_KEY;
-  
+// Liquidation level estimation cache
+let liquidationCache: Map<string, { price: number; volume: number; direction: string }[]> = new Map();
+let liquidationCacheTime: Map<string, number> = new Map();
+const LIQUIDATION_CACHE_TTL_MS = 60 * 1000; // 1 minute
+
+// Fetch Open Interest from Binance Futures API (free, no key required)
+async function fetchBinanceOpenInterest(symbol: string): Promise<number | null> {
+  try {
+    const binanceSymbol = symbol.replace("USDC", "USDT");
+    const response = await axios.get(
+      `https://fapi.binance.com/fapi/v1/openInterest?symbol=${binanceSymbol}`,
+      { timeout: 5000 }
+    );
+    if (response.data?.openInterest) {
+      return parseFloat(response.data.openInterest);
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+// Main OI fetcher with Binance fallback - called by signal calculation
+async function fetchOpenInterestWithBinanceFallback(symbols: string[]): Promise<Map<string, number>> {
   // Return cached data if fresh
   if (oiLastFetched && (Date.now() - oiLastFetched.getTime()) < OI_CACHE_DURATION_MS && oiDataCache.size > 0) {
     return oiDataCache;
   }
   
-  if (!apiKey) {
-    console.log("[OI] No COINGLASS_API_KEY set - OI data unavailable");
-    return new Map();
+  const apiKey = process.env.COINGLASS_API_KEY;
+  
+  // Try Coinglass first if API key is available
+  if (apiKey) {
+    try {
+      const response = await axios.get("https://open-api-v4.coinglass.com/api/futures/open-interest/exchange-list", {
+        headers: { "CG-API-KEY": apiKey },
+        params: { symbol: "ALL" },
+        timeout: 10000,
+      });
+      
+      if (response.data?.data && Array.isArray(response.data.data)) {
+        const newCache = new Map<string, number>();
+        for (const item of response.data.data) {
+          const sym = `${item.symbol}USDT`;
+          const oiChange24h = item.open_interest_change_percent_24h ?? item.openInterestChangePercent24h ?? 0;
+          newCache.set(sym, oiChange24h);
+        }
+        
+        oiDataCache = newCache;
+        oiLastFetched = new Date();
+        oiDataSource = "coinglass";
+        binanceOiHistory.clear(); // Clear Binance history when using Coinglass
+        console.log(`[OI] Fetched OI data from Coinglass for ${newCache.size} symbols`);
+        return newCache;
+      }
+    } catch (error: any) {
+      console.log("[OI] Coinglass failed, falling back to Binance:", error?.message);
+    }
   }
   
-  try {
-    // Fetch top coins OI data from Coinglass
-    const response = await axios.get("https://open-api-v4.coinglass.com/api/futures/open-interest/exchange-list", {
-      headers: { "CG-API-KEY": apiKey },
-      params: { symbol: "ALL" },
-      timeout: 10000,
-    });
-    
-    const newCache = new Map<string, number>();
-    
-    if (response.data?.data && Array.isArray(response.data.data)) {
-      for (const item of response.data.data) {
-        // Coinglass returns symbol without USDT suffix
-        const symbol = `${item.symbol}USDT`;
-        // Get 24H OI change percentage
-        const oiChange24h = item.open_interest_change_percent_24h ?? item.openInterestChangePercent24h ?? 0;
-        newCache.set(symbol, oiChange24h);
+  // Fallback: Use Binance free API
+  console.log("[OI] Using Binance fallback for OI data");
+  const newCache = new Map<string, number>();
+  const prioritySymbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "DOGEUSDT", "BNBUSDT", "ADAUSDT", "AVAXUSDT", "LINKUSDT", "DOTUSDT"];
+  const allSymbols = [...prioritySymbols, ...symbols.filter(s => s.endsWith("USDT"))];
+  const symbolsToFetch = Array.from(new Set(allSymbols)).slice(0, 15);
+  
+  for (const symbol of symbolsToFetch) {
+    try {
+      const currentOI = await fetchBinanceOpenInterest(symbol);
+      if (currentOI !== null) {
+        const prevOI = binanceOiHistory.get(symbol);
+        if (prevOI && prevOI > 0) {
+          const changePercent = ((currentOI - prevOI) / prevOI) * 100;
+          newCache.set(symbol, changePercent);
+        }
+        binanceOiHistory.set(symbol, currentOI);
       }
-      
-      oiDataCache = newCache;
-      oiLastFetched = new Date();
-      console.log(`[OI] Fetched OI data for ${newCache.size} symbols`);
+      await new Promise(r => setTimeout(r, 100)); // Rate limit protection
+    } catch {
+      // Skip this symbol
     }
-    
-    return newCache;
-  } catch (error: any) {
-    console.error("[OI] Failed to fetch Coinglass data:", error?.message || error);
-    return oiDataCache; // Return stale cache on error
   }
+  
+  if (newCache.size > 0) {
+    oiDataCache = newCache;
+    oiLastFetched = new Date();
+    oiDataSource = "binance";
+    console.log(`[OI] Fetched OI data from Binance for ${newCache.size} symbols`);
+  } else if (binanceOiHistory.size > 0) {
+    console.log(`[OI] Binance: stored ${binanceOiHistory.size} OI values, changes available on next fetch`);
+  }
+  
+  return oiDataCache;
+}
+
+// Estimate liquidation levels based on leverage clusters and orderbook
+function estimateLiquidationLevels(symbol: string, currentPrice: number, orderBook: OrderBookData | null): { price: number; volume: number; direction: string }[] {
+  // Check cache with TTL
+  const cached = liquidationCache.get(symbol);
+  const cachedTime = liquidationCacheTime.get(symbol);
+  if (cached && cachedTime && (Date.now() - cachedTime) < LIQUIDATION_CACHE_TTL_MS) {
+    return cached;
+  }
+  
+  const levels: { price: number; volume: number; direction: string }[] = [];
+  const leverageLevels = [10, 20, 50, 100]; // Common leverage levels
+  
+  for (const leverage of leverageLevels) {
+    // Long liquidations below current price
+    const longLiqPrice = currentPrice * (1 - (0.9 / leverage));
+    // Short liquidations above current price
+    const shortLiqPrice = currentPrice * (1 + (0.9 / leverage));
+    
+    if (longLiqPrice > currentPrice * 0.85) {
+      levels.push({ price: longLiqPrice, volume: leverage, direction: "long_liq" });
+    }
+    if (shortLiqPrice < currentPrice * 1.15) {
+      levels.push({ price: shortLiqPrice, volume: leverage, direction: "short_liq" });
+    }
+  }
+  
+  // Add orderbook walls as liquidation zones
+  if (orderBook && orderBook.bids.length > 0 && orderBook.asks.length > 0) {
+    const avgBidQty = orderBook.bids.reduce((s, [, q]) => s + parseFloat(q), 0) / orderBook.bids.length;
+    const avgAskQty = orderBook.asks.reduce((s, [, q]) => s + parseFloat(q), 0) / orderBook.asks.length;
+    
+    for (const [price, qty] of orderBook.bids) {
+      const p = parseFloat(price), q = parseFloat(qty);
+      if (q > avgBidQty * 3 && p < currentPrice * 0.98 && p > currentPrice * 0.85) {
+        levels.push({ price: p, volume: q / avgBidQty, direction: "support_wall" });
+      }
+    }
+    for (const [price, qty] of orderBook.asks) {
+      const p = parseFloat(price), q = parseFloat(qty);
+      if (q > avgAskQty * 3 && p > currentPrice * 1.02 && p < currentPrice * 1.15) {
+        levels.push({ price: p, volume: q / avgAskQty, direction: "resistance_wall" });
+      }
+    }
+  }
+  
+  levels.sort((a, b) => Math.abs(a.price - currentPrice) - Math.abs(b.price - currentPrice));
+  const result = levels.slice(0, 5);
+  
+  liquidationCache.set(symbol, result);
+  liquidationCacheTime.set(symbol, Date.now());
+  
+  return result;
 }
 
 async function fetchKlines(symbol: string, interval: string, limit: number = 100): Promise<Kline[]> {
@@ -507,8 +614,9 @@ export async function registerRoutes(
       
       console.log(`Processing ${uniqueSymbols.length} symbols (${majorSymbols.length} major, ${watchedSymbols.length} watched, ${otherSymbols.length} top volume, ${highMovers.length} high movers)...`);
       
-      // Fetch OI data for all symbols
-      const oiData = await fetchOpenInterestData();
+      // Fetch OI data for all symbols (with Binance fallback if no Coinglass API key)
+      const symbolList = uniqueSymbols.map((s: any) => s.symbol);
+      const oiData = await fetchOpenInterestWithBinanceFallback(symbolList);
 
       for (const item of uniqueSymbols) {
         try {
@@ -637,6 +745,9 @@ export async function registerRoutes(
           const slDistancePct = ((currentPrice - sl) / currentPrice) * 100;
 
           const hasLiquidityZone = liquidityClusters.length > 0;
+          
+          // Estimate liquidation levels
+          const liquidationLevels = estimateLiquidationLevels(item.symbol, currentPrice, orderBook);
 
           // Track time on list for this symbol
           const now = new Date();
@@ -713,6 +824,7 @@ export async function registerRoutes(
             firstSeenAt: firstSeen.toISOString(),
             timeOnListMinutes,
             spikeReadiness,
+            liquidationLevels, // Estimated liquidation price levels
           });
 
           await new Promise(resolve => setTimeout(resolve, 30));
