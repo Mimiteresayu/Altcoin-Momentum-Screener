@@ -57,6 +57,92 @@ async function fetchBinanceOpenInterest(symbol: string): Promise<number | null> 
   }
 }
 
+// Fetch OI from Coinalyze API for multiple symbols
+async function fetchCoinalyzeOpenInterest(symbols: string[], apiKey: string): Promise<Map<string, number>> {
+  const newCache = new Map<string, number>();
+  
+  // Coinalyze symbol format: BTCUSDT_PERP.A (Binance perpetual)
+  // Max 20 symbols per request, rate limit 40 req/min
+  const batchSize = 20;
+  const symbolBatches: string[][] = [];
+  
+  for (let i = 0; i < symbols.length; i += batchSize) {
+    symbolBatches.push(symbols.slice(i, i + batchSize));
+  }
+  
+  console.log(`[OI] Trying Coinalyze: ${symbols.length} symbols in ${symbolBatches.length} batch(es)...`);
+  
+  for (let i = 0; i < symbolBatches.length; i++) {
+    const batch = symbolBatches[i];
+    
+    for (let retry = 0; retry < 2; retry++) {
+      try {
+        // Format: BTCUSDT -> BTCUSDT_PERP.A (Binance perpetual)
+        const formattedSymbols = batch.map(s => `${s}_PERP.A`).join(",");
+        
+        const response = await axios.get("https://api.coinalyze.net/v1/open-interest-history", {
+          headers: {
+            "Accept": "application/json",
+            "api-key": apiKey,
+          },
+          params: {
+            symbols: formattedSymbols,
+            interval: "daily",
+            from: Math.floor(Date.now() / 1000) - 86400 * 2, // 2 days ago
+            to: Math.floor(Date.now() / 1000),
+            convert_to_usd: "true",
+          },
+          timeout: 15000,
+        });
+        
+        if (response.data && Array.isArray(response.data)) {
+          for (const item of response.data) {
+            // Parse symbol back: BTCUSDT_PERP.A -> BTCUSDT
+            const symbol = item.symbol?.replace(/_PERP\.A$/, "") || "";
+            const history = item.history || [];
+            
+            if (history.length >= 2) {
+              // Calculate 24h change from history
+              const latestOI = history[history.length - 1]?.c || history[history.length - 1]?.o || 0;
+              const prevOI = history[0]?.c || history[0]?.o || 0;
+              
+              if (prevOI > 0) {
+                const changePercent = ((latestOI - prevOI) / prevOI) * 100;
+                newCache.set(symbol, changePercent);
+              }
+            }
+          }
+          console.log(`[OI] Coinalyze batch ${i + 1}/${symbolBatches.length}: ${newCache.size} OI values`);
+        }
+        break; // Success, exit retry loop
+        
+      } catch (error: any) {
+        const status = error?.response?.status;
+        const retryAfter = error?.response?.headers?.["retry-after"];
+        const errMsg = error?.response?.data?.message || error?.message;
+        
+        if (status === 429 && retry < 1) {
+          // Rate limited - wait and retry
+          const waitTime = retryAfter ? parseInt(retryAfter) * 1000 : 5000;
+          console.log(`[OI] Rate limited, waiting ${waitTime / 1000}s...`);
+          await new Promise(r => setTimeout(r, waitTime));
+          continue;
+        }
+        
+        console.log(`[OI] Coinalyze error:`, errMsg);
+        break;
+      }
+    }
+    
+    // Delay between batches to respect rate limit (40/min = 1.5s between)
+    if (i < symbolBatches.length - 1) {
+      await new Promise(r => setTimeout(r, 2000));
+    }
+  }
+  
+  return newCache;
+}
+
 // Main OI fetcher with Binance fallback - called by signal calculation
 async function fetchOpenInterestWithBinanceFallback(symbols: string[]): Promise<Map<string, number>> {
   // Return cached data if fresh
@@ -64,34 +150,27 @@ async function fetchOpenInterestWithBinanceFallback(symbols: string[]): Promise<
     return oiDataCache;
   }
   
-  const apiKey = process.env.COINGLASS_API_KEY;
+  const apiKey = process.env.COINALYZE_API_KEY;
   
-  // Try Coinglass first if API key is available
+  // Try Coinalyze first if API key is available
   if (apiKey) {
     try {
-      const response = await axios.get("https://open-api-v4.coinglass.com/api/futures/open-interest/exchange-list", {
-        headers: { "CG-API-KEY": apiKey },
-        params: { symbol: "ALL" },
-        timeout: 10000,
-      });
+      // Priority symbols for OI data
+      const prioritySymbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "DOGEUSDT", "BNBUSDT", "ADAUSDT", "AVAXUSDT", "LINKUSDT", "DOTUSDT", "LTCUSDT", "UNIUSDT", "NEARUSDT", "AAVEUSDT"];
+      const allSymbols = Array.from(new Set([...prioritySymbols, ...symbols.filter(s => s.endsWith("USDT"))])).slice(0, 30);
       
-      if (response.data?.data && Array.isArray(response.data.data)) {
-        const newCache = new Map<string, number>();
-        for (const item of response.data.data) {
-          const sym = `${item.symbol}USDT`;
-          const oiChange24h = item.open_interest_change_percent_24h ?? item.openInterestChangePercent24h ?? 0;
-          newCache.set(sym, oiChange24h);
-        }
-        
-        oiDataCache = newCache;
+      const coinalyzeData = await fetchCoinalyzeOpenInterest(allSymbols, apiKey);
+      
+      if (coinalyzeData.size > 0) {
+        oiDataCache = coinalyzeData;
         oiLastFetched = new Date();
-        oiDataSource = "coinglass";
-        binanceOiHistory.clear(); // Clear Binance history when using Coinglass
-        console.log(`[OI] Fetched OI data from Coinglass for ${newCache.size} symbols`);
-        return newCache;
+        oiDataSource = "coinglass"; // Keep label for UI
+        binanceOiHistory.clear();
+        console.log(`[OI] Fetched OI data from Coinalyze for ${coinalyzeData.size} symbols`);
+        return coinalyzeData;
       }
     } catch (error: any) {
-      console.log("[OI] Coinglass failed, falling back to Binance:", error?.message);
+      console.log("[OI] Coinalyze failed, falling back to Binance:", error?.message);
     }
   }
   
