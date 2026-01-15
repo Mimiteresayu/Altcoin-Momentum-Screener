@@ -95,37 +95,58 @@ async function fetchOpenInterestWithBinanceFallback(symbols: string[]): Promise<
     }
   }
   
-  // Fallback: Use Binance free API
-  console.log("[OI] Using Binance fallback for OI data");
-  const newCache = new Map<string, number>();
-  const prioritySymbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "DOGEUSDT", "BNBUSDT", "ADAUSDT", "AVAXUSDT", "LINKUSDT", "DOTUSDT"];
+  // Fallback: Use Binance free API (requires 2+ fetches for delta calculation)
+  const isFirstFetch = binanceOiHistory.size === 0;
+  console.log(`[OI] Using Binance fallback for OI data (${isFirstFetch ? 'first fetch - storing baseline' : 'calculating deltas'})`);
+  
+  // Create new cache, preserving existing values
+  const newCache = new Map<string, number>(oiDataCache);
+  
+  // Fetch more symbols (30) and prioritize major + high volume coins
+  const prioritySymbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "DOGEUSDT", "BNBUSDT", "ADAUSDT", "AVAXUSDT", "LINKUSDT", "DOTUSDT", "LTCUSDT", "UNIUSDT", "NEARUSDT", "AAVEUSDT"];
   const allSymbols = [...prioritySymbols, ...symbols.filter(s => s.endsWith("USDT"))];
-  const symbolsToFetch = Array.from(new Set(allSymbols)).slice(0, 15);
+  const symbolsToFetch = Array.from(new Set(allSymbols)).slice(0, 30);
+  
+  let fetchedCount = 0;
+  let deltaCount = 0;
   
   for (const symbol of symbolsToFetch) {
     try {
       const currentOI = await fetchBinanceOpenInterest(symbol);
       if (currentOI !== null) {
+        fetchedCount++;
         const prevOI = binanceOiHistory.get(symbol);
-        if (prevOI && prevOI > 0) {
+        
+        if (prevOI !== undefined && prevOI > 0) {
+          // Calculate delta - even if change is 0%, it's still valid data
           const changePercent = ((currentOI - prevOI) / prevOI) * 100;
           newCache.set(symbol, changePercent);
+          deltaCount++;
+        } else if (!isFirstFetch) {
+          // If not first fetch but no previous value, set to 0% (new symbol)
+          newCache.set(symbol, 0);
         }
+        
+        // Always store current value for next comparison
         binanceOiHistory.set(symbol, currentOI);
       }
-      await new Promise(r => setTimeout(r, 100)); // Rate limit protection
+      await new Promise(r => setTimeout(r, 80)); // Rate limit protection
     } catch {
-      // Skip this symbol
+      // Skip this symbol on error
     }
   }
   
-  if (newCache.size > 0) {
+  // Always update cache if we fetched anything
+  if (fetchedCount > 0) {
     oiDataCache = newCache;
     oiLastFetched = new Date();
     oiDataSource = "binance";
-    console.log(`[OI] Fetched OI data from Binance for ${newCache.size} symbols`);
-  } else if (binanceOiHistory.size > 0) {
-    console.log(`[OI] Binance: stored ${binanceOiHistory.size} OI values, changes available on next fetch`);
+    
+    if (deltaCount > 0) {
+      console.log(`[OI] Binance: ${deltaCount}/${fetchedCount} symbols with OI delta`);
+    } else {
+      console.log(`[OI] Binance: stored ${fetchedCount} baseline values - deltas on next fetch (~5min)`);
+    }
   }
   
   return oiDataCache;
