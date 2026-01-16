@@ -63,3 +63,31 @@ Preferred communication style: Simple, everyday language.
 - `@tanstack/react-query` - Server state management with caching
 - `framer-motion` - Animation library for UI transitions
 - Full shadcn/ui component set via Radix primitives
+
+## Backtest System
+
+### Entry Filters (Optimized for Sharpe ≥2.5)
+- **Volume Spike**: ≥8x required for entry
+- **Volume Acceleration**: ≥3x required (skip if data unavailable)
+- **Open Interest Change**: ≥15% required (if available from Coinalyze API)
+- **RSI Range**: 45-70 (neutral-bullish momentum)
+- **Risk/Reward**: ≥2:1 minimum
+- **Signal Strength**: ≥4/5
+
+### Stop Loss Strategy
+- **Primary**: 5-minute swing low with 0.5% buffer below
+- **Fallback**: 5% below entry if swing low unavailable
+- **Breakeven**: Moves to entry price after 0.5R profit
+- **Trailing**: 1.5% trailing distance when in profit
+
+### Take Profit Strategy (Momentum Trailing)
+- Replaces fixed TP1/TP2/TP3 with momentum-based exits
+- **Exit triggers**:
+  - Volume drops below 2x (momentum fading)
+  - Price drops 3% from peak (momentum reversal)
+- Closes entire remaining position when momentum fades
+
+### Coinalyze Integration
+- Open Interest data from Coinalyze API
+- Rate limit: 40 requests/minute with automatic backoff
+- Symbols with null OI show "N/A" in UI
