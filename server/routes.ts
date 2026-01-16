@@ -61,7 +61,7 @@ async function fetchBinanceOpenInterest(symbol: string): Promise<number | null> 
 async function fetchCoinalyzeOpenInterest(symbols: string[], apiKey: string): Promise<Map<string, number>> {
   const newCache = new Map<string, number>();
   
-  // Coinalyze symbol format: BTCUSDT_PERP.A (Binance perpetual)
+  // Coinalyze symbol format: oiDataCache.get_PERP.A (Binance perpetual)
   // Max 20 symbols per request, rate limit 40 req/min
   const batchSize = 20;
   const symbolBatches: string[][] = [];
