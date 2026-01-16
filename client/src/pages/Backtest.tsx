@@ -197,6 +197,7 @@ function TradesTable({ trades, loading }: { trades: TradeDisplay[]; loading: boo
         <thead>
           <tr className="bg-muted/30 border-b border-white/5 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">
             <th className="px-3 py-3">Trade ID</th>
+            <th className="px-3 py-3 text-center">Side</th>
             <th className="px-3 py-3">Symbol</th>
             <th className="px-3 py-3 text-right">Entry $</th>
             <th className="px-3 py-3 text-center">Entry Time</th>
@@ -217,6 +218,27 @@ function TradesTable({ trades, loading }: { trades: TradeDisplay[]; loading: boo
             >
               <td className="px-3 py-3">
                 <span className="font-mono text-xs text-muted-foreground">{trade.tradeId}</span>
+              </td>
+              <td className="px-3 py-3 text-center">
+                <Badge
+                  className={clsx(
+                    "font-bold text-[10px] px-2",
+                    trade.side === "LONG"
+                      ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/30"
+                      : trade.side === "SHORT"
+                        ? "bg-rose-500/20 text-rose-400 border-rose-500/30"
+                        : "bg-emerald-500/20 text-emerald-400 border-emerald-500/30"
+                  )}
+                >
+                  {trade.side === "LONG" ? (
+                    <TrendingUp className="w-3 h-3 mr-0.5" />
+                  ) : trade.side === "SHORT" ? (
+                    <TrendingDown className="w-3 h-3 mr-0.5" />
+                  ) : (
+                    <TrendingUp className="w-3 h-3 mr-0.5" />
+                  )}
+                  {trade.side || "LONG"}
+                </Badge>
               </td>
               <td className="px-3 py-3 font-mono font-bold">{trade.symbol.replace("USDT", "")}</td>
               <td className="px-3 py-3 text-right font-mono text-xs">${formatPrice(trade.entryPrice)}</td>

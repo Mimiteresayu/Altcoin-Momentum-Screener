@@ -6,6 +6,7 @@ import {
   tradeEvents,
   equityCurve,
   backtestStats,
+  comments,
   type WatchlistItem,
   type InsertWatchlistItem,
   type SignalSnapshot,
@@ -18,6 +19,8 @@ import {
   type InsertEquityCurve,
   type BacktestStats,
   type InsertBacktestStats,
+  type Comment,
+  type InsertComment,
 } from "@shared/schema";
 import { eq, and, gte, lte, desc, sql } from "drizzle-orm";
 
@@ -52,6 +55,11 @@ export interface IStorage {
   saveStats(stats: InsertBacktestStats): Promise<BacktestStats>;
   getLatestStats(periodType: string): Promise<BacktestStats | null>;
   getStatsByDateRange(periodType: string, start: Date, end: Date): Promise<BacktestStats[]>;
+  
+  // Comments
+  addComment(comment: InsertComment): Promise<Comment>;
+  getComments(limit?: number): Promise<Comment[]>;
+  deleteComment(id: number): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -238,6 +246,29 @@ export class DatabaseStorage implements IStorage {
         )
       )
       .orderBy(desc(backtestStats.periodEnd));
+  }
+
+  // ============================================
+  // COMMENTS
+  // ============================================
+  async addComment(comment: InsertComment): Promise<Comment> {
+    const [created] = await db
+      .insert(comments)
+      .values(comment)
+      .returning();
+    return created;
+  }
+
+  async getComments(limit: number = 50): Promise<Comment[]> {
+    return await db
+      .select()
+      .from(comments)
+      .orderBy(desc(comments.createdAt))
+      .limit(limit);
+  }
+
+  async deleteComment(id: number): Promise<void> {
+    await db.delete(comments).where(eq(comments.id, id));
   }
 }
 

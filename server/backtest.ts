@@ -708,10 +708,15 @@ export class BacktestingService {
         holdingTimeMinutes = Math.round((Date.now() - entryTime) / 60000);
       }
       
+      // Determine trade side: currently all trades are LONG
+      // Future SHORT trades would have TP < entry and SL > entry
+      const side: "LONG" | "SHORT" = trade.tp1Price > trade.entryPrice ? "LONG" : "SHORT";
+      
       result.push({
         id: trade.id,
         tradeId: trade.tradeId,
         symbol: trade.symbol,
+        side,  // Trade direction: LONG or SHORT
         signalTimestamp: trade.signalTimestamp?.toISOString() || "",
         entryTimestamp: trade.entryTimestamp?.toISOString() || null,
         exitTimestamp: trade.exitTimestamp?.toISOString() || null,

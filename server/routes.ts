@@ -3,6 +3,8 @@ import type { Server } from "http";
 import { storage } from "./storage";
 import { api } from "@shared/routes";
 import { backtestingService } from "./backtest";
+import { notifyNewSignals, isDiscordConfigured } from "./discord";
+import { initializeWebSocket, getConnectedClientsCount } from "./websocket";
 import axios from "axios";
 import { RSI } from "technicalindicators";
 
@@ -861,8 +863,64 @@ export async function registerRoutes(
           const timeOnListMinutes = Math.floor((now.getTime() - firstSeen.getTime()) / 60000);
           const spikeReadiness = getSpikeReadiness(timeOnListMinutes);
           
+          // Determine trade direction: LONG or SHORT based on comprehensive analysis
+          // Uses balanced scoring system to avoid bias
+          const determineSide = (): "LONG" | "SHORT" => {
+            let longScore = 0;
+            let shortScore = 0;
+            
+            // Factor 1: Price trend direction (primary indicator, weight: 3)
+            if (priceChange24h >= 5) longScore += 3;
+            else if (priceChange24h >= 2) longScore += 2;
+            else if (priceChange24h >= 0) longScore += 1;
+            else if (priceChange24h <= -5) shortScore += 3;
+            else if (priceChange24h <= -2) shortScore += 2;
+            else shortScore += 1;  // priceChange24h < 0
+            
+            // Factor 2: RSI trend context (weight: 2)
+            // RSI confirms trend, not contra-trades
+            if (rsi >= 60 && rsi <= 75) longScore += 2;  // Strong bullish momentum
+            else if (rsi >= 50 && rsi < 60) longScore += 1;  // Bullish
+            else if (rsi >= 40 && rsi < 50) shortScore += 1;  // Bearish
+            else if (rsi >= 25 && rsi < 40) shortScore += 2;  // Strong bearish momentum
+            // Extreme RSI (>75 or <25) doesn't add points - could go either way
+            
+            // Factor 3: Volume with price direction (weight: 2)
+            if (volumeSpikeRatio >= 3.0) {
+              // Strong volume confirms current price direction
+              if (priceChange24h >= 0) longScore += 2;
+              else shortScore += 2;
+            } else if (volumeSpikeRatio >= 1.5) {
+              if (priceChange24h >= 0) longScore += 1;
+              else shortScore += 1;
+            }
+            
+            // Factor 4: Open Interest with price (weight: 2)
+            if (oiChange24h !== null && oiChange24h !== undefined) {
+              // Rising OI + rising price = longs entering (bullish)
+              // Rising OI + falling price = shorts entering (bearish)
+              if (oiChange24h > 10 && priceChange24h >= 2) longScore += 2;
+              else if (oiChange24h > 5 && priceChange24h >= 0) longScore += 1;
+              else if (oiChange24h > 10 && priceChange24h <= -2) shortScore += 2;
+              else if (oiChange24h > 5 && priceChange24h < 0) shortScore += 1;
+            }
+            
+            // Factor 5: Market structure (weight: 1 each)
+            if (fvg?.type === "bullish") longScore += 1;
+            else if (fvg?.type === "bearish") shortScore += 1;
+            if (ob?.type === "bullish") longScore += 1;
+            else if (ob?.type === "bearish") shortScore += 1;
+            
+            // Decision: whichever side has more conviction wins
+            // Tie or slight edge goes to LONG (pre-spike scanner bias)
+            return shortScore > longScore ? "SHORT" : "LONG";
+          };
+          
+          const side = determineSide();
+
           signals.push({
             symbol: item.symbol,
+            side,  // Trade direction: LONG or SHORT
             currentPrice,
             priceChange24h,
             volumeSpikeRatio,
@@ -975,6 +1033,15 @@ export async function registerRoutes(
       
       console.log(`Signal calculation complete. Found ${cachedSignals.length} signals (${typeCount.HOT} HOT, ${typeCount.MAJOR} MAJOR, ${typeCount.ACTIVE} ACTIVE, ${typeCount.PRE} PRE).`);
       console.log(`Spike readiness: ${readinessCount.warming} warming, ${readinessCount.primed} primed, ${readinessCount.hot} hot, ${readinessCount.overdue} overdue`);
+      
+      // Send Discord notifications for high-priority signals
+      if (isDiscordConfigured()) {
+        try {
+          await notifyNewSignals(cachedSignals);
+        } catch (err) {
+          console.error("[DISCORD] Notification error:", err);
+        }
+      }
       
       // Process signals for backtesting
       try {
@@ -1115,6 +1182,96 @@ export async function registerRoutes(
       res.status(500).json({ message: "Failed to generate daily report" });
     }
   });
+
+  // ============================================
+  // NOTIFICATION STATUS ENDPOINT
+  // ============================================
+  
+  app.get("/api/notifications/status", async (req, res) => {
+    res.json({
+      discord: {
+        configured: isDiscordConfigured(),
+        description: "Discord webhook for signal alerts",
+      },
+      bitunix: {
+        configured: false,
+        description: "Bitunix does not have a public API for creating price alerts. Use their web/mobile UI or TradingView webhook integration instead.",
+      },
+    });
+  });
+
+  // ============================================
+  // COMMENTS API (REST fallback for non-WS clients)
+  // ============================================
+  
+  app.get("/api/comments", async (req, res) => {
+    try {
+      const limit = parseInt(req.query.limit as string) || 50;
+      const comments = await storage.getComments(limit);
+      res.json(comments.map(c => ({
+        id: c.id,
+        author: c.author,
+        content: c.content,
+        symbol: c.symbol,
+        createdAt: c.createdAt?.toISOString() || new Date().toISOString(),
+      })));
+    } catch (error) {
+      console.error("Error fetching comments:", error);
+      res.status(500).json({ message: "Failed to fetch comments" });
+    }
+  });
+
+  // Sanitize text to remove HTML/XSS vectors - encode ALL dangerous characters
+  function sanitizeText(input: string): string {
+    return input
+      .replace(/&/g, "&amp;")  // Must be first to avoid double-encoding
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#x27;")
+      .replace(/\//g, "&#x2F;")
+      .replace(/`/g, "&#96;")
+      .replace(/=/g, "&#x3D;")
+      .replace(/\(/g, "&#40;")
+      .replace(/\)/g, "&#41;")
+      .trim();
+  }
+
+  app.post("/api/comments", async (req, res) => {
+    try {
+      const { author, content, symbol } = req.body;
+      if (!author || !content) {
+        res.status(400).json({ message: "Author and content are required" });
+        return;
+      }
+      
+      const comment = await storage.addComment({
+        author: sanitizeText(author).slice(0, 50),
+        content: sanitizeText(content).slice(0, 500),
+        symbol: symbol ? sanitizeText(symbol).slice(0, 20) : null,
+      });
+      
+      res.status(201).json({
+        id: comment.id,
+        author: comment.author,
+        content: comment.content,
+        symbol: comment.symbol,
+        createdAt: comment.createdAt?.toISOString() || new Date().toISOString(),
+      });
+    } catch (error) {
+      console.error("Error adding comment:", error);
+      res.status(500).json({ message: "Failed to add comment" });
+    }
+  });
+
+  app.get("/api/ws/status", async (req, res) => {
+    res.json({
+      connectedClients: getConnectedClientsCount(),
+    });
+  });
+
+  // Initialize WebSocket server
+  initializeWebSocket(httpServer);
 
   return httpServer;
 }

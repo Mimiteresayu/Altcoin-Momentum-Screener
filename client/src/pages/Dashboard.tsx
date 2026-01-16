@@ -3,6 +3,7 @@ import { useTickers, useRefreshSignals } from "@/hooks/use-market-data";
 import { SignalTable } from "@/components/SignalTable";
 import { WatchlistSidebar } from "@/components/WatchlistSidebar";
 import { MetricCard } from "@/components/MetricCard";
+import { CommentSection } from "@/components/CommentSection";
 import { Activity, BarChart3, Target, Layers, Zap, RefreshCw, Clock, Waves, Crown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { queryClient } from "@/lib/queryClient";
@@ -199,6 +200,8 @@ export default function Dashboard() {
                 <SignalTable signals={signals} />
               )}
             </div>
+
+            <CommentSection />
           </div>
         </div>
 

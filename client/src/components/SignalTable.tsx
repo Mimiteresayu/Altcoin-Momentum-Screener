@@ -386,6 +386,11 @@ export function SignalTable({ signals }: SignalTableProps) {
                 <th className="px-2 py-3 w-8 text-center">
                   <Star className="w-3 h-3 mx-auto" />
                 </th>
+                <th className="px-2 py-3 text-center">
+                  <div className="flex items-center justify-center">
+                    Side
+                  </div>
+                </th>
                 <th
                   className="px-2 py-3 cursor-pointer hover:text-primary transition-colors"
                   onClick={() => handleSort("symbol")}
@@ -593,6 +598,23 @@ export function SignalTable({ signals }: SignalTableProps) {
                             )}
                           />
                         </button>
+                      </td>
+                      <td className="px-2 py-2 text-center" data-testid={`side-${signal.symbol}`}>
+                        <Badge
+                          className={clsx(
+                            "font-bold text-[10px] px-2",
+                            signal.side === "LONG"
+                              ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/30"
+                              : "bg-rose-500/20 text-rose-400 border-rose-500/30",
+                          )}
+                        >
+                          {signal.side === "LONG" ? (
+                            <TrendingUp className="w-3 h-3 mr-0.5" />
+                          ) : (
+                            <TrendingDown className="w-3 h-3 mr-0.5" />
+                          )}
+                          {signal.side}
+                        </Badge>
                       </td>
                       <td className="px-2 py-2 font-medium text-foreground">
                         <div className="flex items-center gap-1.5">

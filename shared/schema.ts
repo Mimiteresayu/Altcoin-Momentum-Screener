@@ -168,6 +168,7 @@ export type TPLevel = z.infer<typeof tpLevelSchema>;
 
 export const signalSchema = z.object({
   symbol: z.string(),
+  side: z.enum(["LONG", "SHORT"]),  // Trade direction based on trend analysis
   currentPrice: z.number(),
   priceChange24h: z.number(),
   volumeSpikeRatio: z.number(),
@@ -252,6 +253,7 @@ export const tradeDisplaySchema = z.object({
   id: z.number(),
   tradeId: z.string(),
   symbol: z.string(),
+  side: z.enum(["LONG", "SHORT"]).optional(),  // Trade direction
   signalTimestamp: z.string(),
   entryTimestamp: z.string().nullable(),
   exitTimestamp: z.string().nullable(),  // When trade was closed
@@ -276,3 +278,28 @@ export const tradeDisplaySchema = z.object({
 });
 
 export type TradeDisplay = z.infer<typeof tradeDisplaySchema>;
+
+// ============================================
+// COMMENTS TABLE (For real-time discussion)
+// ============================================
+export const comments = pgTable("comments", {
+  id: serial("id").primaryKey(),
+  author: text("author").notNull(),
+  content: text("content").notNull(),
+  symbol: text("symbol"),  // Optional: tag a specific symbol
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertCommentSchema = createInsertSchema(comments).omit({ id: true, createdAt: true });
+export type InsertComment = z.infer<typeof insertCommentSchema>;
+export type Comment = typeof comments.$inferSelect;
+
+export const commentDisplaySchema = z.object({
+  id: z.number(),
+  author: z.string(),
+  content: z.string(),
+  symbol: z.string().nullable(),
+  createdAt: z.string(),
+});
+
+export type CommentDisplay = z.infer<typeof commentDisplaySchema>;
