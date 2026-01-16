@@ -3,21 +3,38 @@ import { storage } from "./storage";
 import axios from "axios";
 
 // ============================================
-// CONFIGURATION
+// CONFIGURATION - Optimized for Sharpe ≥2.5
 // ============================================
 const CONFIG = {
   INITIAL_CAPITAL: 10000,
   RISK_PER_TRADE_MIN: 0.02,
   RISK_PER_TRADE_MAX: 0.05,
   DEFAULT_RISK_PCT: 0.03,
-  TP1_EXIT_PCT: 0.25,       // Reduced from 0.35 - take less profit early
-  TP2_EXIT_PCT: 0.35,
-  TP3_EXIT_PCT: 0.40,       // Increased to let winners run
   MAX_CONCURRENT_TRADES: 10,
-  SIGNAL_STRENGTH_MIN: 4,   // Increased from 3 - require stronger confluence
-  MIN_TP1_R_MULTIPLE: 0.5,  // Minimum R-multiple before taking TP1
-  TRAILING_STOP_ACTIVATION_R: 1.0, // Activate trailing stop after 1R profit
-  TRAILING_STOP_DISTANCE_PCT: 0.02, // 2% trailing distance
+  SIGNAL_STRENGTH_MIN: 4,
+  
+  // Entry Filters (Tighter for quality signals)
+  MIN_VOL_SPIKE: 8.0,        // Require 8x volume spike
+  MIN_VOL_ACCEL: 3.0,        // Require 3x acceleration
+  MIN_OI_CHANGE: 15.0,       // Require 15% OI change
+  RSI_MIN: 45,               // RSI lower bound
+  RSI_MAX: 70,               // RSI upper bound
+  
+  // Flexible Stop Loss
+  SWING_LOW_BUFFER_PCT: 0.005, // 0.5% buffer below swing low
+  DEFAULT_SL_PCT: 0.05,        // 5% fallback if no swing low
+  
+  // Momentum Trailing TP (replaces fixed TP1/TP2/TP3)
+  TRAIL_VOL_THRESHOLD: 2.0,    // Trail when VOL drops below 2x
+  TRAIL_PRICE_DROP_PCT: 0.03,  // Trail when price drops 3% from peak
+  TRAIL_DISTANCE_PCT: 0.015,   // 1.5% trailing distance
+  BREAKEVEN_ACTIVATION_R: 0.5, // Move to breakeven after 0.5R
+  
+  // Legacy TP levels for compatibility
+  TP1_EXIT_PCT: 0.25,
+  TP2_EXIT_PCT: 0.35,
+  TP3_EXIT_PCT: 0.40,
+  MIN_TP1_R_MULTIPLE: 0.5,
 };
 
 // ============================================
@@ -250,10 +267,11 @@ class SignalTracker {
 }
 
 // ============================================
-// PRICE MONITOR
+// PRICE MONITOR - Momentum Trailing Implementation
 // ============================================
 class PriceMonitor {
   private positionManager: PositionManager;
+  private peakPrices: Map<string, number> = new Map();
 
   constructor(positionManager: PositionManager) {
     this.positionManager = positionManager;
@@ -270,6 +288,17 @@ class PriceMonitor {
     }
   }
 
+  // Store the latest volume spike ratios from signal processing
+  private volumeSpikes: Map<string, number> = new Map();
+  
+  updateVolumeSpike(symbol: string, volumeSpike: number) {
+    this.volumeSpikes.set(symbol, volumeSpike);
+  }
+  
+  getVolumeSpike(symbol: string): number | null {
+    return this.volumeSpikes.get(symbol) ?? null;
+  }
+
   async checkActiveTrades() {
     const activeTrades = await storage.getActiveTrades();
     
@@ -277,12 +306,20 @@ class PriceMonitor {
       const currentPrice = await this.fetchCurrentPrice(trade.symbol);
       if (!currentPrice) continue;
       
-      await this.evaluateTrade(trade, currentPrice);
+      // Track peak price for momentum trailing
+      const existingPeak = this.peakPrices.get(trade.tradeId) || trade.entryPrice;
+      if (currentPrice > existingPeak) {
+        this.peakPrices.set(trade.tradeId, currentPrice);
+      }
+      
+      // Get current volume spike from the latest signal data
+      const currentVolume = this.getVolumeSpike(trade.symbol);
+      await this.evaluateTrade(trade, currentPrice, currentVolume);
       await new Promise(resolve => setTimeout(resolve, 100));
     }
   }
 
-  private async evaluateTrade(trade: BacktestTrade, currentPrice: number) {
+  private async evaluateTrade(trade: BacktestTrade, currentPrice: number, currentVolume: number | null) {
     const riskPerUnit = trade.entryPrice - trade.originalSlPrice;
     
     if (riskPerUnit <= 0) return;
@@ -302,6 +339,11 @@ class PriceMonitor {
     
     if (remainingSize <= 0) return;
     
+    const currentRMultiple = (currentPrice - trade.entryPrice) / riskPerUnit;
+    const peakPrice = this.peakPrices.get(trade.tradeId) || trade.entryPrice;
+    const priceDropFromPeak = peakPrice > 0 ? (peakPrice - currentPrice) / peakPrice : 0;
+    
+    // STOP LOSS CHECK
     if (currentPrice <= trade.currentSlPrice && !trade.slHit) {
       const slPnl = (trade.currentSlPrice - trade.entryPrice) * remainingSize;
       const totalPnl = accumulatedPnl + slPnl;
@@ -323,20 +365,75 @@ class PriceMonitor {
         rMultiple,
       });
       
+      // Clean up peak tracking
+      this.peakPrices.delete(trade.tradeId);
+      
       await this.positionManager.updateEquity(slPnl, trade.capitalUsed);
       console.log(`[BACKTEST] ${trade.symbol} SL HIT at ${trade.currentSlPrice}, PnL: $${totalPnl.toFixed(2)}, R: ${rMultiple.toFixed(2)}`);
       return;
     }
     
-    if (currentPrice >= trade.tp1Price && !trade.tp1Hit) {
-      // Check minimum R-multiple before taking TP1
-      const currentRMultiple = (currentPrice - trade.entryPrice) / riskPerUnit;
+    // MOMENTUM TRAILING TP - Exit when momentum fades
+    // Triggers when: VOL drops below 2x OR price drops 3% from peak (and we're in profit)
+    const shouldTrailMomentum = currentRMultiple > 0 && (
+      (currentVolume !== null && currentVolume < CONFIG.TRAIL_VOL_THRESHOLD) ||
+      priceDropFromPeak >= CONFIG.TRAIL_PRICE_DROP_PCT
+    );
+    
+    if (shouldTrailMomentum && !trade.slHit) {
+      // Close entire remaining position at current price (momentum exit)
+      const exitPnl = (currentPrice - trade.entryPrice) * remainingSize;
+      const totalPnl = accumulatedPnl + exitPnl;
+      const rMultiple = totalPnl / (riskPerUnit * trade.positionSize);
       
-      if (currentRMultiple < CONFIG.MIN_TP1_R_MULTIPLE) {
-        // Don't take TP1 yet - not enough R achieved, wait for better exit
-        return;
+      const exitReason = currentVolume !== null && currentVolume < CONFIG.TRAIL_VOL_THRESHOLD 
+        ? `VOL_FADE (${currentVolume.toFixed(1)}x)` 
+        : `PRICE_DROP (${(priceDropFromPeak * 100).toFixed(1)}%)`;
+      
+      await storage.addTradeEvent({
+        tradeId: trade.tradeId,
+        eventType: "MOMENTUM_EXIT",
+        price: currentPrice,
+        size: remainingSize,
+        pnlDelta: exitPnl,
+      });
+      
+      await storage.updateTrade(trade.tradeId, {
+        status: "closed",
+        tp3Hit: true, // Mark as completed exit
+        exitTimestamp: new Date(),
+        finalPnl: totalPnl,
+        rMultiple,
+      });
+      
+      // Clean up peak tracking
+      this.peakPrices.delete(trade.tradeId);
+      
+      await this.positionManager.updateEquity(exitPnl, trade.capitalUsed);
+      console.log(`[BACKTEST] ${trade.symbol} MOMENTUM EXIT (${exitReason}) at $${currentPrice.toFixed(6)}, R: ${rMultiple.toFixed(2)}, PnL: $${totalPnl.toFixed(2)}`);
+      return;
+    }
+    
+    // BREAKEVEN STOP - Move SL to breakeven after 0.5R profit
+    if (currentRMultiple >= CONFIG.BREAKEVEN_ACTIVATION_R && trade.currentSlPrice < trade.entryPrice) {
+      await storage.updateTrade(trade.tradeId, {
+        currentSlPrice: trade.entryPrice,
+      });
+      console.log(`[BACKTEST] ${trade.symbol} SL moved to BREAKEVEN at ${currentRMultiple.toFixed(2)}R`);
+    }
+    
+    // TRAILING STOP - Trail when price moves higher (after breakeven)
+    if (currentRMultiple > CONFIG.BREAKEVEN_ACTIVATION_R && currentPrice > trade.entryPrice) {
+      const trailingSlPrice = currentPrice * (1 - CONFIG.TRAIL_DISTANCE_PCT);
+      if (trailingSlPrice > trade.currentSlPrice) {
+        await storage.updateTrade(trade.tradeId, {
+          currentSlPrice: trailingSlPrice,
+        });
       }
-      
+    }
+    
+    // Legacy TP levels (optional partial exits) - kept for compatibility but less used now
+    if (currentPrice >= trade.tp1Price && !trade.tp1Hit) {
       const exitSize = trade.positionSize * CONFIG.TP1_EXIT_PCT;
       const tp1Pnl = (currentPrice - trade.entryPrice) * exitSize;
       
@@ -348,30 +445,13 @@ class PriceMonitor {
         pnlDelta: tp1Pnl,
       });
       
-      // After TP1, move SL to breakeven (not trailing yet)
       await storage.updateTrade(trade.tradeId, {
         tp1Hit: true,
-        currentSlPrice: trade.entryPrice, // Breakeven after TP1
       });
       
       const partialCapitalReleased = trade.capitalUsed * CONFIG.TP1_EXIT_PCT;
       await this.positionManager.updateEquity(tp1Pnl, partialCapitalReleased);
-      console.log(`[BACKTEST] ${trade.symbol} TP1 HIT at $${currentPrice.toFixed(6)} (${currentRMultiple.toFixed(2)}R), Partial PnL: $${tp1Pnl.toFixed(2)}, SL moved to breakeven`);
-    }
-    
-    // Trailing stop: only activate after TP1 hit AND reaching trailing activation threshold
-    if (trade.tp1Hit && !trade.slHit && !trade.tp3Hit) {
-      const currentRMultiple = (currentPrice - trade.entryPrice) / riskPerUnit;
-      
-      // Only trail after reaching the activation threshold
-      if (currentRMultiple >= CONFIG.TRAILING_STOP_ACTIVATION_R) {
-        const trailingSlPrice = currentPrice * (1 - CONFIG.TRAILING_STOP_DISTANCE_PCT);
-        if (trailingSlPrice > trade.currentSlPrice) {
-          await storage.updateTrade(trade.tradeId, {
-            currentSlPrice: trailingSlPrice,
-          });
-        }
-      }
+      console.log(`[BACKTEST] ${trade.symbol} TP1 at $${currentPrice.toFixed(6)}, Partial PnL: $${tp1Pnl.toFixed(2)}`);
     }
     
     if (currentPrice >= trade.tp2Price && !trade.tp2Hit && trade.tp1Hit) {
@@ -392,7 +472,7 @@ class PriceMonitor {
       
       const partialCapitalReleased = trade.capitalUsed * CONFIG.TP2_EXIT_PCT;
       await this.positionManager.updateEquity(tp2Pnl, partialCapitalReleased);
-      console.log(`[BACKTEST] ${trade.symbol} TP2 HIT at ${trade.tp2Price}, Partial PnL: $${tp2Pnl.toFixed(2)}`);
+      console.log(`[BACKTEST] ${trade.symbol} TP2 at ${trade.tp2Price}, Partial PnL: $${tp2Pnl.toFixed(2)}`);
     }
     
     if (currentPrice >= trade.tp3Price && !trade.tp3Hit && trade.tp2Hit) {
@@ -426,9 +506,12 @@ class PriceMonitor {
         rMultiple,
       });
       
+      // Clean up peak tracking
+      this.peakPrices.delete(trade.tradeId);
+      
       const partialCapitalReleased = trade.capitalUsed * CONFIG.TP3_EXIT_PCT;
       await this.positionManager.updateEquity(tp3Pnl, partialCapitalReleased);
-      console.log(`[BACKTEST] ${trade.symbol} TP3 HIT at ${trade.tp3Price}, Final PnL: $${totalPnl.toFixed(2)}, R: ${rMultiple.toFixed(2)}`);
+      console.log(`[BACKTEST] ${trade.symbol} TP3 at ${trade.tp3Price}, Final PnL: $${totalPnl.toFixed(2)}, R: ${rMultiple.toFixed(2)}`);
     }
   }
 }
@@ -458,6 +541,11 @@ export class BacktestingService {
   async processSignals(signals: Signal[]) {
     await this.signalTracker.captureSignals(signals);
     
+    // Update volume spikes for all signals (used for momentum trailing)
+    for (const signal of signals) {
+      this.priceMonitor.updateVolumeSpike(signal.symbol, signal.volumeSpikeRatio);
+    }
+    
     const activeTrades = await storage.getActiveTrades();
     const activeSymbols = new Set(activeTrades.map(t => t.symbol));
     
@@ -466,16 +554,58 @@ export class BacktestingService {
       return;
     }
     
-    const eligibleSignals = signals.filter(signal => 
-      !activeSymbols.has(signal.symbol) &&
-      signal.signalStrength >= CONFIG.SIGNAL_STRENGTH_MIN &&
-      signal.riskReward >= 2
-    );
+    // TIGHTER ENTRY FILTERS for Sharpe ≥2.5
+    const eligibleSignals = signals.filter(signal => {
+      // Basic eligibility
+      if (activeSymbols.has(signal.symbol)) return false;
+      if (signal.signalStrength < CONFIG.SIGNAL_STRENGTH_MIN) return false;
+      if (signal.riskReward < 2) return false;
+      
+      // Volume filter: Require 8x volume spike
+      if (signal.volumeSpikeRatio < CONFIG.MIN_VOL_SPIKE) return false;
+      
+      // Acceleration filter: Require 3x acceleration (skip if no data available)
+      const accel = signal.volAccel;
+      if (accel !== null && accel !== undefined && accel < CONFIG.MIN_VOL_ACCEL) return false;
+      
+      // OI filter: Require 15% OI change (if available)
+      if (signal.oiChange24h !== null && signal.oiChange24h !== undefined) {
+        if (Math.abs(signal.oiChange24h) < CONFIG.MIN_OI_CHANGE) return false;
+      }
+      
+      // RSI filter: Require RSI between 45-70
+      if (signal.rsi < CONFIG.RSI_MIN || signal.rsi > CONFIG.RSI_MAX) return false;
+      
+      return true;
+    });
+    
+    console.log(`[BACKTEST] ${eligibleSignals.length} signals passed filters (VOL≥${CONFIG.MIN_VOL_SPIKE}x, ACCEL≥${CONFIG.MIN_VOL_ACCEL}x, RSI ${CONFIG.RSI_MIN}-${CONFIG.RSI_MAX})`);
     
     for (const signal of eligibleSignals) {
+      // FLEXIBLE SL: Use swing low from timeframe data with 0.5% buffer
+      let slPrice = signal.slPrice;
+      
+      // Try to get 5min swing low from timeframes (15M has similar granularity)
+      const tf15m = signal.timeframes?.find(tf => tf.timeframe === "15M");
+      const tf1h = signal.timeframes?.find(tf => tf.timeframe === "1H");
+      
+      // Use swing low with buffer if available
+      if (tf15m?.swingLow && tf15m.swingLow > 0) {
+        const swingLowWithBuffer = tf15m.swingLow * (1 - CONFIG.SWING_LOW_BUFFER_PCT);
+        // Only use if it provides a tighter stop than default
+        if (swingLowWithBuffer > signal.entryPrice * (1 - CONFIG.DEFAULT_SL_PCT)) {
+          slPrice = swingLowWithBuffer;
+        }
+      } else if (tf1h?.swingLow && tf1h.swingLow > 0) {
+        const swingLowWithBuffer = tf1h.swingLow * (1 - CONFIG.SWING_LOW_BUFFER_PCT);
+        if (swingLowWithBuffer > signal.entryPrice * (1 - CONFIG.DEFAULT_SL_PCT)) {
+          slPrice = swingLowWithBuffer;
+        }
+      }
+      
       const { size, capitalUsed } = this.positionManager.calculatePositionSize(
         signal.entryPrice,
-        signal.slPrice
+        slPrice
       );
       
       if (size <= 0 || capitalUsed <= 0) {
@@ -496,8 +626,8 @@ export class BacktestingService {
         signalTimestamp: now,
         entryTimestamp: now,
         entryPrice: signal.entryPrice,
-        currentSlPrice: signal.slPrice,
-        originalSlPrice: signal.slPrice,
+        currentSlPrice: slPrice,
+        originalSlPrice: slPrice,
         tp1Price: signal.tpLevels[0]?.price || signal.entryPrice * 1.05,
         tp2Price: signal.tpLevels[1]?.price || signal.entryPrice * 1.10,
         tp3Price: signal.tpLevels[2]?.price || signal.entryPrice * 1.15,
