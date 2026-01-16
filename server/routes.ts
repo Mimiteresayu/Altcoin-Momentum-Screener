@@ -136,9 +136,9 @@ async function fetchCoinalyzeOpenInterest(symbols: string[], apiKey: string): Pr
       }
     }
     
-    // Delay between batches to respect rate limit (40/min = 1.5s between)
+    // Delay between batches to respect rate limit (40/min = 3s between for safety)
     if (i < symbolBatches.length - 1) {
-      await new Promise(r => setTimeout(r, 2000));
+      await new Promise(r => setTimeout(r, 3000));
     }
   }
   
@@ -157,9 +157,11 @@ async function fetchOpenInterestWithBinanceFallback(symbols: string[]): Promise<
   // Try Coinalyze first if API key is available
   if (apiKey) {
     try {
-      // Priority symbols for OI data
-      const prioritySymbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "DOGEUSDT", "BNBUSDT", "ADAUSDT", "AVAXUSDT", "LINKUSDT", "DOTUSDT", "LTCUSDT", "UNIUSDT", "NEARUSDT", "AAVEUSDT"];
-      const allSymbols = Array.from(new Set([...prioritySymbols, ...symbols.filter(s => s.endsWith("USDT"))])).slice(0, 30);
+      // Priority symbols for OI data - include major coins AND the actual symbols being processed
+      const majorSymbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "DOGEUSDT", "BNBUSDT", "ADAUSDT", "AVAXUSDT", "LINKUSDT", "DOTUSDT", "LTCUSDT", "UNIUSDT", "NEARUSDT", "AAVEUSDT"];
+      // Prioritize actual symbols first, then major symbols (limit to 40 to stay within rate limits)
+      const usdtSymbols = symbols.filter(s => s.endsWith("USDT"));
+      const allSymbols = Array.from(new Set([...usdtSymbols, ...majorSymbols])).slice(0, 40);
       
       const coinalyzeData = await fetchCoinalyzeOpenInterest(allSymbols, apiKey);
       

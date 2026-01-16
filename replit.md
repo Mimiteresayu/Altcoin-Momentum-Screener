@@ -88,9 +88,10 @@ Preferred communication style: Simple, everyday language.
 - Closes entire remaining position when momentum fades
 
 ### Coinalyze Integration
-- Open Interest data from Coinalyze API
-- Rate limit: 40 requests/minute with automatic backoff
-- Symbols with null OI show "N/A" in UI
+- Open Interest data from Coinalyze API (requires COINALYZE_API_KEY secret)
+- Rate limit: 40 requests/minute with automatic backoff and retry
+- Fetches OI for up to 40 symbols per update cycle (prioritizes signal candidates)
+- Symbols without Coinalyze coverage show "N/A" in UI (common for newer/smaller tokens)
 
 ## Signal Direction (LONG/SHORT)
 Each signal displays a SIDE indicator (LONG or SHORT) based on multi-factor scoring:
