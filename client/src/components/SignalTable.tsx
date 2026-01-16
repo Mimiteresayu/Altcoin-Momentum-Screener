@@ -694,8 +694,7 @@ export function SignalTable({ signals }: SignalTableProps) {
                                     : "text-cyan-400/70",
                             )}
                           >
-                            {signal.oiChange24h >= 0 ? "+" : ""}
-                            {signal.oiChange24h.toFixed(1)}%
+                            {`${signal.oiChange24h >= 0 ? "+" : ""}${signal.oiChange24h.toFixed(1)}%`}
                           </span>
                         ) : (
                           <span className="text-muted-foreground/40 text-xs">N/A</span>
