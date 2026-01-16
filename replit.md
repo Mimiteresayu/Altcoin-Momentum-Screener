@@ -91,3 +91,28 @@ Preferred communication style: Simple, everyday language.
 - Open Interest data from Coinalyze API
 - Rate limit: 40 requests/minute with automatic backoff
 - Symbols with null OI show "N/A" in UI
+
+## Signal Direction (LONG/SHORT)
+Each signal displays a SIDE indicator (LONG or SHORT) based on multi-factor scoring:
+- **Price Trend** (weight 3): Primary direction indicator
+- **RSI Momentum** (weight 2): Confirms trend, not contra-trades
+- **Volume** (weight 2): High volume confirms price direction
+- **Open Interest** (weight 2): Rising OI + price direction = position building
+- **Market Structure** (weight 1 each): FVG and Order Block types
+Decision: SHORT when bearish score > bullish score, otherwise LONG
+
+## Discord Notifications
+- Sends formatted embed messages for HOT/MAJOR/ACTIVE signals
+- Requires DISCORD_WEBHOOK_URL secret configuration
+- Rate limiting: 1 second between messages
+- Deduplication: 30-minute cooldown per symbol (in-memory, resets on restart)
+
+## Real-Time Comments (WebSocket)
+- WebSocket server at `/ws` path for live updates
+- Comments persisted to PostgreSQL database
+- XSS protection: All input sanitized (HTML entities escaped)
+- REST API fallback: `GET/POST /api/comments`
+- Fields: author (50 chars), content (500 chars), optional symbol
+
+## API Limitations
+- **Bitunix**: No public API for programmatic alarm/alert creation. Users must set alerts via Bitunix web/mobile UI or TradingView webhook integration.
