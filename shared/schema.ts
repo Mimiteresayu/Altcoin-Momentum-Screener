@@ -254,6 +254,8 @@ export const tradeDisplaySchema = z.object({
   symbol: z.string(),
   signalTimestamp: z.string(),
   entryTimestamp: z.string().nullable(),
+  exitTimestamp: z.string().nullable(),  // When trade was closed
+  holdingTimeMinutes: z.number().nullable(),  // Duration in minutes
   entryPrice: z.number(),
   currentSlPrice: z.number(),
   tp1Price: z.number(),

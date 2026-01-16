@@ -82,6 +82,29 @@ function TradesTable({ trades, loading }: { trades: TradeDisplay[]; loading: boo
     return `${sign}$${pnl.toFixed(2)}`;
   };
 
+  const formatTime = (timestamp: string | null | undefined) => {
+    if (!timestamp) return "-";
+    const date = new Date(timestamp);
+    return date.toLocaleString('en-US', { 
+      month: 'short', 
+      day: 'numeric',
+      hour: '2-digit', 
+      minute: '2-digit',
+      hour12: false 
+    });
+  };
+
+  const formatHoldingTime = (minutes: number | null | undefined) => {
+    if (minutes === null || minutes === undefined) return "-";
+    if (minutes < 60) return `${minutes}m`;
+    const hours = Math.floor(minutes / 60);
+    const mins = minutes % 60;
+    if (hours < 24) return `${hours}h ${mins}m`;
+    const days = Math.floor(hours / 24);
+    const remainingHours = hours % 24;
+    return `${days}d ${remainingHours}h`;
+  };
+
   const getStatusBadge = (trade: TradeDisplay) => {
     if (trade.status === "active") {
       return (
@@ -175,8 +198,10 @@ function TradesTable({ trades, loading }: { trades: TradeDisplay[]; loading: boo
           <tr className="bg-muted/30 border-b border-white/5 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">
             <th className="px-3 py-3">Trade ID</th>
             <th className="px-3 py-3">Symbol</th>
-            <th className="px-3 py-3 text-right">Entry</th>
-            <th className="px-3 py-3 text-right">Size</th>
+            <th className="px-3 py-3 text-right">Entry $</th>
+            <th className="px-3 py-3 text-center">Entry Time</th>
+            <th className="px-3 py-3 text-center">Exit Time</th>
+            <th className="px-3 py-3 text-center">Duration</th>
             <th className="px-3 py-3 text-center">TP Progress</th>
             <th className="px-3 py-3 text-center">Status</th>
             <th className="px-3 py-3 text-right">PnL</th>
@@ -195,8 +220,25 @@ function TradesTable({ trades, loading }: { trades: TradeDisplay[]; loading: boo
               </td>
               <td className="px-3 py-3 font-mono font-bold">{trade.symbol.replace("USDT", "")}</td>
               <td className="px-3 py-3 text-right font-mono text-xs">${formatPrice(trade.entryPrice)}</td>
-              <td className="px-3 py-3 text-right font-mono text-xs text-muted-foreground">
-                {trade.positionSize.toFixed(2)}
+              <td className="px-3 py-3 text-center font-mono text-xs text-muted-foreground">
+                {formatTime(trade.entryTimestamp)}
+              </td>
+              <td className="px-3 py-3 text-center font-mono text-xs text-muted-foreground">
+                {trade.status === "active" ? (
+                  <Badge className="bg-blue-500/20 text-blue-400 border-blue-500/30 text-[10px]">
+                    Active
+                  </Badge>
+                ) : (
+                  formatTime(trade.exitTimestamp)
+                )}
+              </td>
+              <td className="px-3 py-3 text-center font-mono text-xs">
+                <span className={clsx(
+                  trade.holdingTimeMinutes !== null && trade.holdingTimeMinutes > 60 * 24 && "text-amber-400",
+                  trade.holdingTimeMinutes !== null && trade.holdingTimeMinutes <= 60 && "text-emerald-400"
+                )}>
+                  {formatHoldingTime(trade.holdingTimeMinutes)}
+                </span>
               </td>
               <td className="px-3 py-3 text-center">{getTPProgress(trade)}</td>
               <td className="px-3 py-3 text-center">{getStatusBadge(trade)}</td>

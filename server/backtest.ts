@@ -566,12 +566,26 @@ export class BacktestingService {
         }
       }
       
+      // Calculate holding time in minutes
+      let holdingTimeMinutes: number | null = null;
+      if (trade.entryTimestamp && trade.exitTimestamp) {
+        const entryTime = new Date(trade.entryTimestamp).getTime();
+        const exitTime = new Date(trade.exitTimestamp).getTime();
+        holdingTimeMinutes = Math.round((exitTime - entryTime) / 60000);
+      } else if (trade.entryTimestamp && trade.status === "active") {
+        // For active trades, show time since entry
+        const entryTime = new Date(trade.entryTimestamp).getTime();
+        holdingTimeMinutes = Math.round((Date.now() - entryTime) / 60000);
+      }
+      
       result.push({
         id: trade.id,
         tradeId: trade.tradeId,
         symbol: trade.symbol,
         signalTimestamp: trade.signalTimestamp?.toISOString() || "",
         entryTimestamp: trade.entryTimestamp?.toISOString() || null,
+        exitTimestamp: trade.exitTimestamp?.toISOString() || null,
+        holdingTimeMinutes,
         entryPrice: trade.entryPrice,
         currentSlPrice: trade.currentSlPrice,
         tp1Price: trade.tp1Price,
