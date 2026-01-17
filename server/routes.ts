@@ -1280,7 +1280,7 @@ export async function registerRoutes(
         }
       }
 
-      console.error("Signal calculation error:", error);
+      console.error("Signal calculation error:", err);
     } finally {
       isCalculating = false;
     }
