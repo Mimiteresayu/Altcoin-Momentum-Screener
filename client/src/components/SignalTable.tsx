@@ -222,7 +222,7 @@ export function SignalTable({ signals }: SignalTableProps) {
                   High probability spike window
                 </div>
               </div>
-            </TooltipContent>
+            </TooltipContent>{" "}
           </Tooltip>
         );
       case "hot":
@@ -387,9 +387,7 @@ export function SignalTable({ signals }: SignalTableProps) {
                   <Star className="w-3 h-3 mx-auto" />
                 </th>
                 <th className="px-2 py-3 text-center">
-                  <div className="flex items-center justify-center">
-                    Side
-                  </div>
+                  <div className="flex items-center justify-center">Side</div>
                 </th>
                 <th
                   className="px-2 py-3 cursor-pointer hover:text-primary transition-colors"
@@ -450,7 +448,9 @@ export function SignalTable({ signals }: SignalTableProps) {
                     <TooltipTrigger asChild>
                       <div className="flex items-center justify-center gap-1.5 cursor-help">
                         <BarChart3 className="w-3.5 h-3.5 text-cyan-400" />
-                        <span className="text-cyan-400 font-semibold">OI %</span>
+                        <span className="text-cyan-400 font-semibold">
+                          OI %
+                        </span>
                       </div>
                     </TooltipTrigger>
                     <TooltipContent side="bottom" className="max-w-[240px]">
@@ -459,15 +459,21 @@ export function SignalTable({ signals }: SignalTableProps) {
                           Open Interest Change (24H)
                         </div>
                         <div className="text-muted-foreground">
-                          Measures the change in total open futures contracts over the last 24 hours. Rising OI with rising price = bullish momentum.
+                          Measures the change in total open futures contracts
+                          over the last 24 hours. Rising OI with rising price =
+                          bullish momentum.
                         </div>
                         <div className="border-t border-border pt-2 space-y-1">
                           <div className="flex justify-between">
-                            <span className="text-emerald-400">+10% or more</span>
+                            <span className="text-emerald-400">
+                              +10% or more
+                            </span>
                             <span>Strong bullish</span>
                           </div>
                           <div className="flex justify-between">
-                            <span className="text-emerald-400/70">+5% to +10%</span>
+                            <span className="text-emerald-400/70">
+                              +5% to +10%
+                            </span>
                             <span>Moderate bullish</span>
                           </div>
                           <div className="flex justify-between">
@@ -519,12 +525,16 @@ export function SignalTable({ signals }: SignalTableProps) {
                     </TooltipTrigger>
                     <TooltipContent>
                       <div className="text-xs max-w-[200px]">
-                        <div className="font-semibold text-purple-400">Liquidation Levels</div>
+                        <div className="font-semibold text-purple-400">
+                          Liquidation Levels
+                        </div>
                         <div className="text-muted-foreground">
-                          Estimated liquidation prices at common leverage levels (10x-100x)
+                          Estimated liquidation prices at common leverage levels
+                          (10x-100x)
                         </div>
                         <div className="mt-1">
-                          Red = Long liquidations below price<br/>
+                          Red = Long liquidations below price
+                          <br />
                           Green = Short liquidations above price
                         </div>
                       </div>
@@ -599,7 +609,10 @@ export function SignalTable({ signals }: SignalTableProps) {
                           />
                         </button>
                       </td>
-                      <td className="px-2 py-2 text-center" data-testid={`side-${signal.symbol}`}>
+                      <td
+                        className="px-2 py-2 text-center"
+                        data-testid={`side-${signal.symbol}`}
+                      >
                         <Badge
                           className={clsx(
                             "font-bold text-[10px] px-2",
@@ -719,7 +732,9 @@ export function SignalTable({ signals }: SignalTableProps) {
                             {`${signal.oiChange24h >= 0 ? "+" : ""}${signal.oiChange24h.toFixed(1)}%`}
                           </span>
                         ) : (
-                          <span className="text-muted-foreground text-xs">N/A</span>
+                          <span className="text-muted-foreground text-xs">
+                            N/A
+                          </span>
                         )}
                       </td>
                       <td className="px-2 py-2 text-right font-mono text-muted-foreground text-xs">
@@ -807,12 +822,15 @@ export function SignalTable({ signals }: SignalTableProps) {
                         </Badge>
                       </td>
                       <td className="px-2 py-2 text-center">
-                        {(signal.liquidationLevels && signal.liquidationLevels.length > 0) || signal.leadingIndicators.hasLiquidityZone ? (
+                        {(signal.liquidationLevels &&
+                          signal.liquidationLevels.length > 0) ||
+                        signal.leadingIndicators.hasLiquidityZone ? (
                           <Tooltip>
                             <TooltipTrigger asChild>
                               <Badge className="bg-purple-500/20 text-purple-400 border-purple-500/30 text-[9px] px-1 cursor-help">
-                                {signal.liquidationLevels && signal.liquidationLevels.length > 0 
-                                  ? `${signal.liquidationLevels.length}` 
+                                {signal.liquidationLevels &&
+                                signal.liquidationLevels.length > 0
+                                  ? `${signal.liquidationLevels.length}`
                                   : "LIQ"}
                               </Badge>
                             </TooltipTrigger>
@@ -821,28 +839,60 @@ export function SignalTable({ signals }: SignalTableProps) {
                               className="bg-card border-white/10 max-w-[280px]"
                             >
                               <div className="text-xs space-y-2">
-                                {signal.liquidationLevels && signal.liquidationLevels.length > 0 && (
-                                  <div>
-                                    <div className="font-semibold text-purple-400 mb-1">Liquidation Levels</div>
-                                    <div className="space-y-0.5">
-                                      {signal.liquidationLevels.slice(0, 6).map((liq, idx) => (
-                                        <div key={idx} className="flex justify-between gap-3">
-                                          <span className={liq.direction === "long_liq" ? "text-red-400" : "text-emerald-400"}>
-                                            {liq.direction === "long_liq" ? "Long" : "Short"} {liq.volume}x
-                                          </span>
-                                          <span className="font-mono text-muted-foreground">
-                                            ${formatPrice(liq.price)}
-                                          </span>
-                                        </div>
-                                      ))}
+                                {signal.liquidationLevels &&
+                                  signal.liquidationLevels.length > 0 && (
+                                    <div>
+                                      <div className="font-semibold text-purple-400 mb-1">
+                                        Liquidation Levels
+                                      </div>
+                                      <div className="space-y-0.5">
+                                        {signal.liquidationLevels
+                                          .slice(0, 6)
+                                          .map((liq, idx) => (
+                                            <div
+                                              key={idx}
+                                              className="flex justify-between gap-3"
+                                            >
+                                              <span
+                                                className={
+                                                  liq.direction === "long_liq"
+                                                    ? "text-red-400"
+                                                    : "text-emerald-400"
+                                                }
+                                              >
+                                                {liq.direction === "long_liq"
+                                                  ? "Long"
+                                                  : "Short"}{" "}
+                                                {liq.volume}x
+                                              </span>
+                                              <span className="font-mono text-muted-foreground">
+                                                ${formatPrice(liq.price)}
+                                              </span>
+                                            </div>
+                                          ))}
+                                      </div>
                                     </div>
-                                  </div>
-                                )}
+                                  )}
                                 {signal.leadingIndicators.hasLiquidityZone && (
                                   <div className="border-t border-white/10 pt-1">
-                                    <span className="text-muted-foreground">Liquidity Zone: </span>
-                                    <span className="font-mono">${formatPrice(signal.leadingIndicators.liquidityLevel || 0)}</span>
-                                    <span className="text-muted-foreground"> ({signal.leadingIndicators.liquidityStrength.toFixed(1)}x)</span>
+                                    <span className="text-muted-foreground">
+                                      Liquidity Zone:{" "}
+                                    </span>
+                                    <span className="font-mono">
+                                      $
+                                      {formatPrice(
+                                        signal.leadingIndicators
+                                          .liquidityLevel || 0,
+                                      )}
+                                    </span>
+                                    <span className="text-muted-foreground">
+                                      {" "}
+                                      (
+                                      {signal.leadingIndicators.liquidityStrength.toFixed(
+                                        1,
+                                      )}
+                                      x)
+                                    </span>
                                   </div>
                                 )}
                               </div>
