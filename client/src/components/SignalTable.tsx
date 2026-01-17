@@ -719,7 +719,7 @@ export function SignalTable({ signals }: SignalTableProps) {
                             {`${signal.oiChange24h >= 0 ? "+" : ""}${signal.oiChange24h.toFixed(1)}%`}
                           </span>
                         ) : (
-                          <span className="text-muted-foreground/40 text-xs">N/A</span>
+                          <span className="text-muted-foreground text-xs">N/A</span>
                         )}
                       </td>
                       <td className="px-2 py-2 text-right font-mono text-muted-foreground text-xs">
