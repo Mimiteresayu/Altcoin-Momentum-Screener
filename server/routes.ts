@@ -2,9 +2,9 @@ import type { Express } from "express";
 import type { Server } from "http";
 import { storage } from "./storage";
 import { api } from "@shared/routes";
-import { backtestingService } from "./backtest";
 import { notifyNewSignals, isDiscordConfigured } from "./discord";
 import { initializeWebSocket, getConnectedClientsCount } from "./websocket";
+import { backtestingService } from "./backtest";
 import axios from "axios";
 import { RSI } from "technicalindicators";
 
@@ -1280,17 +1280,10 @@ export async function registerRoutes(
         }
       }
 
-      // Process signals for backtesting
-      try {
-        await backtestingService.processSignals(cachedSignals);
-      } catch (err) {
-        console.error("Backtest processing error:", err);
-      }
-    } catch (error) {
       console.error("Signal calculation error:", error);
+    } finally {
+      isCalculating = false;
     }
-
-    isCalculating = false;
   }
 
   // Track if initial calculation is done
