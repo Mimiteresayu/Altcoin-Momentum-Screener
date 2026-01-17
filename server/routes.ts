@@ -1279,8 +1279,6 @@ export async function registerRoutes(
           console.error("[DISCORD] Notification error:", err);
         }
       }
-
-      console.error("Signal calculation error:", err);
     } finally {
       isCalculating = false;
     }
