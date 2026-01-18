@@ -7,6 +7,14 @@ import { initializeWebSocket, getConnectedClientsCount } from "./websocket";
 import { backtestingService } from "./backtest";
 import axios from "axios";
 import { RSI } from "technicalindicators";
+import {
+  getEnhancedMarketData,
+  getOpenInterestHistory,
+  getLiquidationMap,
+  getLongShortRatio,
+  getFundingRate,
+  EnhancedMarketData,
+} from "./coinglass";
 
 interface Kline {
   openTime: number;
@@ -1551,5 +1559,367 @@ export async function registerRoutes(
       console.error('[API] Error fetching backtest report:', error);
       res.status(500).json({ error: 'Failed to fetch backtest report' });
     }
-  });return httpServer;
+  });
+
+  // ============================================
+  // COINGLASS ENHANCED ENDPOINTS
+  // ============================================
+
+  // Enhanced scan: Get top 50 altcoins with Coinglass enriched data
+  app.get("/api/enhanced-scan", async (req, res) => {
+    try {
+      console.log("[ENHANCED-SCAN] Fetching top 50 altcoins with Coinglass data...");
+      
+      // Fetch top coins by volume from Bitunix
+      const response = await axios.get(
+        "https://fapi.bitunix.com/api/v1/futures/market/tickers",
+        { timeout: 10000 }
+      );
+      
+      const rawData = response.data.data;
+      if (!Array.isArray(rawData)) {
+        res.status(500).json({ error: "Failed to fetch market data" });
+        return;
+      }
+
+      // Filter and sort by volume, get top 50 (excluding stablecoins)
+      const validCoins = rawData
+        .filter((t: any) => {
+          const symbol = t.symbol || "";
+          const price = parseFloat(t.lastPrice);
+          const volume = parseFloat(t.quoteVol);
+          // Exclude stablecoins
+          if (symbol.includes("USDC") || symbol.includes("USDT") && !symbol.endsWith("USDT")) return false;
+          return price > 0 && volume > 0 && !isNaN(price) && !isNaN(volume);
+        })
+        .sort((a: any, b: any) => parseFloat(b.quoteVol) - parseFloat(a.quoteVol))
+        .slice(0, 50);
+
+      console.log(`[ENHANCED-SCAN] Processing ${validCoins.length} coins...`);
+
+      // Fetch enhanced data for each coin (with rate limiting)
+      const enrichedData: Array<{
+        symbol: string;
+        price: number;
+        priceChange24h: number;
+        volume24h: number;
+        coinglass: EnhancedMarketData | null;
+      }> = [];
+
+      for (const coin of validCoins) {
+        const symbol = coin.symbol.replace("USDT", "");
+        const price = parseFloat(coin.lastPrice);
+        const open = parseFloat(coin.open);
+        const priceChange24h = open > 0 ? ((price - open) / open) * 100 : 0;
+        const volume24h = parseFloat(coin.quoteVol);
+
+        try {
+          const coinglassData = await getEnhancedMarketData(symbol);
+          enrichedData.push({
+            symbol: coin.symbol,
+            price,
+            priceChange24h,
+            volume24h,
+            coinglass: coinglassData,
+          });
+        } catch (err) {
+          // If Coinglass fails for this symbol, include basic data
+          enrichedData.push({
+            symbol: coin.symbol,
+            price,
+            priceChange24h,
+            volume24h,
+            coinglass: null,
+          });
+        }
+      }
+
+      // Sort by momentum strength and accumulation score
+      const momentumOrder = {
+        strong_bullish: 0,
+        bullish: 1,
+        neutral: 2,
+        bearish: 3,
+        strong_bearish: 4,
+      };
+
+      const sortedData = enrichedData.sort((a, b) => {
+        // Primary: momentum strength
+        const aMomentum = a.coinglass?.momentumStrength || "neutral";
+        const bMomentum = b.coinglass?.momentumStrength || "neutral";
+        const momentumDiff = momentumOrder[aMomentum] - momentumOrder[bMomentum];
+        if (momentumDiff !== 0) return momentumDiff;
+        
+        // Secondary: accumulation score
+        const aScore = a.coinglass?.accumulationScore || 50;
+        const bScore = b.coinglass?.accumulationScore || 50;
+        return bScore - aScore;
+      });
+
+      console.log(`[ENHANCED-SCAN] Completed. ${sortedData.filter(d => d.coinglass).length} coins with Coinglass data.`);
+
+      res.json({
+        data: sortedData,
+        timestamp: new Date().toISOString(),
+        totalCoins: sortedData.length,
+        withCoinglassData: sortedData.filter(d => d.coinglass).length,
+      });
+    } catch (error: any) {
+      console.error("[ENHANCED-SCAN] Error:", error.message);
+      res.status(500).json({ error: "Failed to fetch enhanced scan data" });
+    }
+  });
+
+  // Signal analysis: Get detailed multi-factor analysis for a specific symbol
+  app.get("/api/signal-analysis/:symbol", async (req, res) => {
+    try {
+      const { symbol } = req.params;
+      const cleanSymbol = symbol.replace("USDT", "").toUpperCase();
+      
+      console.log(`[SIGNAL-ANALYSIS] Analyzing ${cleanSymbol}...`);
+
+      const enhancedData = await getEnhancedMarketData(cleanSymbol);
+
+      // Generate trading signals and interpretations
+      const signals: Array<{
+        type: string;
+        strength: "strong" | "moderate" | "weak";
+        direction: "bullish" | "bearish" | "neutral";
+        description: string;
+      }> = [];
+
+      // 1. Accumulation/Distribution signal
+      if (enhancedData.accumulationScore >= 70) {
+        signals.push({
+          type: "accumulation",
+          strength: enhancedData.accumulationScore >= 80 ? "strong" : "moderate",
+          direction: "bullish",
+          description: `Strong accumulation detected (score: ${enhancedData.accumulationScore}). Smart money appears to be buying.`,
+        });
+      } else if (enhancedData.distributionScore >= 70) {
+        signals.push({
+          type: "distribution",
+          strength: enhancedData.distributionScore >= 80 ? "strong" : "moderate",
+          direction: "bearish",
+          description: `Distribution phase detected (score: ${enhancedData.distributionScore}). Sellers are in control.`,
+        });
+      }
+
+      // 2. Liquidation analysis signal
+      const { liquidationAnalysis } = enhancedData;
+      if (liquidationAnalysis.liquidationBias === "long") {
+        signals.push({
+          type: "liquidation_risk",
+          strength: liquidationAnalysis.totalLongLiquidation > liquidationAnalysis.totalShortLiquidation * 2 ? "strong" : "moderate",
+          direction: "bearish",
+          description: `High long liquidation risk. Max pain for longs at $${liquidationAnalysis.maxPainLong.toFixed(2)}.`,
+        });
+      } else if (liquidationAnalysis.liquidationBias === "short") {
+        signals.push({
+          type: "short_squeeze_setup",
+          strength: liquidationAnalysis.totalShortLiquidation > liquidationAnalysis.totalLongLiquidation * 2 ? "strong" : "moderate",
+          direction: "bullish",
+          description: `Short squeeze potential. Max pain for shorts at $${liquidationAnalysis.maxPainShort.toFixed(2)}.`,
+        });
+      }
+
+      // 3. Orderbook wall analysis
+      const { orderbookAnalysis } = enhancedData;
+      if (orderbookAnalysis.strongestSupport) {
+        signals.push({
+          type: "support_wall",
+          strength: orderbookAnalysis.supportWalls.length >= 3 ? "strong" : "moderate",
+          direction: "bullish",
+          description: `Strong support at $${orderbookAnalysis.strongestSupport.toFixed(2)} with ${orderbookAnalysis.supportWalls.length} bid walls.`,
+        });
+      }
+      if (orderbookAnalysis.strongestResistance) {
+        signals.push({
+          type: "resistance_wall",
+          strength: orderbookAnalysis.resistanceWalls.length >= 3 ? "strong" : "moderate",
+          direction: "bearish",
+          description: `Resistance at $${orderbookAnalysis.strongestResistance.toFixed(2)} with ${orderbookAnalysis.resistanceWalls.length} ask walls.`,
+        });
+      }
+
+      // 4. Long/Short positioning
+      const { positioningAnalysis } = enhancedData;
+      if (positioningAnalysis.trend === "long_dominant") {
+        signals.push({
+          type: "positioning",
+          strength: positioningAnalysis.longShortRatio > 1.3 ? "strong" : "moderate",
+          direction: "bullish",
+          description: `Longs dominating (L/S ratio: ${positioningAnalysis.longShortRatio.toFixed(2)}). Bullish sentiment.`,
+        });
+      } else if (positioningAnalysis.trend === "short_dominant") {
+        signals.push({
+          type: "positioning",
+          strength: positioningAnalysis.longShortRatio < 0.7 ? "strong" : "moderate",
+          direction: "bearish",
+          description: `Shorts dominating (L/S ratio: ${positioningAnalysis.longShortRatio.toFixed(2)}). Bearish sentiment.`,
+        });
+      }
+
+      // 5. Taker flow analysis
+      const { flowAnalysis } = enhancedData;
+      if (flowAnalysis.flowBias === "buying") {
+        signals.push({
+          type: "taker_flow",
+          strength: flowAnalysis.netFlow > flowAnalysis.sellVolume ? "strong" : "moderate",
+          direction: "bullish",
+          description: `Net buying pressure. Buy volume exceeds sell volume by ${((flowAnalysis.buyVolume / flowAnalysis.sellVolume - 1) * 100).toFixed(1)}%.`,
+        });
+      } else if (flowAnalysis.flowBias === "selling") {
+        signals.push({
+          type: "taker_flow",
+          strength: Math.abs(flowAnalysis.netFlow) > flowAnalysis.buyVolume ? "strong" : "moderate",
+          direction: "bearish",
+          description: `Net selling pressure. Sell volume exceeds buy volume by ${((flowAnalysis.sellVolume / flowAnalysis.buyVolume - 1) * 100).toFixed(1)}%.`,
+        });
+      }
+
+      // 6. Funding rate signal
+      const { fundingBasisAnalysis } = enhancedData;
+      if (fundingBasisAnalysis.fundingBias === "bullish") {
+        signals.push({
+          type: "funding_rate",
+          strength: fundingBasisAnalysis.averageFundingRate > 0.0005 ? "strong" : "moderate",
+          direction: "bullish",
+          description: `Positive funding rate (${(fundingBasisAnalysis.averageFundingRate * 100).toFixed(4)}%). Longs paying shorts.`,
+        });
+      } else if (fundingBasisAnalysis.fundingBias === "bearish") {
+        signals.push({
+          type: "funding_rate",
+          strength: fundingBasisAnalysis.averageFundingRate < -0.0005 ? "strong" : "moderate",
+          direction: "bearish",
+          description: `Negative funding rate (${(fundingBasisAnalysis.averageFundingRate * 100).toFixed(4)}%). Shorts paying longs.`,
+        });
+      }
+
+      // Generate overall interpretation
+      const bullishSignals = signals.filter(s => s.direction === "bullish");
+      const bearishSignals = signals.filter(s => s.direction === "bearish");
+      const strongBullish = bullishSignals.filter(s => s.strength === "strong").length;
+      const strongBearish = bearishSignals.filter(s => s.strength === "strong").length;
+
+      let overallBias: "strongly_bullish" | "bullish" | "neutral" | "bearish" | "strongly_bearish";
+      let interpretation: string;
+
+      if (strongBullish >= 2 && bullishSignals.length > bearishSignals.length) {
+        overallBias = "strongly_bullish";
+        interpretation = "Multiple strong bullish signals detected. Consider long positions with tight stops.";
+      } else if (bullishSignals.length > bearishSignals.length) {
+        overallBias = "bullish";
+        interpretation = "Net bullish bias. Look for pullbacks to enter long positions.";
+      } else if (strongBearish >= 2 && bearishSignals.length > bullishSignals.length) {
+        overallBias = "strongly_bearish";
+        interpretation = "Multiple strong bearish signals detected. Consider short positions or stay out.";
+      } else if (bearishSignals.length > bullishSignals.length) {
+        overallBias = "bearish";
+        interpretation = "Net bearish bias. Avoid longs, consider shorts on bounces.";
+      } else {
+        overallBias = "neutral";
+        interpretation = "Mixed signals. Wait for clearer directional confirmation.";
+      }
+
+      // Identify setups
+      const setups: string[] = [];
+      
+      // Breakout setup: high accumulation + support wall + buying flow
+      if (enhancedData.accumulationScore >= 65 && orderbookAnalysis.strongestSupport && flowAnalysis.flowBias === "buying") {
+        setups.push("Breakout Setup: Accumulation with support and buying pressure");
+      }
+      
+      // Short squeeze: short dominant + high short liquidation potential
+      if (positioningAnalysis.trend === "short_dominant" && liquidationAnalysis.liquidationBias === "short") {
+        setups.push("Short Squeeze Potential: Heavy shorts with liquidation cascade risk");
+      }
+      
+      // Distribution top: high distribution + resistance + selling
+      if (enhancedData.distributionScore >= 65 && orderbookAnalysis.strongestResistance && flowAnalysis.flowBias === "selling") {
+        setups.push("Distribution Top: Sellers active at resistance");
+      }
+      
+      // Capitulation: extreme fear + high selling + long liquidations
+      if (enhancedData.fearGreed.value <= 25 && flowAnalysis.flowBias === "selling" && liquidationAnalysis.liquidationBias === "long") {
+        setups.push("Potential Capitulation: Extreme fear with long liquidations");
+      }
+
+      res.json({
+        symbol: cleanSymbol,
+        timestamp: new Date().toISOString(),
+        enhancedData,
+        signals,
+        analysis: {
+          overallBias,
+          interpretation,
+          bullishSignalCount: bullishSignals.length,
+          bearishSignalCount: bearishSignals.length,
+          setups,
+        },
+      });
+    } catch (error: any) {
+      console.error(`[SIGNAL-ANALYSIS] Error for ${req.params.symbol}:`, error.message);
+      res.status(500).json({ error: "Failed to analyze symbol" });
+    }
+  });
+
+  // Basic Coinglass data endpoint for quick lookups
+  app.get("/api/coinglass/:symbol", async (req, res) => {
+    try {
+      const { symbol } = req.params;
+      const cleanSymbol = symbol.replace("USDT", "").toUpperCase();
+      
+      // Fetch basic Coinglass data in parallel
+      const [oiHistory, liquidationMap, longShortRatio, fundingRates] = await Promise.all([
+        getOpenInterestHistory(cleanSymbol, "1h", 24).catch(() => []),
+        getLiquidationMap(cleanSymbol).catch(() => []),
+        getLongShortRatio(cleanSymbol, "1h", 1).catch(() => []),
+        getFundingRate(cleanSymbol).catch(() => []),
+      ]);
+
+      // Calculate OI change
+      let oiChange24h = null;
+      if (oiHistory.length >= 2) {
+        const latestOI = oiHistory[oiHistory.length - 1].openInterestUsd;
+        const earliestOI = oiHistory[0].openInterestUsd;
+        if (earliestOI > 0) {
+          oiChange24h = ((latestOI - earliestOI) / earliestOI) * 100;
+        }
+      }
+
+      // Find max pain levels
+      let maxPainLong = null;
+      let maxPainShort = null;
+      if (liquidationMap.length > 0) {
+        const maxLong = liquidationMap.reduce((max, l) => l.longLiquidation > (max?.longLiquidation || 0) ? l : max, liquidationMap[0]);
+        const maxShort = liquidationMap.reduce((max, l) => l.shortLiquidation > (max?.shortLiquidation || 0) ? l : max, liquidationMap[0]);
+        maxPainLong = maxLong?.price || null;
+        maxPainShort = maxShort?.price || null;
+      }
+
+      // Get long/short ratio
+      const lsRatio = longShortRatio[0]?.longShortRatio || null;
+
+      // Average funding rate
+      const avgFunding = fundingRates.length > 0
+        ? fundingRates.reduce((sum, fr) => sum + fr.fundingRate, 0) / fundingRates.length
+        : null;
+
+      res.json({
+        symbol: cleanSymbol,
+        oiChange24h,
+        maxPainLong,
+        maxPainShort,
+        longShortRatio: lsRatio,
+        avgFundingRate: avgFunding,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error: any) {
+      console.error(`[COINGLASS] Error for ${req.params.symbol}:`, error.message);
+      res.status(500).json({ error: "Failed to fetch Coinglass data" });
+    }
+  });
+
+  return httpServer;
 }
