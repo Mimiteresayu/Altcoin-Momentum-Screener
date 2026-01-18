@@ -1,4 +1,4 @@
-import { binanceService, Position, OrderResult } from "./binance";
+import { bitunixTradeService, Position, OrderResult } from "./bitunix-trade";
 import { db } from "./db";
 import { autotradeSettings, autotradeTrades } from "../shared/schema";
 import { eq, desc } from "drizzle-orm";
@@ -67,9 +67,9 @@ class AutotradeService {
   async initialize() {
     console.log("[AUTOTRADE] Initializing autotrade service");
     
-    const binanceReady = binanceService.initialize();
-    if (!binanceReady) {
-      console.log("[AUTOTRADE] Binance not configured - service disabled");
+    const bitunixReady = bitunixTradeService.initialize();
+    if (!bitunixReady) {
+      console.log("[AUTOTRADE] Bitunix not configured - service disabled");
       return false;
     }
 
@@ -155,12 +155,12 @@ class AutotradeService {
   }
 
   isEnabled(): boolean {
-    return this.config.enabled && binanceService.isConfigured();
+    return this.config.enabled && bitunixTradeService.isConfigured();
   }
 
   async enable() {
-    if (!binanceService.isConfigured()) {
-      throw new Error("Binance API credentials not configured");
+    if (!bitunixTradeService.isConfigured()) {
+      throw new Error("Bitunix API credentials not configured");
     }
     await this.saveConfig({ enabled: true });
     console.log("[AUTOTRADE] Enabled");
@@ -180,7 +180,7 @@ class AutotradeService {
       return { action: "SKIP", details: "Signal does not meet criteria" };
     }
 
-    const positions = await binanceService.getOpenPositions();
+    const positions = await bitunixTradeService.getOpenPositions();
     const existingPosition = positions.find(p => p.symbol === signal.symbol);
 
     if (existingPosition) {
@@ -222,13 +222,13 @@ class AutotradeService {
   }
 
   private async executeTrade(signal: TradeSignal): Promise<any> {
-    const account = await binanceService.getAccountInfo();
+    const account = await bitunixTradeService.getAccountInfo();
     const availableBalance = account.availableBalance;
 
-    await binanceService.setLeverage(signal.symbol, this.config.leverage);
-    await binanceService.setMarginType(signal.symbol, "ISOLATED");
+    await bitunixTradeService.setLeverage(signal.symbol, this.config.leverage);
+    await bitunixTradeService.setMarginType(signal.symbol, "ISOLATED");
 
-    const quantity = binanceService.calculateQuantity(
+    const quantity = bitunixTradeService.calculateQuantity(
       availableBalance,
       this.config.riskPerTrade,
       signal.price,
@@ -241,34 +241,21 @@ class AutotradeService {
     }
 
     const side = signal.side === "LONG" ? "BUY" : "SELL";
-    const oppositeSide = signal.side === "LONG" ? "SELL" : "BUY";
 
     console.log(`[AUTOTRADE] Executing ${signal.side} on ${signal.symbol}`);
     console.log(`[AUTOTRADE] Quantity: ${quantity}, Entry: ${signal.price}`);
     console.log(`[AUTOTRADE] SL: ${signal.stopLoss}, TP: ${signal.takeProfit}`);
 
-    const entryOrder = await binanceService.placeMarketOrder(
+    const entryOrder = await bitunixTradeService.placeMarketOrder(
       signal.symbol,
       side,
-      quantity
-    );
-
-    await binanceService.placeStopLoss(
-      signal.symbol,
-      oppositeSide,
-      signal.stopLoss
-    );
-
-    await binanceService.placeTakeProfit(
-      signal.symbol,
-      oppositeSide,
-      signal.takeProfit
+      quantity.toString()
     );
 
     await this.recordTrade({
       symbol: signal.symbol,
       side: signal.side,
-      entryPrice: parseFloat(entryOrder.avgPrice) || signal.price,
+      entryPrice: signal.price,
       quantity,
       stopLoss: signal.stopLoss,
       takeProfit: signal.takeProfit,
@@ -282,7 +269,7 @@ class AutotradeService {
       symbol: signal.symbol,
       side: signal.side,
       quantity,
-      entryPrice: entryOrder.avgPrice,
+      entryPrice: signal.price,
     };
   }
 
@@ -356,44 +343,47 @@ class AutotradeService {
   }
 
   async closePosition(symbol: string): Promise<any> {
-    if (!binanceService.isConfigured()) {
-      throw new Error("Binance not configured");
+    if (!bitunixTradeService.isConfigured()) {
+      throw new Error("Bitunix not configured");
     }
 
-    const positions = await binanceService.getOpenPositions();
+    const positions = await bitunixTradeService.getOpenPositions();
     const position = positions.find(p => p.symbol === symbol);
 
     if (!position) {
       throw new Error("No open position for symbol");
     }
 
-    await binanceService.cancelAllOrders(symbol);
+    await bitunixTradeService.cancelAllOrders(symbol);
 
-    const side = position.positionAmt > 0 ? "SELL" : "BUY";
-    const quantity = Math.abs(position.positionAmt);
+    const qty = parseFloat(position.qty);
+    const side = position.side === "LONG" ? "SELL" : "BUY";
+    const quantity = bitunixTradeService.formatQuantity(Math.abs(qty));
 
-    const result = await binanceService.placeMarketOrder(symbol, side, quantity);
+    const result = await bitunixTradeService.placeMarketOrder(symbol, side, quantity, "CLOSE");
+
+    const pnl = parseFloat(position.unrealizedPnl);
+    const markPrice = parseFloat(position.markPrice);
 
     await db
       .update(autotradeTrades)
       .set({
         status: "CLOSED",
-        exitPrice: parseFloat(result.avgPrice),
+        exitPrice: markPrice,
         exitTime: new Date(),
-        pnl: position.unrealizedProfit,
+        pnl: pnl,
       })
-      .where(eq(autotradeTrades.symbol, symbol))
-      .where(eq(autotradeTrades.status, "OPEN"));
+      .where(eq(autotradeTrades.symbol, symbol));
 
     return result;
   }
 
   async emergencyCloseAll(): Promise<any[]> {
-    if (!binanceService.isConfigured()) {
-      throw new Error("Binance not configured");
+    if (!bitunixTradeService.isConfigured()) {
+      throw new Error("Bitunix not configured");
     }
 
-    const positions = await binanceService.getOpenPositions();
+    const positions = await bitunixTradeService.getOpenPositions();
     const results = [];
 
     for (const position of positions) {
@@ -410,10 +400,10 @@ class AutotradeService {
   }
 
   async syncPositions(): Promise<void> {
-    if (!binanceService.isConfigured()) return;
+    if (!bitunixTradeService.isConfigured()) return;
 
     try {
-      const positions = await binanceService.getOpenPositions();
+      const positions = await bitunixTradeService.getOpenPositions();
       const dbTrades = await this.getActiveTrades();
 
       for (const dbTrade of dbTrades) {

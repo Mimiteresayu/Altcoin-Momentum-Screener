@@ -139,11 +139,13 @@ Decision: SHORT when bearish score > bullish score, otherwise LONG
 - REST API fallback: `GET/POST /api/comments`
 - Fields: author (50 chars), content (500 chars), optional symbol
 
-## Autotrade System (Binance Futures)
-- **Exchange**: Binance Futures (USDM Perpetual)
-- **Authentication**: Requires BINANCE_API_KEY and BINANCE_API_SECRET secrets
-- **Files**: `server/binance.ts` (API service), `server/autotrade.ts` (trade engine)
+## Autotrade System (Bitunix Futures)
+- **Exchange**: Bitunix Futures (USDM Perpetual)
+- **Authentication**: Requires BITUNIX_API_KEY and BITUNIX_SECRET_KEY secrets
+- **API Documentation**: https://openapidoc.bitunix.com/
+- **Files**: `server/bitunix-trade.ts` (API service), `server/autotrade.ts` (trade engine)
 - **Database Tables**: `autotrade_settings`, `autotrade_trades`
+- **Signature**: Double SHA-256 (nonce + timestamp + apiKey + body → SHA256 → + secretKey → SHA256)
 
 ### Autotrade API Endpoints
 - `GET /api/autotrade/status` - Full status (config, stats, positions)
@@ -152,10 +154,10 @@ Decision: SHORT when bearish score > bullish score, otherwise LONG
 - `POST /api/autotrade/enable` - Enable autotrade
 - `POST /api/autotrade/disable` - Disable autotrade
 - `GET /api/autotrade/trades` - Trade history
-- `GET /api/autotrade/positions` - Open positions from Binance
+- `GET /api/autotrade/positions` - Open positions from Bitunix
 - `POST /api/autotrade/close/:symbol` - Close specific position
 - `POST /api/autotrade/emergency-close` - Close ALL positions and disable
-- `GET /api/autotrade/account` - Binance account info
+- `GET /api/autotrade/account` - Bitunix account info
 
 ### Risk Management
 - **Max Positions**: Configurable (default: 3)
@@ -175,8 +177,54 @@ Decision: SHORT when bearish score > bullish score, otherwise LONG
 ### Safety Features
 - Emergency close all positions button
 - Autotrade disabled on emergency close
-- Position sync with Binance
+- Position sync with Bitunix
 - Trade history logging
+- Quantity precision normalized to 3 decimal places for Bitunix step size compliance
+
+### Known Limitations
+- **Protective Orders**: Stop-loss and take-profit are tracked in database but not placed as conditional orders on Bitunix (requires manual monitoring or future implementation of Bitunix conditional order endpoints)
+- Users should monitor positions and set alerts via Bitunix web/mobile UI for additional protection
+
+## Backtest Engine (Sharpe Ratio Optimization)
+- **Target**: Sharpe Ratio >= 2.5
+- **File**: `server/backtest-engine.ts`
+- **Initial Capital**: $10,000 default
+
+### Backtest Entry Filters (Optimized)
+- **Signal Strength**: >= 4/5 (configurable)
+- **Volume Spike**: >= 8x required
+- **Volume Acceleration**: >= 3x required
+- **Open Interest Change**: >= 15% (if available)
+- **RSI Range**: 45-70 (neutral-bullish)
+- **Risk/Reward**: >= 2:1 minimum
+
+### Backtest Exit Strategy
+- **TP1**: 3% (close 30% position)
+- **TP2**: 6% (close 30% position)
+- **TP3**: 10% (close remaining 40%)
+- **Stop Loss**: 5% below entry (configurable)
+- **Breakeven**: Moves SL to entry after 0.5R profit
+- **Trailing Stop**: 1.5% trailing distance when in profit
+
+### Backtest API Endpoints
+- `GET /api/backtest-engine/config` - Current configuration
+- `POST /api/backtest-engine/config` - Update configuration
+- `POST /api/backtest-engine/reset` - Reset backtest state
+- `POST /api/backtest-engine/signal` - Process a signal
+- `POST /api/backtest-engine/update-trade` - Update trade with new price
+- `GET /api/backtest-engine/metrics` - Performance metrics
+- `GET /api/backtest-engine/trades` - All trades (active/closed)
+- `GET /api/backtest-engine/equity-curve` - Equity curve data
+- `GET /api/backtest-engine/report` - Full performance report
+- `POST /api/backtest-engine/save` - Save results to database
+
+### Performance Metrics Calculated
+- Sharpe Ratio (annualized, target >= 2.5)
+- Sortino Ratio (downside deviation only)
+- Calmar Ratio (return / max drawdown)
+- Win Rate, Profit Factor, Expectancy
+- Max Drawdown ($ and %)
+- Average R-Multiple per trade
 
 ## API Limitations
 - **Bitunix**: No public API for programmatic alarm/alert creation. Users must set alerts via Bitunix web/mobile UI or TradingView webhook integration.

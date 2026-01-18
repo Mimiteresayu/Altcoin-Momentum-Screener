@@ -6,7 +6,8 @@ import { notifyNewSignals, isDiscordConfigured } from "./discord";
 import { initializeWebSocket, getConnectedClientsCount } from "./websocket";
 import { backtestingService } from "./backtest";
 import { autotradeService } from "./autotrade";
-import { binanceService } from "./binance";
+import { bitunixTradeService } from "./bitunix-trade";
+import { backtestEngine, BacktestSignal } from "./backtest-engine";
 import axios from "axios";
 import { RSI } from "technicalindicators";
 import {
@@ -2363,13 +2364,13 @@ export async function registerRoutes(
     try {
       const config = autotradeService.getConfig();
       const stats = await autotradeService.getStats();
-      const positions = binanceService.isConfigured() 
-        ? await binanceService.getOpenPositions().catch(() => [])
+      const positions = bitunixTradeService.isConfigured() 
+        ? await bitunixTradeService.getOpenPositions().catch(() => [])
         : [];
       
       res.json({
         enabled: autotradeService.isEnabled(),
-        configured: binanceService.isConfigured(),
+        configured: bitunixTradeService.isConfigured(),
         config,
         stats,
         positions,
@@ -2428,10 +2429,10 @@ export async function registerRoutes(
 
   app.get("/api/autotrade/positions", async (req, res) => {
     try {
-      if (!binanceService.isConfigured()) {
+      if (!bitunixTradeService.isConfigured()) {
         return res.json({ positions: [], configured: false });
       }
-      const positions = await binanceService.getOpenPositions();
+      const positions = await bitunixTradeService.getOpenPositions();
       res.json({ positions, configured: true });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -2459,10 +2460,10 @@ export async function registerRoutes(
 
   app.get("/api/autotrade/account", async (req, res) => {
     try {
-      if (!binanceService.isConfigured()) {
+      if (!bitunixTradeService.isConfigured()) {
         return res.json({ configured: false });
       }
-      const account = await binanceService.getAccountInfo();
+      const account = await bitunixTradeService.getAccountInfo();
       res.json({ configured: true, account });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -2482,6 +2483,106 @@ export async function registerRoutes(
   // Initialize autotrade service
   autotradeService.initialize().catch(err => {
     console.error("[AUTOTRADE] Initialization error:", err);
+  });
+
+  // ============================================
+  // BACKTEST ENGINE ENDPOINTS
+  // ============================================
+
+  app.get("/api/backtest-engine/config", async (req, res) => {
+    try {
+      const config = backtestEngine.getConfig();
+      res.json(config);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/backtest-engine/config", async (req, res) => {
+    try {
+      backtestEngine.updateConfig(req.body);
+      res.json({ success: true, config: backtestEngine.getConfig() });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/backtest-engine/reset", async (req, res) => {
+    try {
+      backtestEngine.reset();
+      res.json({ success: true, message: "Backtest engine reset" });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/backtest-engine/signal", async (req, res) => {
+    try {
+      const signal = req.body as BacktestSignal;
+      signal.timestamp = new Date(signal.timestamp);
+      const result = backtestEngine.processSignal(signal);
+      res.json(result);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/backtest-engine/update-trade", async (req, res) => {
+    try {
+      const { tradeId, currentPrice, currentTime } = req.body;
+      const result = backtestEngine.updateTrade(tradeId, currentPrice, new Date(currentTime));
+      res.json(result);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/backtest-engine/metrics", async (req, res) => {
+    try {
+      const metrics = backtestEngine.calculateMetrics();
+      res.json(metrics);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/backtest-engine/trades", async (req, res) => {
+    try {
+      const trades = backtestEngine.getTrades();
+      const active = backtestEngine.getActiveTrades();
+      const closed = backtestEngine.getClosedTrades();
+      res.json({ trades, active, closed });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/backtest-engine/equity-curve", async (req, res) => {
+    try {
+      const curve = backtestEngine.getEquityCurve();
+      res.json(curve);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/backtest-engine/report", async (req, res) => {
+    try {
+      const report = backtestEngine.generateReport();
+      const metrics = backtestEngine.calculateMetrics();
+      res.json({ report, metrics });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/backtest-engine/save", async (req, res) => {
+    try {
+      await backtestEngine.saveResults();
+      res.json({ success: true, message: "Results saved to database" });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
   });
 
   return httpServer;
