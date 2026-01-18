@@ -12,6 +12,28 @@ const rateLimiter: RateLimiter = {
   refillRate: 80 / 60000,
 };
 
+// Cache for API responses to reduce redundant calls
+interface CacheEntry<T> {
+  data: T;
+  timestamp: number;
+}
+
+const cache = new Map<string, CacheEntry<any>>();
+const CACHE_TTL = 60000; // 1 minute cache TTL
+
+function getCached<T>(key: string): T | null {
+  const entry = cache.get(key);
+  if (entry && Date.now() - entry.timestamp < CACHE_TTL) {
+    return entry.data as T;
+  }
+  cache.delete(key);
+  return null;
+}
+
+function setCache<T>(key: string, data: T): void {
+  cache.set(key, { data, timestamp: Date.now() });
+}
+
 function consumeToken(): Promise<void> {
   return new Promise((resolve) => {
     const now = Date.now();
@@ -344,6 +366,13 @@ function classifyMomentum(
 }
 
 export async function getEnhancedMarketData(symbol: string = "BTC"): Promise<EnhancedMarketData> {
+  // Check cache first to avoid redundant API calls
+  const cacheKey = `enhanced_${symbol}`;
+  const cached = getCached<EnhancedMarketData>(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
   const [
     liquidationMap,
     orderbookWalls,
@@ -447,7 +476,7 @@ export async function getEnhancedMarketData(symbol: string = "BTC"): Promise<Enh
   const distributionScore = calculateDistributionScore(accumulationScore);
   const momentumStrength = classifyMomentum(accumulationScore, flowAnalysis, fearGreed);
 
-  return {
+  const result: EnhancedMarketData = {
     symbol,
     timestamp: Date.now(),
     liquidationAnalysis,
@@ -460,4 +489,9 @@ export async function getEnhancedMarketData(symbol: string = "BTC"): Promise<Enh
     distributionScore,
     momentumStrength,
   };
+
+  // Cache the result for 1 minute to reduce API calls on repeated requests
+  setCache(cacheKey, result);
+
+  return result;
 }

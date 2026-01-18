@@ -93,6 +93,16 @@ Preferred communication style: Simple, everyday language.
 - Fetches OI for up to 40 symbols per update cycle (prioritizes signal candidates)
 - Symbols without Coinalyze coverage show "N/A" in UI (common for newer/smaller tokens)
 
+### Coinglass Integration (Enhanced Market Data)
+- Requires COINGLASS_API_KEY secret for enhanced endpoints
+- Rate limit: 80 requests/minute with token bucket algorithm
+- 1-minute in-memory cache to reduce redundant API calls
+- **Endpoints**:
+  - `GET /api/enhanced-scan` - Top 10 altcoins with full Coinglass enrichment (liquidation maps, orderbook walls, long/short ratios, taker flow, funding rates, fear/greed index)
+  - `GET /api/signal-analysis/:symbol` - Detailed multi-factor trading analysis with signal interpretations and setup identification
+  - `GET /api/coinglass/:symbol` - Quick lookup for basic Coinglass data (OI history, liquidation map, L/S ratio, funding rates)
+- **Data provided**: Liquidation analysis, orderbook support/resistance walls, positioning analysis, flow analysis, funding/basis analysis, accumulation/distribution scores, momentum strength classification
+
 ## Signal Direction (LONG/SHORT)
 Each signal displays a SIDE indicator (LONG or SHORT) based on multi-factor scoring:
 - **Price Trend** (weight 3): Primary direction indicator
