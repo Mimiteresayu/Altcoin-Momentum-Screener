@@ -18,6 +18,14 @@ import {
   getFundingRate,
   EnhancedMarketData,
 } from "./coinglass";
+import {
+  enrichSignalWithCoinglass,
+  applyScreenerFilters,
+  calculatePriceLocation,
+  calculateMarketPhase,
+  calculatePreSpikeScore,
+  type ScreenerFilters,
+} from "./screener-enrichment";
 
 interface Kline {
   openTime: number;
@@ -2353,6 +2361,196 @@ export async function registerRoutes(
     } catch (error: any) {
       console.error("[SCREEN] Error:", error.message);
       res.status(500).json({ error: "Failed to fetch screen data" });
+    }
+  });
+
+  // GET /api/enhanced-screener - Full enriched signals with LOC, PHASE, PSCORE, storytelling
+  app.get("/api/enhanced-screener", async (req, res) => {
+    try {
+      // Parse filter parameters
+      const filters: ScreenerFilters = {
+        minPScore: req.query.minPScore ? parseInt(req.query.minPScore as string) : undefined,
+        hideExhaust: req.query.hideExhaust === "true",
+        phaseFilter: (req.query.phaseFilter as any) || "ALL",
+        minSignalStrength: req.query.minStrength ? parseInt(req.query.minStrength as string) : undefined,
+        sideFilter: (req.query.sideFilter as any) || "ALL",
+      };
+      const limit = Math.min(parseInt(req.query.limit as string) || 30, 50);
+      const enrichCoinglass = req.query.enrich !== "false";
+      
+      console.log(`[ENHANCED-SCREENER] Fetching signals with filters:`, filters);
+      
+      // Fetch market data from Bitunix
+      const response = await axios.get(
+        "https://fapi.bitunix.com/api/v1/futures/market/tickers",
+        { timeout: 10000 }
+      );
+      
+      const rawData = response.data.data;
+      if (!Array.isArray(rawData)) {
+        res.status(500).json({ error: "Failed to fetch market data" });
+        return;
+      }
+
+      // Filter valid symbols and sort by volume
+      const validCoins = rawData
+        .filter((t: any) => {
+          const symbol = t.symbol || "";
+          const price = parseFloat(t.lastPrice);
+          const volume = parseFloat(t.quoteVol);
+          if (!symbol.endsWith("USDT")) return false;
+          if (symbol.includes("USDC")) return false;
+          return price > 0 && volume > 0 && !isNaN(price) && !isNaN(volume);
+        })
+        .sort((a: any, b: any) => parseFloat(b.quoteVol) - parseFloat(a.quoteVol))
+        .slice(0, limit);
+
+      // Build signals with enriched data
+      const signals: any[] = [];
+      
+      // Limit Coinglass enrichment to first 15 to respect rate limits
+      const enrichLimit = Math.min(validCoins.length, 15);
+
+      for (let i = 0; i < validCoins.length; i++) {
+        const coin = validCoins[i];
+        const symbol = coin.symbol;
+        const price = parseFloat(coin.lastPrice);
+        const open = parseFloat(coin.open);
+        const high24h = parseFloat(coin.high);
+        const low24h = parseFloat(coin.low);
+        const volume = parseFloat(coin.quoteVol);
+        const priceChange24h = open > 0 ? ((price - open) / open) * 100 : 0;
+        
+        // Estimate volume spike (simplified without historical data)
+        const avgVolume = volume * 0.7; // Rough estimate
+        const volumeSpikeRatio = avgVolume > 0 ? volume / avgVolume : 1;
+        
+        // Calculate basic RSI placeholder
+        const rsi = 50 + (priceChange24h * 2); // Simplified RSI estimate based on price change
+        const clampedRsi = Math.max(20, Math.min(80, rsi));
+        
+        // Calculate price location
+        const priceLocation = calculatePriceLocation(price, high24h, low24h);
+        
+        // Calculate market phase (with estimated values)
+        const marketPhase = calculateMarketPhase(
+          volumeSpikeRatio,
+          undefined, // OI will be fetched if enriching
+          clampedRsi,
+          priceChange24h,
+          undefined
+        );
+        
+        // Build base signal
+        const signal: any = {
+          symbol,
+          side: priceChange24h > 0 ? "LONG" : "SHORT",
+          currentPrice: price,
+          priceChange24h,
+          volumeSpikeRatio,
+          volAccel: undefined,
+          oiChange24h: undefined,
+          rsi: clampedRsi,
+          entryPrice: price * (priceChange24h > 0 ? 0.995 : 1.005),
+          slPrice: price * (priceChange24h > 0 ? 0.95 : 1.05),
+          slDistancePct: 5,
+          slReason: "5% default stop",
+          tpLevels: [
+            { label: "TP1", price: price * (priceChange24h > 0 ? 1.03 : 0.97), pct: 3, reason: "3% target" },
+            { label: "TP2", price: price * (priceChange24h > 0 ? 1.06 : 0.94), pct: 6, reason: "6% target" },
+          ],
+          riskReward: 1.2,
+          signalStrength: 3,
+          strengthBreakdown: {
+            priceInRange: true,
+            volumeInRange: volumeSpikeRatio >= 2,
+            rsiInRange: clampedRsi >= 40 && clampedRsi <= 70,
+            rrInRange: true,
+            hasLeadingIndicators: false,
+          },
+          leadingIndicators: {
+            hasFVG: false,
+            hasOB: false,
+            hasLiquidityGrab: false,
+            hasBreakOfStructure: false,
+            fvgType: null,
+            obType: null,
+            liquidityLevel: null,
+            liquidityStrength: 0,
+          },
+          timeframes: [],
+          confirmedTimeframes: [],
+          isMajor: symbol === "BTCUSDT" || symbol === "ETHUSDT",
+          high24h,
+          low24h,
+          volume24h: volume,
+          
+          // Enhanced fields (defaults)
+          priceLocation,
+          marketPhase,
+          preSpikeScore: 0,
+          fundingRate: undefined,
+          fundingBias: undefined,
+          longShortRatio: undefined,
+          lsrBias: undefined,
+          fvgLevels: [],
+          obLevels: [],
+          liquidationZones: {
+            nearestLongLiq: undefined,
+            nearestShortLiq: undefined,
+            longLiqDistance: undefined,
+            shortLiqDistance: undefined,
+          },
+          storytelling: {
+            summary: `${symbol} at ${priceLocation} zone`,
+            interpretation: "Awaiting enrichment for detailed analysis",
+            confidence: "low" as const,
+            actionSuggestion: "Wait for Coinglass data",
+          },
+        };
+        
+        // Enrich with Coinglass data for first N signals
+        if (enrichCoinglass && process.env.COINGLASS_API_KEY && i < enrichLimit) {
+          try {
+            const enrichedData = await enrichSignalWithCoinglass(signal, high24h, low24h);
+            Object.assign(signal, enrichedData);
+          } catch (err) {
+            console.log(`[ENHANCED-SCREENER] Failed to enrich ${symbol}`);
+          }
+        }
+        
+        // Calculate pre-spike score with available data
+        signal.preSpikeScore = calculatePreSpikeScore(
+          signal.volumeSpikeRatio,
+          signal.volAccel,
+          signal.oiChange24h,
+          signal.rsi,
+          signal.riskReward,
+          signal.signalStrength,
+          signal.fundingRate,
+          signal.longShortRatio
+        );
+        
+        signals.push(signal);
+      }
+      
+      // Apply filters
+      const filteredSignals = applyScreenerFilters(signals, filters);
+      
+      // Sort by pre-spike score descending
+      filteredSignals.sort((a, b) => (b.preSpikeScore ?? 0) - (a.preSpikeScore ?? 0));
+      
+      res.json({
+        signals: filteredSignals,
+        timestamp: new Date().toISOString(),
+        totalSignals: filteredSignals.length,
+        unfilteredCount: signals.length,
+        filters,
+        enrichedCount: Math.min(enrichLimit, validCoins.length),
+      });
+    } catch (error: any) {
+      console.error("[ENHANCED-SCREENER] Error:", error.message);
+      res.status(500).json({ error: "Failed to fetch enhanced screener data" });
     }
   });
 

@@ -1,11 +1,13 @@
 import { useState, useEffect } from "react";
 import { useTickers, useRefreshSignals } from "@/hooks/use-market-data";
 import { SignalTable } from "@/components/SignalTable";
+import { EnhancedScreener } from "@/components/EnhancedScreener";
 import { WatchlistSidebar } from "@/components/WatchlistSidebar";
 import { MetricCard } from "@/components/MetricCard";
 import { CommentSection } from "@/components/CommentSection";
-import { Activity, BarChart3, Target, Layers, Zap, RefreshCw, Clock, Waves, Crown } from "lucide-react";
+import { Activity, BarChart3, Target, Layers, Zap, RefreshCw, Clock, Waves, Crown, Radar } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { queryClient } from "@/lib/queryClient";
 
 function getHKTime() {
@@ -182,24 +184,43 @@ export default function Dashboard() {
               </div>
             </div>
 
-            <div className="space-y-3">
-              <h2 className="text-base sm:text-lg font-semibold flex items-center gap-2">
-                <BarChart3 className="w-4 sm:w-5 h-4 sm:h-5 text-primary" />
-                Pre-Spike Signals
-              </h2>
-              {isLoading ? (
-                <div className="space-y-4 animate-pulse">
-                  <div className="h-12 bg-white/5 rounded-lg w-full" />
-                  <div className="h-12 bg-white/5 rounded-lg w-full" />
-                  <div className="h-12 bg-white/5 rounded-lg w-full" />
-                  <div className="text-center text-muted-foreground py-8">
-                    Analyzing coins with multi-timeframe data...
-                  </div>
+            <Tabs defaultValue="enhanced" className="space-y-4">
+              <TabsList className="bg-muted/30">
+                <TabsTrigger value="enhanced" className="flex items-center gap-2" data-testid="tab-enhanced">
+                  <Radar className="w-4 h-4" />
+                  Enhanced Screener
+                </TabsTrigger>
+                <TabsTrigger value="classic" className="flex items-center gap-2" data-testid="tab-classic">
+                  <BarChart3 className="w-4 h-4" />
+                  Classic View
+                </TabsTrigger>
+              </TabsList>
+              
+              <TabsContent value="enhanced" className="space-y-4">
+                <EnhancedScreener />
+              </TabsContent>
+              
+              <TabsContent value="classic" className="space-y-4">
+                <div className="space-y-3">
+                  <h2 className="text-base sm:text-lg font-semibold flex items-center gap-2">
+                    <BarChart3 className="w-4 sm:w-5 h-4 sm:h-5 text-primary" />
+                    Pre-Spike Signals
+                  </h2>
+                  {isLoading ? (
+                    <div className="space-y-4 animate-pulse">
+                      <div className="h-12 bg-white/5 rounded-lg w-full" />
+                      <div className="h-12 bg-white/5 rounded-lg w-full" />
+                      <div className="h-12 bg-white/5 rounded-lg w-full" />
+                      <div className="text-center text-muted-foreground py-8">
+                        Analyzing coins with multi-timeframe data...
+                      </div>
+                    </div>
+                  ) : (
+                    <SignalTable signals={signals} />
+                  )}
                 </div>
-              ) : (
-                <SignalTable signals={signals} />
-              )}
-            </div>
+              </TabsContent>
+            </Tabs>
 
             <CommentSection />
           </div>

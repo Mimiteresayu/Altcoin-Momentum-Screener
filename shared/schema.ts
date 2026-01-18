@@ -236,6 +236,45 @@ export const signalSchema = z.object({
       }),
     )
     .optional(),
+  
+  // Enhanced Screener Fields
+  priceLocation: z.enum(["DISCOUNT", "NEUTRAL", "PREMIUM"]).optional(),
+  marketPhase: z.enum(["ACCUMULATION", "DISTRIBUTION", "BREAKOUT", "EXHAUST", "UNKNOWN"]).optional(),
+  preSpikeScore: z.number().min(0).max(5).optional(), // 0-5 composite score
+  
+  // Coinglass Data
+  fundingRate: z.number().optional(),
+  fundingBias: z.enum(["bullish", "bearish", "neutral"]).optional(),
+  longShortRatio: z.number().optional(),
+  lsrBias: z.enum(["long_dominant", "short_dominant", "balanced"]).optional(),
+  
+  // Price Levels
+  fvgLevels: z.array(z.object({
+    price: z.number(),
+    type: z.enum(["bullish", "bearish"]),
+    strength: z.number(),
+  })).optional(),
+  obLevels: z.array(z.object({
+    price: z.number(),
+    type: z.enum(["bullish", "bearish"]),
+    strength: z.number(),
+  })).optional(),
+  
+  // Liquidation Zones
+  liquidationZones: z.object({
+    nearestLongLiq: z.number().optional(),
+    nearestShortLiq: z.number().optional(),
+    longLiqDistance: z.number().optional(), // % distance from current price
+    shortLiqDistance: z.number().optional(),
+  }).optional(),
+  
+  // Storytelling
+  storytelling: z.object({
+    summary: z.string(),
+    interpretation: z.string(),
+    confidence: z.enum(["high", "medium", "low"]),
+    actionSuggestion: z.string(),
+  }).optional(),
 });
 
 export type Signal = z.infer<typeof signalSchema>;

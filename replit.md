@@ -100,11 +100,47 @@ Preferred communication style: Simple, everyday language.
 - 1-minute in-memory cache to reduce redundant API calls
 - **Endpoints**:
   - `GET /api/enhanced-scan` - Top 10 altcoins with Coinglass enrichment
+  - `GET /api/enhanced-screener` - Full enriched signals with LOC, PHASE, PSCORE, storytelling (primary screener)
   - `GET /api/enhanced-market/:symbol` - Full EnhancedMarketData for a specific symbol
   - `GET /api/market-signals/:symbol` - Interpreted trading signals
   - `GET /api/signal-analysis/:symbol` - Detailed multi-factor trading analysis
   - `GET /api/coinglass/:symbol` - Quick lookup for Coinglass data
   - `GET /api/screen` - Top coins by volume with optional Coinglass data
+
+## Enhanced Screener Features
+- **File**: `server/screener-enrichment.ts`
+- **New Schema Fields** (shared/schema.ts):
+  - `priceLocation`: DISCOUNT/NEUTRAL/PREMIUM (based on 24h price range)
+  - `marketPhase`: ACCUMULATION/DISTRIBUTION/BREAKOUT/EXHAUST/UNKNOWN
+  - `preSpikeScore`: 0-5 composite score from multiple factors
+  - `fundingRate` / `fundingBias`: Coinglass funding rate data
+  - `longShortRatio` / `lsrBias`: Long/Short ratio positioning
+  - `fvgLevels` / `obLevels`: Fair Value Gap and Order Block price levels
+  - `liquidationZones`: Nearest liquidation prices with distance %
+  - `storytelling`: AI-generated summary, interpretation, confidence, action suggestion
+
+### PSCORE Calculation (0-5 points)
+- Volume spike (0-1.5): 8x+ = 1.5pts, 5x+ = 1pt, 3x+ = 0.5pts
+- Volume acceleration (0-0.5): 3x+ = 0.5pts
+- OI change (0-1): 15%+ = 1pt, 10%+ = 0.5pts
+- RSI zone (0-0.5): 45-70 = 0.5pts (optimal zone)
+- Risk/Reward (0-0.5): 3:1+ = 0.5pts
+- Signal strength (0-0.5): 4/5+ = 0.5pts
+- Funding confluence (0-0.25): Negative funding = bullish for longs
+- L/S ratio (0-0.25): Low ratio = contrarian bullish
+
+### Market Phase Detection
+- **ACCUMULATION**: Low price + rising volume + neutral RSI + OI building
+- **DISTRIBUTION**: High price area + declining OI + high RSI
+- **BREAKOUT**: High volume spike + significant price move + RSI not extreme
+- **EXHAUST**: Price up but volume fading + RSI overbought
+
+### Screener Filters
+- `minPScore`: Minimum pre-spike score (0-5)
+- `hideExhaust`: Hide exhaustion phase signals
+- `phaseFilter`: Filter by specific market phase
+- `sideFilter`: LONG/SHORT/ALL
+- `minSignalStrength`: Minimum signal strength (1-5)
 - **Working with current plan (Hobbyist)**:
   - Funding Rate (exchange-list): Returns comprehensive funding rates across all exchanges
   - Fear & Greed Index: Available but may require data format adjustments

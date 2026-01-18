@@ -1,0 +1,483 @@
+import { Signal } from "@shared/schema";
+import { 
+  getFundingRate, 
+  getLongShortRatio, 
+  getLiquidationMap,
+  getEnhancedMarketData,
+  type EnhancedMarketData,
+  type LiquidationMapData
+} from "./coinglass";
+
+type PriceLocation = "DISCOUNT" | "NEUTRAL" | "PREMIUM";
+type MarketPhase = "ACCUMULATION" | "DISTRIBUTION" | "BREAKOUT" | "EXHAUST" | "UNKNOWN";
+type Confidence = "high" | "medium" | "low";
+
+interface EnrichedSignalData {
+  priceLocation: PriceLocation;
+  marketPhase: MarketPhase;
+  preSpikeScore: number;
+  fundingRate: number | undefined;
+  fundingBias: "bullish" | "bearish" | "neutral" | undefined;
+  longShortRatio: number | undefined;
+  lsrBias: "long_dominant" | "short_dominant" | "balanced" | undefined;
+  fvgLevels: { price: number; type: "bullish" | "bearish"; strength: number }[];
+  obLevels: { price: number; type: "bullish" | "bearish"; strength: number }[];
+  liquidationZones: {
+    nearestLongLiq: number | undefined;
+    nearestShortLiq: number | undefined;
+    longLiqDistance: number | undefined;
+    shortLiqDistance: number | undefined;
+  };
+  storytelling: {
+    summary: string;
+    interpretation: string;
+    confidence: Confidence;
+    actionSuggestion: string;
+  };
+}
+
+export function calculatePriceLocation(
+  currentPrice: number,
+  high24h: number,
+  low24h: number
+): PriceLocation {
+  const range = high24h - low24h;
+  if (range <= 0) return "NEUTRAL";
+  
+  const position = (currentPrice - low24h) / range;
+  
+  if (position <= 0.33) return "DISCOUNT";
+  if (position >= 0.67) return "PREMIUM";
+  return "NEUTRAL";
+}
+
+export function calculateMarketPhase(
+  volumeSpike: number,
+  oiChange: number | undefined,
+  rsi: number,
+  priceChange: number,
+  volAccel: number | undefined
+): MarketPhase {
+  const oiDelta = oiChange ?? 0;
+  const acceleration = volAccel ?? 1;
+  
+  // EXHAUST: Price up but volume fading, RSI overbought
+  if (priceChange > 5 && volumeSpike < 2 && rsi > 75) {
+    return "EXHAUST";
+  }
+  
+  // BREAKOUT: High volume spike + price move + RSI not extreme
+  if (volumeSpike >= 5 && Math.abs(priceChange) > 3 && rsi >= 40 && rsi <= 75) {
+    return "BREAKOUT";
+  }
+  
+  // ACCUMULATION: Low price, rising volume, neutral/low RSI, OI building
+  if (priceChange < 3 && volumeSpike >= 3 && rsi < 55 && oiDelta > 5) {
+    return "ACCUMULATION";
+  }
+  
+  // DISTRIBUTION: High price area, volume spike but declining, high RSI
+  if (priceChange > 2 && rsi > 60 && oiDelta < 0) {
+    return "DISTRIBUTION";
+  }
+  
+  // Secondary checks
+  if (volumeSpike >= 4 && acceleration >= 2 && rsi >= 45 && rsi <= 65) {
+    return "ACCUMULATION";
+  }
+  
+  if (priceChange < -3 && volumeSpike < 2 && rsi < 35) {
+    return "EXHAUST";
+  }
+  
+  return "UNKNOWN";
+}
+
+export function calculatePreSpikeScore(
+  volumeSpike: number,
+  volAccel: number | undefined,
+  oiChange: number | undefined,
+  rsi: number,
+  riskReward: number,
+  signalStrength: number,
+  fundingRate: number | undefined,
+  longShortRatio: number | undefined
+): number {
+  let score = 0;
+  
+  // Volume component (0-1.5 points)
+  if (volumeSpike >= 8) score += 1.5;
+  else if (volumeSpike >= 5) score += 1;
+  else if (volumeSpike >= 3) score += 0.5;
+  
+  // Volume acceleration (0-0.5 points)
+  const accel = volAccel ?? 1;
+  if (accel >= 3) score += 0.5;
+  else if (accel >= 2) score += 0.25;
+  
+  // OI change (0-1 points)
+  const oi = oiChange ?? 0;
+  if (oi >= 15) score += 1;
+  else if (oi >= 10) score += 0.5;
+  else if (oi >= 5) score += 0.25;
+  
+  // RSI in optimal zone (0-0.5 points) - 45-70 is ideal
+  if (rsi >= 45 && rsi <= 70) score += 0.5;
+  else if (rsi >= 35 && rsi <= 75) score += 0.25;
+  
+  // Risk/Reward (0-0.5 points)
+  if (riskReward >= 3) score += 0.5;
+  else if (riskReward >= 2) score += 0.25;
+  
+  // Signal strength boost (0-0.5 points)
+  if (signalStrength >= 4) score += 0.5;
+  
+  // Funding rate confluence (0-0.25 points)
+  // Negative funding = bullish for longs
+  if (fundingRate !== undefined && fundingRate < -0.01) score += 0.25;
+  
+  // Long/Short ratio (0-0.25 points)
+  // Low ratio = fewer longs = contrarian bullish
+  if (longShortRatio !== undefined && longShortRatio < 0.9) score += 0.25;
+  
+  return Math.min(5, Math.round(score * 10) / 10);
+}
+
+function calculateLiquidationZones(
+  currentPrice: number,
+  liquidationMap: LiquidationMapData[]
+): {
+  nearestLongLiq: number | undefined;
+  nearestShortLiq: number | undefined;
+  longLiqDistance: number | undefined;
+  shortLiqDistance: number | undefined;
+} {
+  if (!liquidationMap || liquidationMap.length === 0) {
+    return {
+      nearestLongLiq: undefined,
+      nearestShortLiq: undefined,
+      longLiqDistance: undefined,
+      shortLiqDistance: undefined,
+    };
+  }
+  
+  // Find nearest significant liquidation levels
+  let nearestLong: { price: number; amount: number } | null = null;
+  let nearestShort: { price: number; amount: number } | null = null;
+  
+  // Sort by price distance from current
+  const sortedByDistance = [...liquidationMap].sort(
+    (a, b) => Math.abs(a.price - currentPrice) - Math.abs(b.price - currentPrice)
+  );
+  
+  // Find nearest with significant volume (> 1M)
+  for (const level of sortedByDistance) {
+    if (!nearestLong && level.longLiquidation > 1000000 && level.price < currentPrice) {
+      nearestLong = { price: level.price, amount: level.longLiquidation };
+    }
+    if (!nearestShort && level.shortLiquidation > 1000000 && level.price > currentPrice) {
+      nearestShort = { price: level.price, amount: level.shortLiquidation };
+    }
+    if (nearestLong && nearestShort) break;
+  }
+  
+  return {
+    nearestLongLiq: nearestLong?.price,
+    nearestShortLiq: nearestShort?.price,
+    longLiqDistance: nearestLong ? ((currentPrice - nearestLong.price) / currentPrice) * 100 : undefined,
+    shortLiqDistance: nearestShort ? ((nearestShort.price - currentPrice) / currentPrice) * 100 : undefined,
+  };
+}
+
+function generateStorytelling(
+  signal: Signal,
+  marketPhase: MarketPhase,
+  priceLocation: PriceLocation,
+  preSpikeScore: number,
+  fundingBias: "bullish" | "bearish" | "neutral" | undefined,
+  lsrBias: "long_dominant" | "short_dominant" | "balanced" | undefined
+): { summary: string; interpretation: string; confidence: Confidence; actionSuggestion: string } {
+  const volumeDesc = signal.volumeSpikeRatio >= 8 ? "extreme volume" : 
+                     signal.volumeSpikeRatio >= 5 ? "high volume" :
+                     signal.volumeSpikeRatio >= 3 ? "elevated volume" : "normal volume";
+  
+  const rsiDesc = signal.rsi > 70 ? "overbought" :
+                  signal.rsi > 60 ? "bullish momentum" :
+                  signal.rsi < 30 ? "oversold" :
+                  signal.rsi < 40 ? "bearish momentum" : "neutral momentum";
+  
+  const oiDesc = signal.oiChange24h && signal.oiChange24h > 10 ? "strong OI buildup" :
+                 signal.oiChange24h && signal.oiChange24h > 5 ? "moderate OI increase" :
+                 signal.oiChange24h && signal.oiChange24h < -5 ? "OI declining" : "stable OI";
+  
+  let summary = "";
+  let interpretation = "";
+  let actionSuggestion = "";
+  let confidence: Confidence = "medium";
+  
+  switch (marketPhase) {
+    case "ACCUMULATION":
+      summary = `${signal.symbol} in ${priceLocation} zone with ${volumeDesc}, ${oiDesc}`;
+      interpretation = `Smart money appears to be accumulating. Volume building while price consolidates in ${priceLocation.toLowerCase()} zone. ${rsiDesc} suggests room for upside.`;
+      if (preSpikeScore >= 4) {
+        actionSuggestion = `Strong LONG setup. Entry near ${signal.entryPrice.toFixed(4)}, SL at ${signal.slPrice.toFixed(4)}`;
+        confidence = "high";
+      } else {
+        actionSuggestion = "Watch for volume continuation before entry.";
+        confidence = "medium";
+      }
+      break;
+      
+    case "DISTRIBUTION":
+      summary = `${signal.symbol} showing distribution at ${priceLocation} with ${volumeDesc}`;
+      interpretation = `Signs of distribution detected. ${oiDesc} with ${rsiDesc}. Smart money may be exiting.`;
+      actionSuggestion = "Consider reducing exposure or SHORT setup if breakdown confirmed.";
+      confidence = "medium";
+      break;
+      
+    case "BREAKOUT":
+      summary = `${signal.symbol} BREAKOUT with ${volumeDesc} and ${oiDesc}`;
+      interpretation = `Strong breakout pattern. ${volumeDesc} confirms move validity. ${fundingBias === "bearish" ? "Negative funding supports continuation." : ""}`;
+      if (signal.side === "LONG" && preSpikeScore >= 4) {
+        actionSuggestion = `LONG on pullback to ${signal.entryPrice.toFixed(4)} or breakout continuation`;
+        confidence = "high";
+      } else {
+        actionSuggestion = "Wait for pullback entry to reduce risk";
+        confidence = "medium";
+      }
+      break;
+      
+    case "EXHAUST":
+      summary = `${signal.symbol} showing exhaustion signals with fading ${volumeDesc}`;
+      interpretation = `Potential exhaustion detected. Volume declining while ${rsiDesc}. ${lsrBias === "long_dominant" ? "Crowded long positioning adds risk." : ""}`;
+      actionSuggestion = "Avoid new entries. Tighten stops on existing positions.";
+      confidence = "medium";
+      break;
+      
+    default:
+      summary = `${signal.symbol} at ${priceLocation} with ${volumeDesc}`;
+      interpretation = `Mixed signals. ${rsiDesc}, ${oiDesc}. Wait for clearer setup.`;
+      actionSuggestion = "Monitor for phase clarity before action.";
+      confidence = "low";
+  }
+  
+  // Boost confidence if multiple factors align
+  if (preSpikeScore >= 4 && 
+      priceLocation === "DISCOUNT" && 
+      (marketPhase === "ACCUMULATION" || marketPhase === "BREAKOUT")) {
+    confidence = "high";
+  }
+  
+  return { summary, interpretation, confidence, actionSuggestion };
+}
+
+function estimateFVGLevels(
+  currentPrice: number,
+  high24h: number,
+  low24h: number,
+  priceChange: number
+): { price: number; type: "bullish" | "bearish"; strength: number }[] {
+  const levels: { price: number; type: "bullish" | "bearish"; strength: number }[] = [];
+  const range = high24h - low24h;
+  
+  if (range <= 0) return levels;
+  
+  // Estimate FVG zones based on price action
+  // Bullish FVGs form on strong up moves - gaps below current price
+  if (priceChange > 2) {
+    const fvgZone = currentPrice - (range * 0.1);
+    levels.push({ price: fvgZone, type: "bullish", strength: Math.min(1, priceChange / 10) });
+  }
+  
+  // Bearish FVGs form on strong down moves - gaps above current price
+  if (priceChange < -2) {
+    const fvgZone = currentPrice + (range * 0.1);
+    levels.push({ price: fvgZone, type: "bearish", strength: Math.min(1, Math.abs(priceChange) / 10) });
+  }
+  
+  // Near the 24h low often has bullish FVG
+  if (currentPrice < low24h + (range * 0.3)) {
+    levels.push({ price: low24h + (range * 0.05), type: "bullish", strength: 0.7 });
+  }
+  
+  return levels;
+}
+
+function estimateOBLevels(
+  currentPrice: number,
+  high24h: number,
+  low24h: number,
+  supportWalls: { price: number; amount: number }[],
+  resistanceWalls: { price: number; amount: number }[]
+): { price: number; type: "bullish" | "bearish"; strength: number }[] {
+  const levels: { price: number; type: "bullish" | "bearish"; strength: number }[] = [];
+  
+  // Use orderbook walls as proxy for order blocks
+  if (supportWalls.length > 0) {
+    const strongest = supportWalls[0];
+    levels.push({ 
+      price: strongest.price, 
+      type: "bullish", 
+      strength: Math.min(1, strongest.amount / 5000000) 
+    });
+  }
+  
+  if (resistanceWalls.length > 0) {
+    const strongest = resistanceWalls[0];
+    levels.push({ 
+      price: strongest.price, 
+      type: "bearish", 
+      strength: Math.min(1, strongest.amount / 5000000) 
+    });
+  }
+  
+  // Add levels at key price zones
+  const range = high24h - low24h;
+  if (range > 0) {
+    levels.push({ price: low24h + (range * 0.382), type: "bullish", strength: 0.5 });
+    levels.push({ price: low24h + (range * 0.618), type: "bearish", strength: 0.5 });
+  }
+  
+  return levels;
+}
+
+export async function enrichSignalWithCoinglass(
+  signal: Signal,
+  high24h: number,
+  low24h: number
+): Promise<EnrichedSignalData> {
+  const symbol = signal.symbol.replace("USDT", "");
+  
+  let enhancedData: EnhancedMarketData | null = null;
+  let liquidationMap: LiquidationMapData[] = [];
+  
+  try {
+    [enhancedData, liquidationMap] = await Promise.all([
+      getEnhancedMarketData(symbol).catch(() => null),
+      getLiquidationMap(symbol).catch(() => []),
+    ]);
+  } catch (error) {
+    console.log(`[ENRICHMENT] Failed to fetch Coinglass data for ${symbol}:`, error);
+  }
+  
+  // Calculate price location
+  const priceLocation = calculatePriceLocation(signal.currentPrice, high24h, low24h);
+  
+  // Extract funding and L/S data
+  const fundingRate = enhancedData?.fundingBasisAnalysis?.averageFundingRate;
+  const fundingBias = enhancedData?.fundingBasisAnalysis?.fundingBias;
+  const longShortRatio = enhancedData?.positioningAnalysis?.longShortRatio;
+  const lsrBias = enhancedData?.positioningAnalysis?.trend;
+  
+  // Calculate market phase
+  const marketPhase = calculateMarketPhase(
+    signal.volumeSpikeRatio,
+    signal.oiChange24h,
+    signal.rsi,
+    signal.priceChange24h,
+    signal.volAccel
+  );
+  
+  // Calculate pre-spike score
+  const preSpikeScore = calculatePreSpikeScore(
+    signal.volumeSpikeRatio,
+    signal.volAccel,
+    signal.oiChange24h,
+    signal.rsi,
+    signal.riskReward,
+    signal.signalStrength,
+    fundingRate,
+    longShortRatio
+  );
+  
+  // Calculate liquidation zones
+  const liquidationZones = calculateLiquidationZones(signal.currentPrice, liquidationMap);
+  
+  // Estimate FVG and OB levels
+  const fvgLevels = estimateFVGLevels(
+    signal.currentPrice,
+    high24h,
+    low24h,
+    signal.priceChange24h
+  );
+  
+  const obLevels = estimateOBLevels(
+    signal.currentPrice,
+    high24h,
+    low24h,
+    enhancedData?.orderbookAnalysis?.supportWalls || [],
+    enhancedData?.orderbookAnalysis?.resistanceWalls || []
+  );
+  
+  // Generate storytelling
+  const storytelling = generateStorytelling(
+    signal,
+    marketPhase,
+    priceLocation,
+    preSpikeScore,
+    fundingBias,
+    lsrBias
+  );
+  
+  return {
+    priceLocation,
+    marketPhase,
+    preSpikeScore,
+    fundingRate,
+    fundingBias,
+    longShortRatio,
+    lsrBias,
+    fvgLevels,
+    obLevels,
+    liquidationZones,
+    storytelling,
+  };
+}
+
+export interface ScreenerFilters {
+  minPScore?: number;
+  hideExhaust?: boolean;
+  phaseFilter?: MarketPhase | "ALL";
+  minSignalStrength?: number;
+  sideFilter?: "LONG" | "SHORT" | "ALL";
+}
+
+export function applyScreenerFilters(
+  signals: Signal[],
+  filters: ScreenerFilters
+): Signal[] {
+  return signals.filter(signal => {
+    // Filter by pre-spike score
+    if (filters.minPScore !== undefined && 
+        (signal.preSpikeScore ?? 0) < filters.minPScore) {
+      return false;
+    }
+    
+    // Hide EXHAUST phase
+    if (filters.hideExhaust && signal.marketPhase === "EXHAUST") {
+      return false;
+    }
+    
+    // Filter by specific phase
+    if (filters.phaseFilter && 
+        filters.phaseFilter !== "ALL" && 
+        signal.marketPhase !== filters.phaseFilter) {
+      return false;
+    }
+    
+    // Filter by signal strength
+    if (filters.minSignalStrength !== undefined && 
+        signal.signalStrength < filters.minSignalStrength) {
+      return false;
+    }
+    
+    // Filter by side
+    if (filters.sideFilter && 
+        filters.sideFilter !== "ALL" && 
+        signal.side !== filters.sideFilter) {
+      return false;
+    }
+    
+    return true;
+  });
+}
