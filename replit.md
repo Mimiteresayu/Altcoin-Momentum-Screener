@@ -94,18 +94,28 @@ Preferred communication style: Simple, everyday language.
 - Symbols without Coinalyze coverage show "N/A" in UI (common for newer/smaller tokens)
 
 ### Coinglass Integration (Enhanced Market Data)
-- Requires COINGLASS_API_KEY secret for enhanced endpoints
+- **API Version**: v4 (https://open-api-v4.coinglass.com)
+- **Authentication**: CG-API-KEY header with COINGLASS_API_KEY secret
 - Rate limit: 80 requests/minute with token bucket algorithm
 - 1-minute in-memory cache to reduce redundant API calls
 - **Endpoints**:
-  - `GET /api/enhanced-scan` - Top 10 altcoins with full Coinglass enrichment (liquidation maps, orderbook walls, long/short ratios, taker flow, funding rates, fear/greed index)
-  - `GET /api/enhanced-market/:symbol` - Full EnhancedMarketData for a specific symbol with all metrics
-  - `GET /api/market-signals/:symbol` - Interpreted trading signals (accumulation vs distribution, breakout setups, squeeze setups)
-  - `GET /api/signal-analysis/:symbol` - Detailed multi-factor trading analysis with signal interpretations and setup identification
-  - `GET /api/coinglass/:symbol` - Quick lookup for basic Coinglass data (OI history, liquidation map, L/S ratio, funding rates)
-  - `GET /api/screen` - Top coins by volume with optional Coinglass data (OI change, L/S ratio, liquidation max pain, funding rate)
-- **Data provided**: Liquidation analysis, orderbook support/resistance walls, positioning analysis, flow analysis, funding/basis analysis, accumulation/distribution scores, momentum strength classification
-- **Market signals include**: Accumulation/distribution detection, long/short squeeze setups, breakout/breakdown patterns, liquidation risk alerts, funding rate signals, fear/greed contrarian signals
+  - `GET /api/enhanced-scan` - Top 10 altcoins with Coinglass enrichment
+  - `GET /api/enhanced-market/:symbol` - Full EnhancedMarketData for a specific symbol
+  - `GET /api/market-signals/:symbol` - Interpreted trading signals
+  - `GET /api/signal-analysis/:symbol` - Detailed multi-factor trading analysis
+  - `GET /api/coinglass/:symbol` - Quick lookup for Coinglass data
+  - `GET /api/screen` - Top coins by volume with optional Coinglass data
+- **Working with current plan (Hobbyist)**:
+  - Funding Rate (exchange-list): Returns comprehensive funding rates across all exchanges
+  - Fear & Greed Index: Available but may require data format adjustments
+- **Requires Professional Plan**:
+  - Liquidation Map (aggregated-map)
+  - Orderbook Walls (large-limit-order)
+  - Long/Short Ratio (global-long-short-account-ratio/history)
+  - Taker Buy/Sell Volume (taker-buy-sell-volume/history)
+  - Futures Basis (basis/history)
+- **Data provided**: Funding rate analysis, accumulation/distribution scores, momentum strength classification
+- **Market signals include**: Funding rate signals, accumulation/distribution detection based on available data
 
 ## Signal Direction (LONG/SHORT)
 Each signal displays a SIDE indicator (LONG or SHORT) based on multi-factor scoring:
