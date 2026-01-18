@@ -1507,5 +1507,49 @@ export async function registerRoutes(
   // Initialize WebSocket server
   initializeWebSocket(httpServer);
 
-  return httpServer;
+  
+  
+  // ==================================
+  // BACKTESTING API ENDPOINTS
+  // ==================================
+
+  app.get("/api/backtest/metrics", async (req, res) => {
+    try {
+      const metrics = await backtestingService.calculateMetrics();
+      res.json(metrics);
+    } catch (error) {
+      console.error('[API] Error fetching backtest metrics:', error);
+      res.status(500).json({ error: 'Failed to fetch backtest metrics' });
+    }
+  });
+
+  app.get("/api/backtest/trades", async (req, res) => {
+    try {
+      const trades = await backtestingService.getTrades();
+      res.json(trades);
+    } catch (error) {
+      console.error('[API] Error fetching backtest trades:', error);
+      res.status(500).json({ error: 'Failed to fetch backtest trades' });
+    }
+  });
+
+  app.get("/api/backtest/equity-curve", async (req, res) => {
+    try {
+      const curve = await backtestingService.getEquityCurve();
+      res.json(curve);
+    } catch (error) {
+      console.error('[API] Error fetching equity curve:', error);
+      res.status(500).json({ error: 'Failed to fetch equity curve' });
+    }
+  });
+
+  app.get("/api/backtest/report", async (req, res) => {
+    try {
+      const report = await backtestingService.getDailyReport();
+      res.json(report);
+    } catch (error) {
+      console.error('[API] Error fetching backtest report:', error);
+      res.status(500).json({ error: 'Failed to fetch backtest report' });
+    }
+  });return httpServer;
 }
