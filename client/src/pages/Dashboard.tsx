@@ -184,7 +184,7 @@ export default function Dashboard() {
               </div>
             </div>
 
-            <Tabs defaultValue="enhanced" className="space-y-4">
+            <Tabs defaultValue="enhanced" className="space-y-4" data-testid="main-tabs">
               <TabsList className="bg-muted/30">
                 <TabsTrigger value="enhanced" className="flex items-center gap-2" data-testid="tab-enhanced">
                   <Radar className="w-4 h-4" />
