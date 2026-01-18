@@ -1360,7 +1360,7 @@ export async function registerRoutes(
   // BACKTESTING API ENDPOINTS
   // ============================================
 
-  app.get("/api/backtest/stats", async (req, res) => {
+  ("/api/backtest/stats", async (req, res) => {
     try {
       const stats = await backtestingService.getStats();
       res.json(stats);

@@ -1,4 +1,13 @@
-import { pgTable, text, serial, integer, real, timestamp, boolean, jsonb } from "drizzle-orm/pg-core";
+import {
+  pgTable,
+  text,
+  serial,
+  integer,
+  real,
+  timestamp,
+  boolean,
+  jsonb,
+} from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -12,7 +21,9 @@ export const watchlistItems = pgTable("watchlist_items", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
-export const insertWatchlistItemSchema = createInsertSchema(watchlistItems).omit({ id: true, createdAt: true });
+export const insertWatchlistItemSchema = createInsertSchema(
+  watchlistItems,
+).omit({ id: true, createdAt: true });
 export type InsertWatchlistItem = z.infer<typeof insertWatchlistItemSchema>;
 export type WatchlistItem = typeof watchlistItems.$inferSelect;
 
@@ -32,9 +43,16 @@ export const signalSnapshots = pgTable("signal_snapshots", {
   volumeSpike: real("volume_spike"),
   signalStrength: integer("signal_strength"),
   metadata: jsonb("metadata"),
+  // New fields for enhanced signal analysis
+  priceLocation: text("price_location"), // DISCOUNT, NEUTRAL, PREMIUM
+  preSpikeScore: integer("pre_spike_score"), // 0-5 score
+  oiTrend: text("oi_trend"), // RISING, FLAT, FALLING
+  marketPhase: text("market_phase"), // ACCUMULATION, TREND, DISTRIBUTION, EXHAUST, NEUTRAL
 });
 
-export const insertSignalSnapshotSchema = createInsertSchema(signalSnapshots).omit({ id: true, collectedAt: true });
+export const insertSignalSnapshotSchema = createInsertSchema(
+  signalSnapshots,
+).omit({ id: true, collectedAt: true });
 export type InsertSignalSnapshot = z.infer<typeof insertSignalSnapshotSchema>;
 export type SignalSnapshot = typeof signalSnapshots.$inferSelect;
 
@@ -66,7 +84,9 @@ export const backtestTrades = pgTable("backtest_trades", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
-export const insertBacktestTradeSchema = createInsertSchema(backtestTrades).omit({ id: true, createdAt: true });
+export const insertBacktestTradeSchema = createInsertSchema(
+  backtestTrades,
+).omit({ id: true, createdAt: true });
 export type InsertBacktestTrade = z.infer<typeof insertBacktestTradeSchema>;
 export type BacktestTrade = typeof backtestTrades.$inferSelect;
 
@@ -83,7 +103,10 @@ export const tradeEvents = pgTable("trade_events", {
   timestamp: timestamp("timestamp").defaultNow(),
 });
 
-export const insertTradeEventSchema = createInsertSchema(tradeEvents).omit({ id: true, timestamp: true });
+export const insertTradeEventSchema = createInsertSchema(tradeEvents).omit({
+  id: true,
+  timestamp: true,
+});
 export type InsertTradeEvent = z.infer<typeof insertTradeEventSchema>;
 export type TradeEvent = typeof tradeEvents.$inferSelect;
 
@@ -98,7 +121,10 @@ export const equityCurve = pgTable("equity_curve", {
   dailyPnl: real("daily_pnl"),
 });
 
-export const insertEquityCurveSchema = createInsertSchema(equityCurve).omit({ id: true, timestamp: true });
+export const insertEquityCurveSchema = createInsertSchema(equityCurve).omit({
+  id: true,
+  timestamp: true,
+});
 export type InsertEquityCurve = z.infer<typeof insertEquityCurveSchema>;
 export type EquityCurvePoint = typeof equityCurve.$inferSelect;
 
@@ -122,7 +148,9 @@ export const backtestStats = pgTable("backtest_stats", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
-export const insertBacktestStatsSchema = createInsertSchema(backtestStats).omit({ id: true, createdAt: true });
+export const insertBacktestStatsSchema = createInsertSchema(backtestStats).omit(
+  { id: true, createdAt: true },
+);
 export type InsertBacktestStats = z.infer<typeof insertBacktestStatsSchema>;
 export type BacktestStats = typeof backtestStats.$inferSelect;
 
@@ -168,15 +196,15 @@ export type TPLevel = z.infer<typeof tpLevelSchema>;
 
 export const signalSchema = z.object({
   symbol: z.string(),
-  side: z.enum(["LONG", "SHORT"]),  // Trade direction based on trend analysis
+  side: z.enum(["LONG", "SHORT"]), // Trade direction based on trend analysis
   currentPrice: z.number(),
   priceChange24h: z.number(),
   volumeSpikeRatio: z.number(),
-  volAccel: z.number().optional(),  // Volume acceleration: current1H / avg4H
-  isAccelerating: z.boolean().optional(),  // True if volAccel >= 2.0x
-  oiChange24h: z.number().optional(),  // Open Interest 24H change %
-  hasVolAlert: z.boolean().optional(),  // True if volume > 2.0x
-  signalType: z.enum(["HOT", "ACTIVE", "PRE", "MAJOR"]).optional(),  // Signal category (HOT = top priority)
+  volAccel: z.number().optional(), // Volume acceleration: current1H / avg4H
+  isAccelerating: z.boolean().optional(), // True if volAccel >= 2.0x
+  oiChange24h: z.number().optional(), // Open Interest 24H change %
+  hasVolAlert: z.boolean().optional(), // True if volume > 2.0x
+  signalType: z.enum(["HOT", "ACTIVE", "PRE", "MAJOR"]).optional(), // Signal category (HOT = top priority)
   rsi: z.number(),
   entryPrice: z.number(),
   slPrice: z.number(),
@@ -199,11 +227,15 @@ export const signalSchema = z.object({
   firstSeenAt: z.string().optional(),
   timeOnListMinutes: z.number().optional(),
   spikeReadiness: z.enum(["warming", "primed", "hot", "overdue"]).optional(),
-  liquidationLevels: z.array(z.object({
-    price: z.number(),
-    volume: z.number(),
-    direction: z.string(),
-  })).optional(),
+  liquidationLevels: z
+    .array(
+      z.object({
+        price: z.number(),
+        volume: z.number(),
+        direction: z.string(),
+      }),
+    )
+    .optional(),
 });
 
 export type Signal = z.infer<typeof signalSchema>;
@@ -253,11 +285,11 @@ export const tradeDisplaySchema = z.object({
   id: z.number(),
   tradeId: z.string(),
   symbol: z.string(),
-  side: z.enum(["LONG", "SHORT"]).optional(),  // Trade direction
+  side: z.enum(["LONG", "SHORT"]).optional(), // Trade direction
   signalTimestamp: z.string(),
   entryTimestamp: z.string().nullable(),
-  exitTimestamp: z.string().nullable(),  // When trade was closed
-  holdingTimeMinutes: z.number().nullable(),  // Duration in minutes
+  exitTimestamp: z.string().nullable(), // When trade was closed
+  holdingTimeMinutes: z.number().nullable(), // Duration in minutes
   entryPrice: z.number(),
   currentSlPrice: z.number(),
   tp1Price: z.number(),
@@ -286,11 +318,14 @@ export const comments = pgTable("comments", {
   id: serial("id").primaryKey(),
   author: text("author").notNull(),
   content: text("content").notNull(),
-  symbol: text("symbol"),  // Optional: tag a specific symbol
+  symbol: text("symbol"), // Optional: tag a specific symbol
   createdAt: timestamp("created_at").defaultNow(),
 });
 
-export const insertCommentSchema = createInsertSchema(comments).omit({ id: true, createdAt: true });
+export const insertCommentSchema = createInsertSchema(comments).omit({
+  id: true,
+  createdAt: true,
+});
 export type InsertComment = z.infer<typeof insertCommentSchema>;
 export type Comment = typeof comments.$inferSelect;
 
