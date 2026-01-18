@@ -955,6 +955,18 @@ export async function registerRoutes(
           const oiChange24h = oiData.get(item.symbol) ?? null;
           const hasVolAlert = volumeSpikeRatio > 2.0; // VOL ALERT badge for > 2.0x
 
+          // Coinglass data placeholder - populated from cache if available
+          // Note: Full Coinglass data available via /api/coinglass/:symbol endpoint
+          const coinglassData: {
+            longShortRatio: number | null;
+            maxPainLong: number | null;
+            maxPainShort: number | null;
+          } = {
+            longShortRatio: null,
+            maxPainLong: null,
+            maxPainShort: null,
+          };
+
           const { sl, slReason } = calculateSL(
             currentPrice,
             swingLows,
@@ -1193,6 +1205,7 @@ export async function registerRoutes(
               liquidityLevel: liquidityClusters[0]?.price ?? null,
               liquidityStrength: liquidityClusters[0]?.strength ?? 0,
             },
+            coinglassData, // Coinglass: long/short ratio, max pain levels
             timeframes: [
               {
                 timeframe: "1H",
@@ -1565,10 +1578,22 @@ export async function registerRoutes(
   // COINGLASS ENHANCED ENDPOINTS
   // ============================================
 
-  // Enhanced scan: Get top 50 altcoins with Coinglass enriched data
+  // Enhanced scan: Get top altcoins with Coinglass enriched data (limited to 15 for rate limits)
   app.get("/api/enhanced-scan", async (req, res) => {
     try {
-      console.log("[ENHANCED-SCAN] Fetching top 50 altcoins with Coinglass data...");
+      // Check if Coinglass API key is configured
+      const hasApiKey = !!process.env.COINGLASS_API_KEY;
+      if (!hasApiKey) {
+        res.status(503).json({ 
+          error: "Coinglass API key not configured",
+          message: "Add COINGLASS_API_KEY to secrets to enable enhanced scanning"
+        });
+        return;
+      }
+
+      // Each symbol makes ~6 Coinglass API calls, limit to 10 symbols max (60 calls < 80/min limit)
+      const limit = Math.min(parseInt(req.query.limit as string) || 10, 10);
+      console.log(`[ENHANCED-SCAN] Fetching top ${limit} altcoins with Coinglass data...`);
       
       // Fetch top coins by volume from Bitunix
       const response = await axios.get(
@@ -1582,22 +1607,22 @@ export async function registerRoutes(
         return;
       }
 
-      // Filter and sort by volume, get top 50 (excluding stablecoins)
+      // Filter and sort by volume, get top coins (excluding stablecoins)
       const validCoins = rawData
         .filter((t: any) => {
           const symbol = t.symbol || "";
           const price = parseFloat(t.lastPrice);
           const volume = parseFloat(t.quoteVol);
-          // Exclude stablecoins
-          if (symbol.includes("USDC") || symbol.includes("USDT") && !symbol.endsWith("USDT")) return false;
-          return price > 0 && volume > 0 && !isNaN(price) && !isNaN(volume);
+          // Exclude stablecoins and non-USDT pairs
+          if (symbol.includes("USDC") || (symbol.includes("USDT") && !symbol.endsWith("USDT"))) return false;
+          return price > 0 && volume > 0 && !isNaN(price) && !isNaN(volume) && symbol.endsWith("USDT");
         })
         .sort((a: any, b: any) => parseFloat(b.quoteVol) - parseFloat(a.quoteVol))
-        .slice(0, 50);
+        .slice(0, limit);
 
       console.log(`[ENHANCED-SCAN] Processing ${validCoins.length} coins...`);
 
-      // Fetch enhanced data for each coin (with rate limiting)
+      // Fetch enhanced data for each coin sequentially to respect rate limits
       const enrichedData: Array<{
         symbol: string;
         price: number;
@@ -1663,6 +1688,10 @@ export async function registerRoutes(
         timestamp: new Date().toISOString(),
         totalCoins: sortedData.length,
         withCoinglassData: sortedData.filter(d => d.coinglass).length,
+        rateLimit: {
+          maxSymbols: 10,
+          note: "Limited to 10 symbols per request to respect Coinglass API rate limits (80 req/min)"
+        }
       });
     } catch (error: any) {
       console.error("[ENHANCED-SCAN] Error:", error.message);
@@ -1673,6 +1702,15 @@ export async function registerRoutes(
   // Signal analysis: Get detailed multi-factor analysis for a specific symbol
   app.get("/api/signal-analysis/:symbol", async (req, res) => {
     try {
+      // Check if Coinglass API key is configured
+      if (!process.env.COINGLASS_API_KEY) {
+        res.status(503).json({ 
+          error: "Coinglass API key not configured",
+          message: "Add COINGLASS_API_KEY to secrets to enable signal analysis"
+        });
+        return;
+      }
+
       const { symbol } = req.params;
       const cleanSymbol = symbol.replace("USDT", "").toUpperCase();
       
@@ -1867,6 +1905,15 @@ export async function registerRoutes(
   // Basic Coinglass data endpoint for quick lookups
   app.get("/api/coinglass/:symbol", async (req, res) => {
     try {
+      // Check if Coinglass API key is configured
+      if (!process.env.COINGLASS_API_KEY) {
+        res.status(503).json({ 
+          error: "Coinglass API key not configured",
+          message: "Add COINGLASS_API_KEY to secrets to enable Coinglass data"
+        });
+        return;
+      }
+
       const { symbol } = req.params;
       const cleanSymbol = symbol.replace("USDT", "").toUpperCase();
       
