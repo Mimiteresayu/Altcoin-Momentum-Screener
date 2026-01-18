@@ -99,9 +99,13 @@ Preferred communication style: Simple, everyday language.
 - 1-minute in-memory cache to reduce redundant API calls
 - **Endpoints**:
   - `GET /api/enhanced-scan` - Top 10 altcoins with full Coinglass enrichment (liquidation maps, orderbook walls, long/short ratios, taker flow, funding rates, fear/greed index)
+  - `GET /api/enhanced-market/:symbol` - Full EnhancedMarketData for a specific symbol with all metrics
+  - `GET /api/market-signals/:symbol` - Interpreted trading signals (accumulation vs distribution, breakout setups, squeeze setups)
   - `GET /api/signal-analysis/:symbol` - Detailed multi-factor trading analysis with signal interpretations and setup identification
   - `GET /api/coinglass/:symbol` - Quick lookup for basic Coinglass data (OI history, liquidation map, L/S ratio, funding rates)
+  - `GET /api/screen` - Top coins by volume with optional Coinglass data (OI change, L/S ratio, liquidation max pain, funding rate)
 - **Data provided**: Liquidation analysis, orderbook support/resistance walls, positioning analysis, flow analysis, funding/basis analysis, accumulation/distribution scores, momentum strength classification
+- **Market signals include**: Accumulation/distribution detection, long/short squeeze setups, breakout/breakdown patterns, liquidation risk alerts, funding rate signals, fear/greed contrarian signals
 
 ## Signal Direction (LONG/SHORT)
 Each signal displays a SIDE indicator (LONG or SHORT) based on multi-factor scoring:

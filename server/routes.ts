@@ -1381,16 +1381,6 @@ export async function registerRoutes(
   // BACKTESTING API ENDPOINTS
   // ============================================
 
-  ("/api/backtest/stats", async (req, res) => {
-    try {
-      const stats = await backtestingService.getStats();
-      res.json(stats);
-    } catch (error) {
-      console.error("Error fetching backtest stats:", error);
-      res.status(500).json({ message: "Failed to fetch backtest stats" });
-    }
-  });
-
   app.get("/api/backtest/trades", async (req, res) => {
     try {
       const limit = parseInt(req.query.limit as string) || 50;
@@ -1965,6 +1955,401 @@ export async function registerRoutes(
     } catch (error: any) {
       console.error(`[COINGLASS] Error for ${req.params.symbol}:`, error.message);
       res.status(500).json({ error: "Failed to fetch Coinglass data" });
+    }
+  });
+
+  // GET /api/enhanced-market/:symbol - Returns full EnhancedMarketData for a symbol
+  app.get("/api/enhanced-market/:symbol", async (req, res) => {
+    try {
+      if (!process.env.COINGLASS_API_KEY) {
+        res.status(503).json({ 
+          error: "Coinglass API key not configured",
+          message: "Add COINGLASS_API_KEY to secrets to enable enhanced market data"
+        });
+        return;
+      }
+
+      const { symbol } = req.params;
+      const cleanSymbol = symbol.replace("USDT", "").toUpperCase();
+      
+      console.log(`[ENHANCED-MARKET] Fetching data for ${cleanSymbol}...`);
+      
+      const enhancedData = await getEnhancedMarketData(cleanSymbol);
+      
+      res.json({
+        ...enhancedData,
+        symbol: cleanSymbol,
+        requestTimestamp: new Date().toISOString(),
+      });
+    } catch (error: any) {
+      console.error(`[ENHANCED-MARKET] Error for ${req.params.symbol}:`, error.message);
+      res.status(500).json({ error: "Failed to fetch enhanced market data" });
+    }
+  });
+
+  // GET /api/market-signals/:symbol - Returns interpreted trading signals based on enhanced data
+  app.get("/api/market-signals/:symbol", async (req, res) => {
+    try {
+      if (!process.env.COINGLASS_API_KEY) {
+        res.status(503).json({ 
+          error: "Coinglass API key not configured",
+          message: "Add COINGLASS_API_KEY to secrets to enable market signals"
+        });
+        return;
+      }
+
+      const { symbol } = req.params;
+      const cleanSymbol = symbol.replace("USDT", "").toUpperCase();
+      
+      console.log(`[MARKET-SIGNALS] Analyzing ${cleanSymbol}...`);
+      
+      const enhancedData = await getEnhancedMarketData(cleanSymbol);
+      
+      // Generate interpreted signals
+      const signals: { signal: string; type: "bullish" | "bearish" | "neutral"; weight: number; description: string }[] = [];
+      
+      // Accumulation vs Distribution
+      if (enhancedData.accumulationScore >= 70) {
+        signals.push({
+          signal: "Strong Accumulation",
+          type: "bullish",
+          weight: 3,
+          description: `Accumulation score ${enhancedData.accumulationScore}/100 indicates smart money buying`
+        });
+      } else if (enhancedData.accumulationScore >= 55) {
+        signals.push({
+          signal: "Moderate Accumulation",
+          type: "bullish",
+          weight: 2,
+          description: `Accumulation score ${enhancedData.accumulationScore}/100 shows buying interest`
+        });
+      } else if (enhancedData.distributionScore >= 70) {
+        signals.push({
+          signal: "Strong Distribution",
+          type: "bearish",
+          weight: 3,
+          description: `Distribution score ${enhancedData.distributionScore}/100 indicates selling pressure`
+        });
+      } else if (enhancedData.distributionScore >= 55) {
+        signals.push({
+          signal: "Moderate Distribution",
+          type: "bearish",
+          weight: 2,
+          description: `Distribution score ${enhancedData.distributionScore}/100 shows selling interest`
+        });
+      }
+      
+      // Long/Short positioning signals
+      const { positioningAnalysis } = enhancedData;
+      if (positioningAnalysis.longShortRatio > 1.5) {
+        signals.push({
+          signal: "Extreme Long Positioning",
+          type: "bearish",
+          weight: 2,
+          description: `L/S ratio ${positioningAnalysis.longShortRatio.toFixed(2)} - potential short squeeze target`
+        });
+      } else if (positioningAnalysis.longShortRatio < 0.7) {
+        signals.push({
+          signal: "Extreme Short Positioning",
+          type: "bullish",
+          weight: 2,
+          description: `L/S ratio ${positioningAnalysis.longShortRatio.toFixed(2)} - potential short squeeze setup`
+        });
+      }
+      
+      // Liquidation cluster signals
+      const { liquidationAnalysis } = enhancedData;
+      if (liquidationAnalysis.liquidationBias === "long") {
+        signals.push({
+          signal: "Long Liquidation Risk",
+          type: "bearish",
+          weight: 2,
+          description: `Heavy long liquidations clustered at $${liquidationAnalysis.maxPainLong?.toLocaleString() || 'N/A'}`
+        });
+      } else if (liquidationAnalysis.liquidationBias === "short") {
+        signals.push({
+          signal: "Short Liquidation Risk",
+          type: "bullish",
+          weight: 2,
+          description: `Heavy short liquidations clustered at $${liquidationAnalysis.maxPainShort?.toLocaleString() || 'N/A'}`
+        });
+      }
+      
+      // Flow analysis signals
+      const { flowAnalysis } = enhancedData;
+      const buySellRatio = flowAnalysis.sellVolume > 0 ? flowAnalysis.buyVolume / flowAnalysis.sellVolume : 1;
+      if (flowAnalysis.flowBias === "buying" && buySellRatio > 1.2) {
+        signals.push({
+          signal: "Aggressive Buying",
+          type: "bullish",
+          weight: 2,
+          description: `Buy/sell ratio ${buySellRatio.toFixed(2)} indicates active accumulation`
+        });
+      } else if (flowAnalysis.flowBias === "selling" && buySellRatio < 0.8) {
+        signals.push({
+          signal: "Aggressive Selling",
+          type: "bearish",
+          weight: 2,
+          description: `Buy/sell ratio ${buySellRatio.toFixed(2)} indicates active distribution`
+        });
+      }
+      
+      // Orderbook wall signals
+      const { orderbookAnalysis } = enhancedData;
+      if (orderbookAnalysis.strongestSupport) {
+        signals.push({
+          signal: "Support Wall",
+          type: "bullish",
+          weight: 1,
+          description: `Strong bid wall at $${orderbookAnalysis.strongestSupport.toLocaleString()}`
+        });
+      }
+      if (orderbookAnalysis.strongestResistance) {
+        signals.push({
+          signal: "Resistance Wall",
+          type: "bearish",
+          weight: 1,
+          description: `Strong ask wall at $${orderbookAnalysis.strongestResistance.toLocaleString()}`
+        });
+      }
+      
+      // Funding rate signals
+      const { fundingBasisAnalysis } = enhancedData;
+      if (fundingBasisAnalysis.averageFundingRate > 0.0005) {
+        signals.push({
+          signal: "High Positive Funding",
+          type: "bearish",
+          weight: 1,
+          description: `Funding rate ${(fundingBasisAnalysis.averageFundingRate * 100).toFixed(4)}% - longs paying shorts`
+        });
+      } else if (fundingBasisAnalysis.averageFundingRate < -0.0005) {
+        signals.push({
+          signal: "Negative Funding",
+          type: "bullish",
+          weight: 1,
+          description: `Funding rate ${(fundingBasisAnalysis.averageFundingRate * 100).toFixed(4)}% - shorts paying longs`
+        });
+      }
+      
+      // Fear & Greed signal
+      const { fearGreed } = enhancedData;
+      if (fearGreed.value <= 25) {
+        signals.push({
+          signal: "Extreme Fear",
+          type: "bullish",
+          weight: 2,
+          description: `Fear & Greed at ${fearGreed.value} (${fearGreed.classification}) - contrarian buy signal`
+        });
+      } else if (fearGreed.value >= 75) {
+        signals.push({
+          signal: "Extreme Greed",
+          type: "bearish",
+          weight: 2,
+          description: `Fear & Greed at ${fearGreed.value} (${fearGreed.classification}) - contrarian sell signal`
+        });
+      }
+      
+      // Identify potential setups
+      const setups: string[] = [];
+      
+      // Breakout setup: accumulation + support + buying pressure
+      if (enhancedData.accumulationScore >= 60 && orderbookAnalysis.strongestSupport && flowAnalysis.flowBias === "buying") {
+        setups.push("Potential Breakout: Accumulation with support and buying pressure");
+      }
+      
+      // Breakdown setup: distribution + resistance + selling pressure  
+      if (enhancedData.distributionScore >= 60 && orderbookAnalysis.strongestResistance && flowAnalysis.flowBias === "selling") {
+        setups.push("Potential Breakdown: Distribution with resistance and selling pressure");
+      }
+      
+      // Short squeeze setup: extreme shorts + buying + negative funding
+      if (positioningAnalysis.longShortRatio < 0.8 && flowAnalysis.flowBias === "buying" && fundingBasisAnalysis.averageFundingRate < 0) {
+        setups.push("Short Squeeze Setup: Heavy shorts with buying pressure and negative funding");
+      }
+      
+      // Long squeeze setup: extreme longs + selling + positive funding
+      if (positioningAnalysis.longShortRatio > 1.3 && flowAnalysis.flowBias === "selling" && fundingBasisAnalysis.averageFundingRate > 0) {
+        setups.push("Long Squeeze Setup: Heavy longs with selling pressure and positive funding");
+      }
+      
+      // Calculate overall bias
+      const bullishWeight = signals.filter(s => s.type === "bullish").reduce((sum, s) => sum + s.weight, 0);
+      const bearishWeight = signals.filter(s => s.type === "bearish").reduce((sum, s) => sum + s.weight, 0);
+      
+      let overallBias: "bullish" | "bearish" | "neutral";
+      let biasStrength: "strong" | "moderate" | "weak";
+      
+      const netBias = bullishWeight - bearishWeight;
+      if (netBias >= 4) {
+        overallBias = "bullish";
+        biasStrength = "strong";
+      } else if (netBias >= 2) {
+        overallBias = "bullish";
+        biasStrength = "moderate";
+      } else if (netBias <= -4) {
+        overallBias = "bearish";
+        biasStrength = "strong";
+      } else if (netBias <= -2) {
+        overallBias = "bearish";
+        biasStrength = "moderate";
+      } else {
+        overallBias = "neutral";
+        biasStrength = "weak";
+      }
+      
+      res.json({
+        symbol: cleanSymbol,
+        timestamp: new Date().toISOString(),
+        signals,
+        setups,
+        summary: {
+          overallBias,
+          biasStrength,
+          bullishSignals: signals.filter(s => s.type === "bullish").length,
+          bearishSignals: signals.filter(s => s.type === "bearish").length,
+          momentumStrength: enhancedData.momentumStrength,
+          accumulationScore: enhancedData.accumulationScore,
+          distributionScore: enhancedData.distributionScore,
+        },
+        marketMetrics: {
+          longShortRatio: positioningAnalysis.longShortRatio,
+          fundingRate: fundingBasisAnalysis.averageFundingRate,
+          fearGreedIndex: fearGreed.value,
+          fearGreedClassification: fearGreed.classification,
+        }
+      });
+    } catch (error: any) {
+      console.error(`[MARKET-SIGNALS] Error for ${req.params.symbol}:`, error.message);
+      res.status(500).json({ error: "Failed to generate market signals" });
+    }
+  });
+
+  // GET /api/screen - Returns top coins with basic Coinglass data for screening
+  app.get("/api/screen", async (req, res) => {
+    try {
+      const limit = Math.min(parseInt(req.query.limit as string) || 20, 50);
+      const includeCoinglass = req.query.coinglass !== "false";
+      
+      console.log(`[SCREEN] Fetching top ${limit} coins...`);
+      
+      // Fetch market data from Bitunix
+      const response = await axios.get(
+        "https://fapi.bitunix.com/api/v1/futures/market/tickers",
+        { timeout: 10000 }
+      );
+      
+      const rawData = response.data.data;
+      if (!Array.isArray(rawData)) {
+        res.status(500).json({ error: "Failed to fetch market data" });
+        return;
+      }
+
+      // Filter and sort by volume
+      const validCoins = rawData
+        .filter((t: any) => {
+          const symbol = t.symbol || "";
+          const price = parseFloat(t.lastPrice);
+          const volume = parseFloat(t.quoteVol);
+          if (symbol.includes("USDC") || (symbol.includes("USDT") && !symbol.endsWith("USDT"))) return false;
+          return price > 0 && volume > 0 && !isNaN(price) && !isNaN(volume) && symbol.endsWith("USDT");
+        })
+        .sort((a: any, b: any) => parseFloat(b.quoteVol) - parseFloat(a.quoteVol))
+        .slice(0, limit);
+
+      // Build screen data
+      const screenData: Array<{
+        symbol: string;
+        price: number;
+        priceChange24h: number;
+        volume24h: number;
+        high24h: number;
+        low24h: number;
+        coinglass?: {
+          oiChange24h: number | null;
+          longShortRatio: number | null;
+          maxPainLong: number | null;
+          maxPainShort: number | null;
+          fundingRate: number | null;
+        };
+      }> = [];
+
+      // Limit Coinglass lookups to first 10 coins to respect rate limits
+      const coinglassLimit = Math.min(limit, 10);
+
+      for (let i = 0; i < validCoins.length; i++) {
+        const coin = validCoins[i];
+        const symbol = coin.symbol;
+        const cleanSymbol = symbol.replace("USDT", "");
+        const price = parseFloat(coin.lastPrice);
+        const open = parseFloat(coin.open);
+        const priceChange24h = open > 0 ? ((price - open) / open) * 100 : 0;
+        
+        const coinData: any = {
+          symbol,
+          price,
+          priceChange24h,
+          volume24h: parseFloat(coin.quoteVol),
+          high24h: parseFloat(coin.high),
+          low24h: parseFloat(coin.low),
+        };
+
+        // Fetch Coinglass data for first 10 coins only (rate limit protection)
+        if (includeCoinglass && process.env.COINGLASS_API_KEY && i < coinglassLimit) {
+          try {
+            const [oiHistory, lsRatio, liqMap, funding] = await Promise.all([
+              getOpenInterestHistory(cleanSymbol, "1h", 24).catch(() => []),
+              getLongShortRatio(cleanSymbol, "1h", 1).catch(() => []),
+              getLiquidationMap(cleanSymbol).catch(() => []),
+              getFundingRate(cleanSymbol).catch(() => []),
+            ]);
+
+            // Calculate OI change
+            let oiChange24h = null;
+            if (oiHistory.length >= 2) {
+              const latest = oiHistory[oiHistory.length - 1].openInterestUsd;
+              const earliest = oiHistory[0].openInterestUsd;
+              if (earliest > 0) {
+                oiChange24h = ((latest - earliest) / earliest) * 100;
+              }
+            }
+
+            // Max pain levels
+            let maxPainLong = null;
+            let maxPainShort = null;
+            if (liqMap.length > 0) {
+              const maxL = liqMap.reduce((max, l) => l.longLiquidation > (max?.longLiquidation || 0) ? l : max, liqMap[0]);
+              const maxS = liqMap.reduce((max, l) => l.shortLiquidation > (max?.shortLiquidation || 0) ? l : max, liqMap[0]);
+              maxPainLong = maxL?.price || null;
+              maxPainShort = maxS?.price || null;
+            }
+
+            coinData.coinglass = {
+              oiChange24h,
+              longShortRatio: lsRatio[0]?.longShortRatio || null,
+              maxPainLong,
+              maxPainShort,
+              fundingRate: funding.length > 0 
+                ? funding.reduce((sum, fr) => sum + fr.fundingRate, 0) / funding.length 
+                : null,
+            };
+          } catch (err) {
+            // Skip Coinglass data for this symbol
+          }
+        }
+
+        screenData.push(coinData);
+      }
+
+      res.json({
+        data: screenData,
+        timestamp: new Date().toISOString(),
+        totalCoins: screenData.length,
+        coinglassEnabled: includeCoinglass && !!process.env.COINGLASS_API_KEY,
+        coinglassCoins: screenData.filter(c => c.coinglass).length,
+      });
+    } catch (error: any) {
+      console.error("[SCREEN] Error:", error.message);
+      res.status(500).json({ error: "Failed to fetch screen data" });
     }
   });
 
