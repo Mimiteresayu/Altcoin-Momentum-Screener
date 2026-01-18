@@ -5,6 +5,8 @@ import { api } from "@shared/routes";
 import { notifyNewSignals, isDiscordConfigured } from "./discord";
 import { initializeWebSocket, getConnectedClientsCount } from "./websocket";
 import { backtestingService } from "./backtest";
+import { autotradeService } from "./autotrade";
+import { binanceService } from "./binance";
 import axios from "axios";
 import { RSI } from "technicalindicators";
 import {
@@ -2351,6 +2353,135 @@ export async function registerRoutes(
       console.error("[SCREEN] Error:", error.message);
       res.status(500).json({ error: "Failed to fetch screen data" });
     }
+  });
+
+  // ============================================
+  // AUTOTRADE ENDPOINTS
+  // ============================================
+
+  app.get("/api/autotrade/status", async (req, res) => {
+    try {
+      const config = autotradeService.getConfig();
+      const stats = await autotradeService.getStats();
+      const positions = binanceService.isConfigured() 
+        ? await binanceService.getOpenPositions().catch(() => [])
+        : [];
+      
+      res.json({
+        enabled: autotradeService.isEnabled(),
+        configured: binanceService.isConfigured(),
+        config,
+        stats,
+        positions,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/autotrade/config", async (req, res) => {
+    try {
+      const config = autotradeService.getConfig();
+      res.json(config);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/autotrade/config", async (req, res) => {
+    try {
+      await autotradeService.saveConfig(req.body);
+      res.json({ success: true, config: autotradeService.getConfig() });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/autotrade/enable", async (req, res) => {
+    try {
+      await autotradeService.enable();
+      res.json({ success: true, enabled: true });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/autotrade/disable", async (req, res) => {
+    try {
+      await autotradeService.disable();
+      res.json({ success: true, enabled: false });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/autotrade/trades", async (req, res) => {
+    try {
+      const limit = parseInt(req.query.limit as string) || 50;
+      const trades = await autotradeService.getTradeHistory(limit);
+      res.json({ trades });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/autotrade/positions", async (req, res) => {
+    try {
+      if (!binanceService.isConfigured()) {
+        return res.json({ positions: [], configured: false });
+      }
+      const positions = await binanceService.getOpenPositions();
+      res.json({ positions, configured: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/autotrade/close/:symbol", async (req, res) => {
+    try {
+      const { symbol } = req.params;
+      const result = await autotradeService.closePosition(symbol);
+      res.json({ success: true, result });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/autotrade/emergency-close", async (req, res) => {
+    try {
+      const results = await autotradeService.emergencyCloseAll();
+      res.json({ success: true, results });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/autotrade/account", async (req, res) => {
+    try {
+      if (!binanceService.isConfigured()) {
+        return res.json({ configured: false });
+      }
+      const account = await binanceService.getAccountInfo();
+      res.json({ configured: true, account });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/autotrade/test-signal", async (req, res) => {
+    try {
+      const signal = req.body;
+      const result = await autotradeService.processSignal(signal);
+      res.json(result);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Initialize autotrade service
+  autotradeService.initialize().catch(err => {
+    console.error("[AUTOTRADE] Initialization error:", err);
   });
 
   return httpServer;

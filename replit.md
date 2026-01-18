@@ -139,5 +139,44 @@ Decision: SHORT when bearish score > bullish score, otherwise LONG
 - REST API fallback: `GET/POST /api/comments`
 - Fields: author (50 chars), content (500 chars), optional symbol
 
+## Autotrade System (Binance Futures)
+- **Exchange**: Binance Futures (USDM Perpetual)
+- **Authentication**: Requires BINANCE_API_KEY and BINANCE_API_SECRET secrets
+- **Files**: `server/binance.ts` (API service), `server/autotrade.ts` (trade engine)
+- **Database Tables**: `autotrade_settings`, `autotrade_trades`
+
+### Autotrade API Endpoints
+- `GET /api/autotrade/status` - Full status (config, stats, positions)
+- `GET /api/autotrade/config` - Current configuration
+- `POST /api/autotrade/config` - Update configuration
+- `POST /api/autotrade/enable` - Enable autotrade
+- `POST /api/autotrade/disable` - Disable autotrade
+- `GET /api/autotrade/trades` - Trade history
+- `GET /api/autotrade/positions` - Open positions from Binance
+- `POST /api/autotrade/close/:symbol` - Close specific position
+- `POST /api/autotrade/emergency-close` - Close ALL positions and disable
+- `GET /api/autotrade/account` - Binance account info
+
+### Risk Management
+- **Max Positions**: Configurable (default: 3)
+- **Risk per Trade**: % of account (default: 1%)
+- **Leverage**: Configurable (default: 5x)
+- **Margin Type**: Isolated (for position safety)
+- **Stop-Loss**: Configurable % (default: 2%)
+- **Take-Profit**: Configurable % (default: 6%)
+- **Trailing Stop**: Configurable % (default: 1.5%)
+
+### Trade Filters
+- **Signal Strength**: Minimum required (default: 4/5)
+- **Only HOT Signals**: Optional filter (default: true)
+- **Blocked Symbols**: BTC/ETH excluded by default
+- **Allowed Symbols**: Optional whitelist
+
+### Safety Features
+- Emergency close all positions button
+- Autotrade disabled on emergency close
+- Position sync with Binance
+- Trade history logging
+
 ## API Limitations
 - **Bitunix**: No public API for programmatic alarm/alert creation. Users must set alerts via Bitunix web/mobile UI or TradingView webhook integration.

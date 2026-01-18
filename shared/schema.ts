@@ -338,3 +338,61 @@ export const commentDisplaySchema = z.object({
 });
 
 export type CommentDisplay = z.infer<typeof commentDisplaySchema>;
+
+// ============================================
+// AUTOTRADE SETTINGS TABLE
+// ============================================
+export const autotradeSettings = pgTable("autotrade_settings", {
+  id: serial("id").primaryKey(),
+  enabled: boolean("enabled").notNull().default(false),
+  maxPositions: integer("max_positions").notNull().default(3),
+  riskPerTrade: real("risk_per_trade").notNull().default(1),
+  leverage: integer("leverage").notNull().default(5),
+  minSignalStrength: integer("min_signal_strength").notNull().default(4),
+  allowedSymbols: text("allowed_symbols").array().default([]),
+  blockedSymbols: text("blocked_symbols").array().default([]),
+  stopLossPercent: real("stop_loss_percent").notNull().default(2),
+  takeProfitPercent: real("take_profit_percent").notNull().default(6),
+  trailingStopPercent: real("trailing_stop_percent").notNull().default(1.5),
+  useTrailingStop: boolean("use_trailing_stop").notNull().default(true),
+  onlyHotSignals: boolean("only_hot_signals").notNull().default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertAutotradeSettingsSchema = createInsertSchema(autotradeSettings).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type InsertAutotradeSettings = z.infer<typeof insertAutotradeSettingsSchema>;
+export type AutotradeSettings = typeof autotradeSettings.$inferSelect;
+
+// ============================================
+// AUTOTRADE TRADES TABLE
+// ============================================
+export const autotradeTrades = pgTable("autotrade_trades", {
+  id: serial("id").primaryKey(),
+  symbol: text("symbol").notNull(),
+  side: text("side").notNull(),
+  entryPrice: real("entry_price").notNull(),
+  exitPrice: real("exit_price"),
+  quantity: real("quantity").notNull(),
+  stopLoss: real("stop_loss").notNull(),
+  takeProfit: real("take_profit").notNull(),
+  binanceOrderId: text("binance_order_id"),
+  signalStrength: integer("signal_strength"),
+  signalCategory: text("signal_category"),
+  status: text("status").notNull().default("OPEN"),
+  pnl: real("pnl"),
+  pnlPercent: real("pnl_percent"),
+  entryTime: timestamp("entry_time").notNull().defaultNow(),
+  exitTime: timestamp("exit_time"),
+  exitReason: text("exit_reason"),
+});
+
+export const insertAutotradeTradeSchema = createInsertSchema(autotradeTrades).omit({
+  id: true,
+});
+export type InsertAutotradeTrade = z.infer<typeof insertAutotradeTradeSchema>;
+export type AutotradeTrade = typeof autotradeTrades.$inferSelect;
