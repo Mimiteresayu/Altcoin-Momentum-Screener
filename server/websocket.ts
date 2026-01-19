@@ -1,6 +1,6 @@
 import { WebSocketServer, WebSocket } from "ws";
 import type { Server } from "http";
-import { storage } from "./storage";
+import { getStorage } from "./storage";
 import type { CommentDisplay, InsertComment } from "@shared/schema";
 
 interface WebSocketMessage {
@@ -48,7 +48,7 @@ export function initializeWebSocket(server: Server): WebSocketServer {
 
 async function sendRecentComments(ws: WebSocket) {
   try {
-    const comments = await storage.getComments(50);
+    const comments = await getStorage().getComments(50);
     const displayComments: CommentDisplay[] = comments.map(c => ({
       id: c.id,
       author: c.author,
@@ -113,7 +113,7 @@ async function handleNewComment(payload: { author: string; content: string; symb
   }
   
   try {
-    const comment = await storage.addComment({
+    const comment = await getStorage().addComment({
       author,
       content,
       symbol,
@@ -145,7 +145,7 @@ async function handleDeleteComment(payload: { id: number }) {
   }
   
   try {
-    await storage.deleteComment(payload.id);
+    await getStorage().deleteComment(payload.id);
     
     // Broadcast deletion to all clients
     broadcastMessage({

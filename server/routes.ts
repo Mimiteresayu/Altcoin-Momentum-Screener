@@ -1,6 +1,7 @@
 import type { Express } from "express";
 import type { Server } from "http";
-import { storage } from "./storage";
+import { storage, getStorage } from "./storage";
+import { isDatabaseAvailable, getConnectionError } from "./db";
 import { api } from "@shared/routes";
 import { notifyNewSignals, isDiscordConfigured } from "./discord";
 import { initializeWebSocket, getConnectedClientsCount } from "./websocket";
@@ -814,6 +815,24 @@ export async function registerRoutes(
   let isCalculating = false;
   let lastUpdated: Date = new Date();
 
+  // Health check endpoint with database status
+  app.get("/api/health", async (req, res) => {
+    const dbStatus = isDatabaseAvailable();
+    res.json({
+      status: "ok",
+      timestamp: new Date().toISOString(),
+      database: {
+        available: dbStatus,
+        error: dbStatus ? null : getConnectionError(),
+        mode: dbStatus ? "database" : "memory-fallback"
+      },
+      signals: {
+        cached: cachedSignals.length,
+        lastUpdated: lastUpdated.toISOString()
+      }
+    });
+  });
+
   // Track when each symbol first appeared on the signal list
   const symbolFirstSeen: Map<string, Date> = new Map();
   // Track when a symbol was last seen on the list (for grace period cleanup)
@@ -850,8 +869,13 @@ export async function registerRoutes(
       const signals: any[] = [];
 
       // Get watchlist to prioritize those symbols
-      const watchlist = await storage.getWatchlist();
-      const watchlistSymbols = watchlist.map((w) => w.symbol);
+      let watchlistSymbols: string[] = [];
+      try {
+        const watchlist = await getStorage().getWatchlist();
+        watchlistSymbols = watchlist.map((w) => w.symbol);
+      } catch (err) {
+        console.warn('[SIGNALS] Could not fetch watchlist, proceeding without it');
+      }
 
       const allSymbols = rawData.filter((t: any) => {
         const price = parseFloat(t.lastPrice);
@@ -1373,19 +1397,34 @@ export async function registerRoutes(
   });
 
   app.get(api.watchlist.list.path, async (req, res) => {
-    const items = await storage.getWatchlist();
-    res.json(items);
+    try {
+      const items = await getStorage().getWatchlist();
+      res.json(items);
+    } catch (error) {
+      console.error('[API] Watchlist fetch error:', error);
+      res.json([]);
+    }
   });
 
   app.post(api.watchlist.create.path, async (req, res) => {
-    const input = api.watchlist.create.input.parse(req.body);
-    const item = await storage.addToWatchlist(input);
-    res.status(201).json(item);
+    try {
+      const input = api.watchlist.create.input.parse(req.body);
+      const item = await getStorage().addToWatchlist(input);
+      res.status(201).json(item);
+    } catch (error) {
+      console.error('[API] Watchlist add error:', error);
+      res.status(503).json({ message: "Storage temporarily unavailable" });
+    }
   });
 
   app.delete(api.watchlist.delete.path, async (req, res) => {
-    await storage.removeFromWatchlist(Number(req.params.id));
-    res.status(204).send();
+    try {
+      await getStorage().removeFromWatchlist(Number(req.params.id));
+      res.status(204).send();
+    } catch (error) {
+      console.error('[API] Watchlist delete error:', error);
+      res.status(503).json({ message: "Storage temporarily unavailable" });
+    }
   });
 
   // ============================================
@@ -1394,9 +1433,9 @@ export async function registerRoutes(
 
   app.get("/api/backtest/trades", async (req, res) => {
     try {
+      const trades = await backtestingService.getTrades();
       const limit = parseInt(req.query.limit as string) || 50;
-      const trades = await backtestingService.getTrades(limit);
-      res.json(trades);
+      res.json(trades.slice(0, limit));
     } catch (error) {
       console.error("Error fetching trades:", error);
       res.status(500).json({ message: "Failed to fetch trades" });
@@ -1405,9 +1444,9 @@ export async function registerRoutes(
 
   app.get("/api/backtest/equity", async (req, res) => {
     try {
+      const curve = await backtestingService.getEquityCurve();
       const limit = parseInt(req.query.limit as string) || 100;
-      const curve = await backtestingService.getEquityCurve(limit);
-      res.json(curve);
+      res.json(curve.slice(0, limit));
     } catch (error) {
       console.error("Error fetching equity curve:", error);
       res.status(500).json({ message: "Failed to fetch equity curve" });
@@ -1416,10 +1455,9 @@ export async function registerRoutes(
 
   app.get("/api/backtest/signals", async (req, res) => {
     try {
-      const symbol = req.query.symbol as string | undefined;
+      const signals = await backtestingService.getSignalHistory();
       const limit = parseInt(req.query.limit as string) || 100;
-      const signals = await backtestingService.getSignalHistory(symbol, limit);
-      res.json(signals);
+      res.json(signals.slice(0, limit));
     } catch (error) {
       console.error("Error fetching signal history:", error);
       res.status(500).json({ message: "Failed to fetch signal history" });
@@ -1461,7 +1499,7 @@ export async function registerRoutes(
   app.get("/api/comments", async (req, res) => {
     try {
       const limit = parseInt(req.query.limit as string) || 50;
-      const comments = await storage.getComments(limit);
+      const comments = await getStorage().getComments(limit);
       res.json(
         comments.map((c) => ({
           id: c.id,
@@ -1473,7 +1511,7 @@ export async function registerRoutes(
       );
     } catch (error) {
       console.error("Error fetching comments:", error);
-      res.status(500).json({ message: "Failed to fetch comments" });
+      res.json([]);
     }
   });
 
@@ -1501,7 +1539,7 @@ export async function registerRoutes(
         return;
       }
 
-      const comment = await storage.addComment({
+      const comment = await getStorage().addComment({
         author: sanitizeText(author).slice(0, 50),
         content: sanitizeText(content).slice(0, 500),
         symbol: symbol ? sanitizeText(symbol).slice(0, 20) : null,
