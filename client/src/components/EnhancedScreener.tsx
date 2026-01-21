@@ -43,13 +43,22 @@ interface EnhancedSignal {
   riskReward: number;
   signalStrength: number;
   priceLocation?: "DISCOUNT" | "NEUTRAL" | "PREMIUM";
-  marketPhase?: "ACCUMULATION" | "DISTRIBUTION" | "BREAKOUT" | "EXHAUST" | "UNKNOWN";
+  marketPhase?:
+    | "ACCUMULATION"
+    | "DISTRIBUTION"
+    | "BREAKOUT"
+    | "EXHAUST"
+    | "UNKNOWN";
   preSpikeScore?: number;
   fundingRate?: number;
   fundingBias?: "bullish" | "bearish" | "neutral";
   longShortRatio?: number;
   lsrBias?: "long_dominant" | "short_dominant" | "balanced";
-  fvgLevels?: { price: number; type: "bullish" | "bearish"; strength: number }[];
+  fvgLevels?: {
+    price: number;
+    type: "bullish" | "bearish";
+    strength: number;
+  }[];
   obLevels?: { price: number; type: "bullish" | "bearish"; strength: number }[];
   liquidationZones?: {
     nearestLongLiq?: number;
@@ -103,10 +112,11 @@ export function EnhancedScreener() {
     return `/api/enhanced-screener?${params.toString()}`;
   };
 
-  const { data, isLoading, isError, refetch, isFetching } = useQuery<ScreenerResponse>({
-    queryKey: [buildUrl()],
-    refetchInterval: 30000,
-  });
+  const { data, isLoading, isError, refetch, isFetching } =
+    useQuery<ScreenerResponse>({
+      queryKey: [buildUrl()],
+      refetchInterval: 30000,
+    });
 
   const formatPrice = (price: number) => {
     if (price < 0.0001) return price.toFixed(8);
@@ -124,11 +134,23 @@ export function EnhancedScreener() {
   const getLocationBadge = (loc: string | undefined) => {
     switch (loc) {
       case "DISCOUNT":
-        return <Badge className="bg-emerald-500/20 text-emerald-400 border-emerald-500/30">DISCOUNT</Badge>;
+        return (
+          <Badge className="bg-emerald-500/20 text-emerald-400 border-emerald-500/30">
+            DISCOUNT
+          </Badge>
+        );
       case "PREMIUM":
-        return <Badge className="bg-rose-500/20 text-rose-400 border-rose-500/30">PREMIUM</Badge>;
+        return (
+          <Badge className="bg-rose-500/20 text-rose-400 border-rose-500/30">
+            PREMIUM
+          </Badge>
+        );
       case "NEUTRAL":
-        return <Badge className="bg-slate-500/20 text-slate-400 border-slate-500/30">NEUTRAL</Badge>;
+        return (
+          <Badge className="bg-slate-500/20 text-slate-400 border-slate-500/30">
+            NEUTRAL
+          </Badge>
+        );
       default:
         return <Badge className="bg-slate-500/20 text-slate-400">--</Badge>;
     }
@@ -137,30 +159,67 @@ export function EnhancedScreener() {
   const getPhaseBadge = (phase: string | undefined) => {
     switch (phase) {
       case "ACCUMULATION":
-        return <Badge className="bg-emerald-500/20 text-emerald-400 border-emerald-500/30">ACCUM</Badge>;
+        return (
+          <Badge className="bg-emerald-500/20 text-emerald-400 border-emerald-500/30">
+            ACCUM
+          </Badge>
+        );
       case "DISTRIBUTION":
-        return <Badge className="bg-amber-500/20 text-amber-400 border-amber-500/30">DISTRIB</Badge>;
+        return (
+          <Badge className="bg-amber-500/20 text-amber-400 border-amber-500/30">
+            DISTRIB
+          </Badge>
+        );
       case "BREAKOUT":
-        return <Badge className="bg-cyan-500/20 text-cyan-400 border-cyan-500/30 animate-pulse">BREAKOUT</Badge>;
+        return (
+          <Badge className="bg-cyan-500/20 text-cyan-400 border-cyan-500/30 animate-pulse">
+            BREAKOUT
+          </Badge>
+        );
       case "EXHAUST":
-        return <Badge className="bg-rose-500/20 text-rose-400 border-rose-500/30">EXHAUST</Badge>;
+        return (
+          <Badge className="bg-rose-500/20 text-rose-400 border-rose-500/30">
+            EXHAUST
+          </Badge>
+        );
       default:
-        return <Badge className="bg-slate-500/20 text-slate-400">UNKNOWN</Badge>;
+        return (
+          <Badge className="bg-slate-500/20 text-slate-400">UNKNOWN</Badge>
+        );
     }
   };
 
   const getPScoreBadge = (score: number | undefined) => {
     const s = score ?? 0;
-    if (s >= 4) return <Badge className="bg-emerald-500/30 text-emerald-300 border-emerald-500/50 font-bold animate-pulse">{s.toFixed(1)}</Badge>;
-    if (s >= 3) return <Badge className="bg-teal-500/20 text-teal-400 border-teal-500/30 font-bold">{s.toFixed(1)}</Badge>;
-    if (s >= 2) return <Badge className="bg-amber-500/20 text-amber-400 border-amber-500/30">{s.toFixed(1)}</Badge>;
-    return <Badge className="bg-slate-500/20 text-slate-400">{s.toFixed(1)}</Badge>;
+    if (s >= 4)
+      return (
+        <Badge className="bg-emerald-500/30 text-emerald-300 border-emerald-500/50 font-bold animate-pulse">
+          {s.toFixed(1)}
+        </Badge>
+      );
+    if (s >= 3)
+      return (
+        <Badge className="bg-teal-500/20 text-teal-400 border-teal-500/30 font-bold">
+          {s.toFixed(1)}
+        </Badge>
+      );
+    if (s >= 2)
+      return (
+        <Badge className="bg-amber-500/20 text-amber-400 border-amber-500/30">
+          {s.toFixed(1)}
+        </Badge>
+      );
+    return (
+      <Badge className="bg-slate-500/20 text-slate-400">{s.toFixed(1)}</Badge>
+    );
   };
 
   const getConfidenceBadge = (conf: string | undefined) => {
     switch (conf) {
       case "high":
-        return <Badge className="bg-emerald-500/20 text-emerald-400">HIGH</Badge>;
+        return (
+          <Badge className="bg-emerald-500/20 text-emerald-400">HIGH</Badge>
+        );
       case "medium":
         return <Badge className="bg-amber-500/20 text-amber-400">MED</Badge>;
       default:
@@ -197,7 +256,9 @@ export function EnhancedScreener() {
               disabled={isFetching}
               data-testid="button-refresh-screener"
             >
-              <RefreshCw className={clsx("w-4 h-4 mr-2", isFetching && "animate-spin")} />
+              <RefreshCw
+                className={clsx("w-4 h-4 mr-2", isFetching && "animate-spin")}
+              />
               Refresh
             </Button>
           </div>
@@ -205,9 +266,18 @@ export function EnhancedScreener() {
         <CardContent>
           <div className="flex flex-wrap items-center gap-4 mb-4 p-3 bg-muted/30 rounded-lg">
             <div className="flex items-center gap-2">
-              <Label htmlFor="minPScore" className="text-xs whitespace-nowrap">Min PSCORE:</Label>
-              <Select value={minPScore.toString()} onValueChange={(v) => setMinPScore(parseInt(v))}>
-                <SelectTrigger className="w-20 h-8" id="minPScore" data-testid="select-min-pscore">
+              <Label htmlFor="minPScore" className="text-xs whitespace-nowrap">
+                Min PSCORE:
+              </Label>
+              <Select
+                value={minPScore.toString()}
+                onValueChange={(v) => setMinPScore(parseInt(v))}
+              >
+                <SelectTrigger
+                  className="w-20 h-8"
+                  id="minPScore"
+                  data-testid="select-min-pscore"
+                >
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -218,11 +288,17 @@ export function EnhancedScreener() {
                 </SelectContent>
               </Select>
             </div>
-            
+
             <div className="flex items-center gap-2">
-              <Label htmlFor="phase" className="text-xs whitespace-nowrap">Phase:</Label>
+              <Label htmlFor="phase" className="text-xs whitespace-nowrap">
+                Phase:
+              </Label>
               <Select value={phaseFilter} onValueChange={setPhaseFilter}>
-                <SelectTrigger className="w-28 h-8" id="phase" data-testid="select-phase">
+                <SelectTrigger
+                  className="w-28 h-8"
+                  id="phase"
+                  data-testid="select-phase"
+                >
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -233,11 +309,17 @@ export function EnhancedScreener() {
                 </SelectContent>
               </Select>
             </div>
-            
+
             <div className="flex items-center gap-2">
-              <Label htmlFor="side" className="text-xs whitespace-nowrap">Side:</Label>
+              <Label htmlFor="side" className="text-xs whitespace-nowrap">
+                Side:
+              </Label>
               <Select value={sideFilter} onValueChange={setSideFilter}>
-                <SelectTrigger className="w-24 h-8" id="side" data-testid="select-side">
+                <SelectTrigger
+                  className="w-24 h-8"
+                  id="side"
+                  data-testid="select-side"
+                >
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -247,7 +329,7 @@ export function EnhancedScreener() {
                 </SelectContent>
               </Select>
             </div>
-            
+
             <div className="flex items-center gap-2">
               <Switch
                 id="hideExhaust"
@@ -282,7 +364,9 @@ export function EnhancedScreener() {
                         </TooltipTrigger>
                         <TooltipContent>
                           <p className="text-xs max-w-[200px]">
-                            <strong>Location:</strong> Where price is in 24h range.<br />
+                            <strong>Location:</strong> Where price is in 24h
+                            range.
+                            <br />
                             DISCOUNT = bottom 33%, PREMIUM = top 33%
                           </p>
                         </TooltipContent>
@@ -295,15 +379,20 @@ export function EnhancedScreener() {
                         </TooltipTrigger>
                         <TooltipContent>
                           <p className="text-xs max-w-[200px]">
-                            <strong>Market Phase:</strong><br />
-                            ACCUM = Accumulation (smart money buying)<br />
-                            BREAKOUT = Strong momentum move<br />
-                            DISTRIB = Distribution (selling)<br />
+                            <strong>Market Phase:</strong>
+                            <br />
+                            ACCUM = Accumulation (smart money buying)
+                            <br />
+                            BREAKOUT = Strong momentum move
+                            <br />
+                            DISTRIB = Distribution (selling)
+                            <br />
                             EXHAUST = Fading momentum
                           </p>
                         </TooltipContent>
                       </Tooltip>
                     </th>
+                    <th className="px-2 py-2 text-center">PHASE-ALT</th>
                     <th className="px-2 py-2 text-center">
                       <Tooltip>
                         <TooltipTrigger className="flex items-center gap-1 cursor-help">
@@ -311,8 +400,10 @@ export function EnhancedScreener() {
                         </TooltipTrigger>
                         <TooltipContent>
                           <p className="text-xs max-w-[200px]">
-                            <strong>Pre-Spike Score (0-5):</strong><br />
-                            Composite of volume, OI, RSI, R:R, funding<br />
+                            <strong>Pre-Spike Score (0-5):</strong>
+                            <br />
+                            Composite of volume, OI, RSI, R:R, funding
+                            <br />
                             4+ = High probability setup
                           </p>
                         </TooltipContent>
@@ -325,8 +416,10 @@ export function EnhancedScreener() {
                         </TooltipTrigger>
                         <TooltipContent>
                           <p className="text-xs max-w-[200px]">
-                            <strong>Funding Rate:</strong><br />
-                            Negative = Longs pay shorts (bullish)<br />
+                            <strong>Funding Rate:</strong>
+                            <br />
+                            Negative = Longs pay shorts (bullish)
+                            <br />
                             Positive = Shorts pay longs (bearish)
                           </p>
                         </TooltipContent>
@@ -339,9 +432,12 @@ export function EnhancedScreener() {
                         </TooltipTrigger>
                         <TooltipContent>
                           <p className="text-xs max-w-[200px]">
-                            <strong>Long/Short Ratio:</strong><br />
-                            &gt;1.1 = Long dominant<br />
-                            &lt;0.9 = Short dominant<br />
+                            <strong>Long/Short Ratio:</strong>
+                            <br />
+                            &gt;1.1 = Long dominant
+                            <br />
+                            &lt;0.9 = Short dominant
+                            <br />
                             Contrarian signal when extreme
                           </p>
                         </TooltipContent>
@@ -354,7 +450,8 @@ export function EnhancedScreener() {
                         </TooltipTrigger>
                         <TooltipContent>
                           <p className="text-xs max-w-[200px]">
-                            <strong>Nearest Liquidation Zones:</strong><br />
+                            <strong>Nearest Liquidation Zones:</strong>
+                            <br />
                             Distance to major liquidation clusters
                           </p>
                         </TooltipContent>
@@ -367,7 +464,8 @@ export function EnhancedScreener() {
                         </TooltipTrigger>
                         <TooltipContent>
                           <p className="text-xs max-w-[200px]">
-                            <strong>Key Price Levels:</strong><br />
+                            <strong>Key Price Levels:</strong>
+                            <br />
                             FVG/OB zones for entries
                           </p>
                         </TooltipContent>
@@ -385,75 +483,142 @@ export function EnhancedScreener() {
                         className={clsx(
                           "hover:bg-white/[0.02] transition-colors cursor-pointer",
                           signal.marketPhase === "BREAKOUT" && "bg-cyan-500/5",
-                          signal.marketPhase === "ACCUMULATION" && "bg-emerald-500/5",
-                          (signal.preSpikeScore ?? 0) >= 4 && "border-l-2 border-l-emerald-500"
+                          signal.marketPhase === "ACCUMULATION" &&
+                            "bg-emerald-500/5",
+                          (signal.preSpikeScore ?? 0) >= 4 &&
+                            "border-l-2 border-l-emerald-500",
                         )}
-                        onClick={() => setExpandedRow(expandedRow === signal.symbol ? null : signal.symbol)}
+                        onClick={() =>
+                          setExpandedRow(
+                            expandedRow === signal.symbol
+                              ? null
+                              : signal.symbol,
+                          )
+                        }
                         data-testid={`row-enhanced-${signal.symbol}`}
                       >
                         <td className="px-2 py-2 font-medium">
-                          <span className="font-mono">{signal.symbol.replace("USDT", "")}</span>
+                          <span className="font-mono">
+                            {signal.symbol.replace("USDT", "")}
+                          </span>
                         </td>
                         <td className="px-2 py-2 text-center">
-                          <Badge className={clsx(
-                            "text-[10px] px-1.5",
-                            signal.side === "LONG"
-                              ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/30"
-                              : "bg-rose-500/20 text-rose-400 border-rose-500/30"
-                          )}>
-                            {signal.side === "LONG" ? <TrendingUp className="w-3 h-3 mr-0.5" /> : <TrendingDown className="w-3 h-3 mr-0.5" />}
+                          <Badge
+                            className={clsx(
+                              "text-[10px] px-1.5",
+                              signal.side === "LONG"
+                                ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/30"
+                                : "bg-rose-500/20 text-rose-400 border-rose-500/30",
+                            )}
+                          >
+                            {signal.side === "LONG" ? (
+                              <TrendingUp className="w-3 h-3 mr-0.5" />
+                            ) : (
+                              <TrendingDown className="w-3 h-3 mr-0.5" />
+                            )}
                             {signal.side}
                           </Badge>
                         </td>
                         <td className="px-2 py-2 text-right font-mono text-xs">
                           ${formatPrice(signal.currentPrice)}
-                          <div className={clsx(
-                            "text-[10px]",
-                            signal.priceChange24h > 0 ? "text-emerald-400" : "text-rose-400"
-                          )}>
-                            {signal.priceChange24h > 0 ? "+" : ""}{signal.priceChange24h.toFixed(1)}%
+                          <div
+                            className={clsx(
+                              "text-[10px]",
+                              signal.priceChange24h > 0
+                                ? "text-emerald-400"
+                                : "text-rose-400",
+                            )}
+                          >
+                            {signal.priceChange24h > 0 ? "+" : ""}
+                            {signal.priceChange24h.toFixed(1)}%
                           </div>
                         </td>
-                        <td className="px-2 py-2 text-center">{getLocationBadge(signal.priceLocation)}</td>
-                        <td className="px-2 py-2 text-center">{getPhaseBadge(signal.marketPhase)}</td>
-                        <td className="px-2 py-2 text-center">{getPScoreBadge(signal.preSpikeScore)}</td>
                         <td className="px-2 py-2 text-center">
-                          <span className={clsx(
-                            "text-xs font-mono",
-                            signal.fundingRate !== undefined && signal.fundingRate < 0 ? "text-emerald-400" :
-                            signal.fundingRate !== undefined && signal.fundingRate > 0.01 ? "text-rose-400" : "text-muted-foreground"
-                          )}>
+                          {getLocationBadge(signal.priceLocation)}
+                        </td>
+                        <td
+                          className="px-2 py-2 text-
+                          center"
+                        >
+                          {getPhaseBadge(signal.marketPhase)}
+                        </td>
+                        <td className="px-2 py-2 text-center">
+                          {getPhaseBadge(signal.marketPhaseAlt || "UNKNOWN")}
+                        </td>
+                        <td className="px-2 py-2 text-center">
+                          {getPScoreBadge(signal.preSpikeScore)}
+                        </td>
+                        <td className="px-2 py-2 text-center">
+                          <span
+                            className={clsx(
+                              "text-xs font-mono",
+                              signal.fundingRate !== undefined &&
+                                signal.fundingRate < 0
+                                ? "text-emerald-400"
+                                : signal.fundingRate !== undefined &&
+                                    signal.fundingRate > 0.01
+                                  ? "text-rose-400"
+                                  : "text-muted-foreground",
+                            )}
+                          >
                             {formatFundingRate(signal.fundingRate)}
                           </span>
                         </td>
                         <td className="px-2 py-2 text-center">
-                          <span className={clsx(
-                            "text-xs font-mono",
-                            signal.lsrBias === "long_dominant" ? "text-amber-400" :
-                            signal.lsrBias === "short_dominant" ? "text-cyan-400" : "text-muted-foreground"
-                          )}>
+                          <span
+                            className={clsx(
+                              "text-xs font-mono",
+                              signal.lsrBias === "long_dominant"
+                                ? "text-amber-400"
+                                : signal.lsrBias === "short_dominant"
+                                  ? "text-cyan-400"
+                                  : "text-muted-foreground",
+                            )}
+                          >
                             {signal.longShortRatio?.toFixed(2) ?? "N/A"}
                           </span>
                         </td>
                         <td className="px-2 py-2 text-center">
-                          {signal.liquidationZones?.longLiqDistance !== undefined ? (
+                          {signal.liquidationZones?.longLiqDistance !==
+                          undefined ? (
                             <div className="text-[10px]">
-                              <span className="text-rose-400">-{signal.liquidationZones.longLiqDistance.toFixed(1)}%</span>
-                              {signal.liquidationZones.shortLiqDistance !== undefined && (
-                                <span className="text-emerald-400 ml-1">+{signal.liquidationZones.shortLiqDistance.toFixed(1)}%</span>
+                              <span className="text-rose-400">
+                                -
+                                {signal.liquidationZones.longLiqDistance.toFixed(
+                                  1,
+                                )}
+                                %
+                              </span>
+                              {signal.liquidationZones.shortLiqDistance !==
+                                undefined && (
+                                <span className="text-emerald-400 ml-1">
+                                  +
+                                  {signal.liquidationZones.shortLiqDistance.toFixed(
+                                    1,
+                                  )}
+                                  %
+                                </span>
                               )}
                             </div>
                           ) : (
-                            <span className="text-muted-foreground text-xs">N/A</span>
+                            <span className="text-muted-foreground text-xs">
+                              N/A
+                            </span>
                           )}
                         </td>
                         <td className="px-2 py-2 text-center">
-                          {(signal.fvgLevels?.length ?? 0) + (signal.obLevels?.length ?? 0) > 0 ? (
+                          {(signal.fvgLevels?.length ?? 0) +
+                            (signal.obLevels?.length ?? 0) >
+                          0 ? (
                             <Badge variant="outline" className="text-[10px]">
-                              {(signal.fvgLevels?.length ?? 0) + (signal.obLevels?.length ?? 0)} lvl
+                              {(signal.fvgLevels?.length ?? 0) +
+                                (signal.obLevels?.length ?? 0)}{" "}
+                              lvl
                             </Badge>
                           ) : (
-                            <span className="text-muted-foreground text-xs">-</span>
+                            <span className="text-muted-foreground text-xs">
+                              -
+                            </span>
                           )}
                         </td>
                         <td className="px-2 py-2 text-center">
@@ -475,11 +640,17 @@ export function EnhancedScreener() {
                                 <h4 className="font-semibold text-primary flex items-center gap-1">
                                   <Info className="w-4 h-4" /> Analysis
                                 </h4>
-                                <p className="text-foreground font-medium">{signal.storytelling?.summary}</p>
-                                <p className="text-muted-foreground">{signal.storytelling?.interpretation}</p>
+                                <p className="text-foreground font-medium">
+                                  {signal.storytelling?.summary}
+                                </p>
+                                <p className="text-muted-foreground">
+                                  {signal.storytelling?.interpretation}
+                                </p>
                                 <div className="flex items-center gap-2 mt-2 p-2 bg-primary/10 rounded">
                                   <Zap className="w-4 h-4 text-primary" />
-                                  <span className="font-medium text-primary">{signal.storytelling?.actionSuggestion}</span>
+                                  <span className="font-medium text-primary">
+                                    {signal.storytelling?.actionSuggestion}
+                                  </span>
                                 </div>
                               </div>
                               <div className="space-y-2">
@@ -488,23 +659,37 @@ export function EnhancedScreener() {
                                 </h4>
                                 <div className="grid grid-cols-2 gap-2">
                                   <div>
-                                    <span className="text-muted-foreground">Entry:</span>
-                                    <span className="font-mono ml-2">${formatPrice(signal.entryPrice)}</span>
+                                    <span className="text-muted-foreground">
+                                      Entry:
+                                    </span>
+                                    <span className="font-mono ml-2">
+                                      ${formatPrice(signal.entryPrice)}
+                                    </span>
                                   </div>
                                   <div>
-                                    <span className="text-muted-foreground">Stop Loss:</span>
-                                    <span className="font-mono ml-2 text-rose-400">${formatPrice(signal.slPrice)}</span>
+                                    <span className="text-muted-foreground">
+                                      Stop Loss:
+                                    </span>
+                                    <span className="font-mono ml-2 text-rose-400">
+                                      ${formatPrice(signal.slPrice)}
+                                    </span>
                                   </div>
                                   {signal.tpLevels.map((tp) => (
                                     <div key={tp.label}>
-                                      <span className="text-muted-foreground">{tp.label}:</span>
-                                      <span className="font-mono ml-2 text-emerald-400">${formatPrice(tp.price)}</span>
+                                      <span className="text-muted-foreground">
+                                        {tp.label}:
+                                      </span>
+                                      <span className="font-mono ml-2 text-emerald-400">
+                                        ${formatPrice(tp.price)}
+                                      </span>
                                     </div>
                                   ))}
                                 </div>
                                 {(signal.fvgLevels?.length ?? 0) > 0 && (
                                   <div className="mt-2">
-                                    <span className="text-muted-foreground">FVG Zones:</span>
+                                    <span className="text-muted-foreground">
+                                      FVG Zones:
+                                    </span>
                                     <div className="flex gap-2 mt-1">
                                       {signal.fvgLevels?.map((fvg, i) => (
                                         <Badge
@@ -513,7 +698,7 @@ export function EnhancedScreener() {
                                             "text-[10px]",
                                             fvg.type === "bullish"
                                               ? "bg-emerald-500/20 text-emerald-400"
-                                              : "bg-rose-500/20 text-rose-400"
+                                              : "bg-rose-500/20 text-rose-400",
                                           )}
                                         >
                                           ${formatPrice(fvg.price)}
@@ -524,7 +709,9 @@ export function EnhancedScreener() {
                                 )}
                                 {(signal.obLevels?.length ?? 0) > 0 && (
                                   <div className="mt-2">
-                                    <span className="text-muted-foreground">Order Blocks:</span>
+                                    <span className="text-muted-foreground">
+                                      Order Blocks:
+                                    </span>
                                     <div className="flex gap-2 mt-1">
                                       {signal.obLevels?.map((ob, i) => (
                                         <Badge
@@ -533,7 +720,7 @@ export function EnhancedScreener() {
                                             "text-[10px]",
                                             ob.type === "bullish"
                                               ? "bg-emerald-500/20 text-emerald-400"
-                                              : "bg-rose-500/20 text-rose-400"
+                                              : "bg-rose-500/20 text-rose-400",
                                           )}
                                         >
                                           ${formatPrice(ob.price)}
@@ -553,7 +740,8 @@ export function EnhancedScreener() {
               </table>
               {data?.signals.length === 0 && (
                 <div className="text-center py-8 text-muted-foreground">
-                  No signals match the current filters. Try adjusting your criteria.
+                  No signals match the current filters. Try adjusting your
+                  criteria.
                 </div>
               )}
             </div>
@@ -561,8 +749,11 @@ export function EnhancedScreener() {
 
           <div className="mt-4 text-xs text-muted-foreground flex items-center justify-between">
             <span>
-              Enriched with Coinglass: {data?.enrichedCount ?? 0} coins | 
-              Last updated: {data?.timestamp ? new Date(data.timestamp).toLocaleTimeString() : "--"}
+              Enriched with Coinglass: {data?.enrichedCount ?? 0} coins | Last
+              updated:{" "}
+              {data?.timestamp
+                ? new Date(data.timestamp).toLocaleTimeString()
+                : "--"}
             </span>
             <span className="flex items-center gap-1">
               <AlertTriangle className="w-3 h-3" />
