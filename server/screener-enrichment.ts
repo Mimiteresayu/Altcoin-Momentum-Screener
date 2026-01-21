@@ -8,6 +8,8 @@ import {
   type LiquidationMapData,
 } from "./coinglass";
 import { bitunixTradeService, BitunixTradeService } from "./bitunix-trade";
+"./binance";
+  import { getBinanceFuturesData } from "./binance";
 
 type PriceLocation = "DISCOUNT" | "NEUTRAL" | "PREMIUM";
 type MarketPhase =
@@ -463,6 +465,17 @@ export async function enrichSignalWithCoinglass(
     klines5M = [];
   }
 
+  // PRIORITY 1: Try FREE Binance Futures API first
+  let binanceData: { openInterest: number; oiChange24h: number; longShortRatio: number; longRate: number; shortRate: number; fundingRate: number; source: string } | null = null;
+  try {
+    binanceData = await getBinanceFuturesData(symbol);
+    console.log(`[ENRICHMENT] Binance FREE data fetched for ${symbol}:`, binanceData?.source);
+  } catch (error) {
+    console.log(`[ENRICHMENT] Binance FREE API failed for ${symbol}, falling back to Coinglass`);
+  }
+
+  // PRIORITY 2: Use Coinglass as fallback (paid STARTUP plan)const marketPhaseAlt =
+  
   let enhancedData: EnhancedMarketData | null = null;
   let liquidationMap: LiquidationMapData[] = [];
 
@@ -596,7 +609,7 @@ export async function enrichSignalWithCoinglass(
     signal.volSpike || 1,
     enhancedData?.openInterest?.change24h || 0,
     signal.rsi14 || 50,
-    signal.priceChange24h,
+    signal.priceChange24h || 0,
     signal.volAccel || 1,
   );
 

@@ -7,6 +7,7 @@ import {
   backtestStats,
 } from "../shared/schema";
 import { eq, desc, and, gte, lte } from "drizzle-orm";
+import { getVolumeProfile, getLiquidityZonesFromVP, VolumeProfileData } from "./binance";
 
 interface BacktestSignal {
   symbol: string;
@@ -739,3 +740,157 @@ export type {
   PerformanceMetrics,
   BacktestConfig,
 };
+
+// ============================================
+// VOLUME PROFILE INTEGRATION FOR BACKTESTING
+// Uses FREE Binance API data as alternative to Coinglass heatmap
+// ============================================
+
+export interface VolumeProfileSignal {
+  symbol: string;
+  poc: number; // Point of Control
+  valueAreaHigh: number;
+  valueAreaLow: number;
+  currentPrice: number;
+  bias: 'bullish' | 'bearish' | 'neutral';
+  nearestSupport: number | null;
+  nearestResistance: number | null;
+  distanceToSupport: number; // %
+  distanceToResistance: number; // %
+  riskRewardRatio: number; // Based on VP levels
+  signalQuality: 'strong' | 'moderate' | 'weak';
+}
+
+export async function getVolumeProfileSignal(
+  symbol: string,
+  side: 'LONG' | 'SHORT'
+): Promise<VolumeProfileSignal | null> {
+  try {
+    // Get volume profile from Binance FREE API
+    const vp = await getVolumeProfile(symbol, '1h', 200, 50);
+    if (!vp) return null;
+
+    const zones = getLiquidityZonesFromVP(vp);
+    const { currentPrice, poc, valueAreaHigh, valueAreaLow } = vp;
+
+    // Find nearest support and resistance
+    const nearestSupport = zones.supportZones.length > 0 
+      ? zones.supportZones[zones.supportZones.length - 1] 
+      : null;
+    const nearestResistance = zones.resistanceZones.length > 0 
+      ? zones.resistanceZones[0] 
+      : null;
+
+    // Calculate distances
+    const distanceToSupport = nearestSupport 
+      ? ((currentPrice - nearestSupport) / currentPrice) * 100 
+      : 0;
+    const distanceToResistance = nearestResistance 
+      ? ((nearestResistance - currentPrice) / currentPrice) * 100 
+      : 0;
+
+    // Calculate R:R based on side
+    let riskRewardRatio = 0;
+    if (side === 'LONG' && nearestSupport && nearestResistance) {
+      const risk = currentPrice - nearestSupport;
+      const reward = nearestResistance - currentPrice;
+      riskRewardRatio = risk > 0 ? reward / risk : 0;
+    } else if (side === 'SHORT' && nearestSupport && nearestResistance) {
+      const risk = nearestResistance - currentPrice;
+      const reward = currentPrice - nearestSupport;
+      riskRewardRatio = risk > 0 ? reward / risk : 0;
+    }
+
+    // Determine signal quality
+    let signalQuality: 'strong' | 'moderate' | 'weak' = 'weak';
+
+    if (side === 'LONG') {
+      // Strong: Price near support, bias bullish, good R:R
+      if (zones.bias === 'bullish' && riskRewardRatio >= 2 && distanceToSupport < 3) {
+        signalQuality = 'strong';
+      } else if (riskRewardRatio >= 1.5 && distanceToSupport < 5) {
+        signalQuality = 'moderate';
+      }
+    } else {
+      // Strong: Price near resistance, bias bearish, good R:R
+      if (zones.bias === 'bearish' && riskRewardRatio >= 2 && distanceToResistance < 3) {
+        signalQuality = 'strong';
+      } else if (riskRewardRatio >= 1.5 && distanceToResistance < 5) {
+        signalQuality = 'moderate';
+      }
+    }
+
+    return {
+      symbol,
+      poc,
+      valueAreaHigh,
+      valueAreaLow,
+      currentPrice,
+      bias: zones.bias,
+      nearestSupport,
+      nearestResistance,
+      distanceToSupport,
+      distanceToResistance,
+      riskRewardRatio,
+      signalQuality
+    };
+
+  } catch (error) {
+    console.error(`Error getting VP signal for ${symbol}:`, error);
+    return null;
+  }
+}
+
+// Enhanced backtest validation using Volume Profile
+export async function validateSignalWithVP(
+  signal: BacktestSignal
+): Promise<{ valid: boolean; vpSignal: VolumeProfileSignal | null; reason: string }> {
+  const vpSignal = await getVolumeProfileSignal(signal.symbol, signal.side);
+
+  if (!vpSignal) {
+    return { valid: false, vpSignal: null, reason: 'Could not fetch Volume Profile data' };
+  }
+
+  // R:R must be >= 2 (user requirement)
+  if (vpSignal.riskRewardRatio < 2) {
+    return { 
+      valid: false, 
+      vpSignal, 
+      reason: `R:R too low: ${vpSignal.riskRewardRatio.toFixed(2)} (need >= 2)` 
+    };
+  }
+
+  // Bias should align with signal direction
+  if (signal.side === 'LONG' && vpSignal.bias === 'bearish') {
+    return { 
+      valid: false, 
+      vpSignal, 
+      reason: 'VP bias is bearish, conflicts with LONG signal' 
+    };
+  }
+
+  if (signal.side === 'SHORT' && vpSignal.bias === 'bullish') {
+    return { 
+      valid: false, 
+      vpSignal, 
+      reason: 'VP bias is bullish, conflicts with SHORT signal' 
+    };
+  }
+
+  // Signal quality check
+  if (vpSignal.signalQuality === 'weak') {
+    return { 
+      valid: false, 
+      vpSignal, 
+      reason: 'VP signal quality is weak' 
+    };
+  }
+
+  return { 
+    valid: true, 
+    vpSignal, 
+    reason: `Valid: R:R=${vpSignal.riskRewardRatio.toFixed(2)}, Bias=${vpSignal.bias}, Quality=${vpSignal.signalQuality}` 
+  };
+}
+
+export { VolumeProfileData };
