@@ -61,7 +61,9 @@ const BASE_URL = "https://open-api-v4.coinglass.com/api";
 
 function getApiKey(): string {
   const key = process.env.COINGLASS_API_KEY;
+      
   if (!key) {
+      
     throw new Error("COINGLASS_API_KEY environment variable is not set");
   }
   return key;
