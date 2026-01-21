@@ -1,354 +1,350 @@
 import crypto from "crypto";
-import axios from "axios";
 
-const BASE_URL = "https://fapi.bitunix.com/api/v1/futures";
+// ============= INTERFACES =============
 
-interface BitunixConfig {
-  apiKey: string;
-  secretKey: string;
+export interface Kline {
+  openTime: number;
+  open: string;
+  high: string;
+  low: string;
+  close: string;
+  volume: string;
+  closeTime: number;
+  quoteVolume: string;
+  trades: number;
+  takerBuyBaseVolume: string;
+  takerBuyQuoteVolume: string;
 }
 
-interface OrderParams {
-  symbol: string;
-  side: "BUY" | "SELL";
-  orderType: "LIMIT" | "MARKET";
-  qty: string;
-  price?: string;
-  tradeSide: "OPEN" | "CLOSE";
-  effect?: "GTC" | "IOC" | "FOK";
-  clientId?: string;
-}
-
-interface OrderResult {
-  orderId: string;
-  clientId?: string;
-  symbol: string;
-  side: string;
-  qty: string;
-  price?: string;
-  status: string;
-  createTime: number;
-}
-
-interface Position {
+export interface Position {
   symbol: string;
   side: "LONG" | "SHORT";
-  qty: string;
-  entryPrice: string;
-  markPrice: string;
-  unrealizedPnl: string;
-  leverage: number;
-  marginType: string;
-}
-
-interface AccountInfo {
-  totalBalance: number;
-  availableBalance: number;
+  size: number;
+  entryPrice: number;
+  markPrice: number;
   unrealizedPnl: number;
-  marginBalance: number;
+  leverage: number;
 }
 
-function sha256Hex(input: string): string {
-  return crypto.createHash("sha256").update(input, "utf8").digest("hex");
+export interface OrderResult {
+  orderId: string;
+  symbol: string;
+  side: "BUY" | "SELL";
+  type: string;
+  price: number;
+  quantity: number;
+  status: string;
 }
 
-function generateSignature(
-  nonce: string,
-  timestamp: string,
-  apiKey: string,
-  secretKey: string,
-  queryParams: string = "",
-  body: string = ""
-): string {
-  const digestInput = nonce + timestamp + apiKey + queryParams + body;
-  const digest = sha256Hex(digestInput);
-  const signInput = digest + secretKey;
-  return sha256Hex(signInput);
+// Fair Value Gap interface
+export interface FVG {
+  type: "bullish" | "bearish";
+  top: number;
+  bottom: number;
+  timestamp: number;
+  filled: boolean;
 }
 
-function generateNonce(): string {
-  return Math.random().toString(36).substring(2, 10);
+// Order Block interface
+export interface OrderBlock {
+  type: "bullish" | "bearish";
+  high: number;
+  low: number;
+  timestamp: number;
+  volume: number;
 }
 
-class BitunixTradeService {
-  private config: BitunixConfig | null = null;
+// ============= BITUNIX API SERVICE =============
+
+export class BitunixTradeService {
+  private apiKey: string = "";
+  private apiSecret: string = "";
+  private baseUrl: string = "https://api.bitunix.com";
+  private initialized: boolean = false;
 
   initialize(): boolean {
-    const apiKey = process.env.BITUNIX_API_KEY;
-    const secretKey = process.env.BITUNIX_SECRET_KEY;
+    this.apiKey = process.env.BITUNIX_API_KEY || "";
+    this.apiSecret = process.env.BITUNIX_API_SECRET || "";
 
-    if (!apiKey || !secretKey) {
+    if (!this.apiKey || !this.apiSecret) {
       console.log("[BITUNIX] API credentials not configured");
       return false;
     }
 
-    this.config = { apiKey, secretKey };
-    console.log("[BITUNIX] Trading service initialized");
+    this.initialized = true;
+    console.log("[BITUNIX] Trade service initialized");
     return true;
   }
 
-  isConfigured(): boolean {
-    return this.config !== null;
+  private generateSignature(params: string, timestamp: string): string {
+    const message = `${timestamp}${params}`;
+    return crypto
+      .createHmac("sha256", this.apiSecret)
+      .update(message)
+      .digest("hex");
   }
 
-  private getHeaders(queryParams: string = "", body: string = ""): Record<string, string> {
-    if (!this.config) throw new Error("Bitunix not configured");
-
-    const nonce = generateNonce();
-    const timestamp = Date.now().toString();
-    const sign = generateSignature(
-      nonce,
-      timestamp,
-      this.config.apiKey,
-      this.config.secretKey,
-      queryParams,
-      body
-    );
-
-    return {
-      "api-key": this.config.apiKey,
-      sign,
-      nonce,
-      timestamp,
-      language: "en-US",
-      "Content-Type": "application/json",
-    };
-  }
-
-  async placeOrder(params: OrderParams): Promise<OrderResult> {
-    if (!this.config) throw new Error("Bitunix not configured");
-
-    const body = JSON.stringify({
-      symbol: params.symbol,
-      side: params.side,
-      orderType: params.orderType,
-      qty: params.qty,
-      price: params.price,
-      tradeSide: params.tradeSide,
-      effect: params.effect || "GTC",
-      clientId: params.clientId || `bt_${Date.now()}`,
-    });
-
-    const headers = this.getHeaders("", body);
-
+  /**
+   * Get Kline/Candlestick data from Bitunix
+   * @param symbol - Trading pair (e.g., 'BTCUSDT')
+   * @param interval - Time interval (1m, 5m, 15m, 1h, 4h, 1d)
+   * @param limit - Number of candles to fetch (default: 100)
+   */
+  async getKlines(
+    symbol: string,
+    interval: string,
+    limit: number = 100,
+  ): Promise<Kline[]> {
     try {
-      const response = await axios.post(`${BASE_URL}/trade/place_order`, JSON.parse(body), {
-        headers,
-        timeout: 10000,
+      const endpoint = "/api/v1/market/kline";
+      const params = new URLSearchParams({
+        symbol: symbol,
+        interval: interval,
+        limit: limit.toString(),
       });
 
-      if (response.data.code !== 0) {
-        throw new Error(response.data.msg || "Order failed");
+      const url = `${this.baseUrl}${endpoint}?${params.toString()}`;
+      const response = await fetch(url);
+
+      if (!response.ok) {
+        console.error(`[BITUNIX] Kline fetch failed: ${response.status}`);
+        return [];
       }
 
-      return response.data.data;
-    } catch (error: any) {
-      console.error("[BITUNIX] Order error:", error.message);
-      throw error;
-    }
-  }
+      const data = await response.json();
 
-  async placeMarketOrder(
-    symbol: string,
-    side: "BUY" | "SELL",
-    qty: string,
-    tradeSide: "OPEN" | "CLOSE" = "OPEN"
-  ): Promise<OrderResult> {
-    return this.placeOrder({
-      symbol,
-      side,
-      orderType: "MARKET",
-      qty,
-      tradeSide,
-    });
-  }
-
-  async placeLimitOrder(
-    symbol: string,
-    side: "BUY" | "SELL",
-    qty: string,
-    price: string,
-    tradeSide: "OPEN" | "CLOSE" = "OPEN"
-  ): Promise<OrderResult> {
-    return this.placeOrder({
-      symbol,
-      side,
-      orderType: "LIMIT",
-      qty,
-      price,
-      tradeSide,
-    });
-  }
-
-  async cancelOrder(symbol: string, orderId: string): Promise<any> {
-    if (!this.config) throw new Error("Bitunix not configured");
-
-    const body = JSON.stringify({ symbol, orderId });
-    const headers = this.getHeaders("", body);
-
-    try {
-      const response = await axios.post(`${BASE_URL}/trade/cancel_order`, JSON.parse(body), {
-        headers,
-        timeout: 10000,
-      });
-
-      return response.data;
-    } catch (error: any) {
-      console.error("[BITUNIX] Cancel order error:", error.message);
-      throw error;
-    }
-  }
-
-  async cancelAllOrders(symbol: string): Promise<any> {
-    if (!this.config) throw new Error("Bitunix not configured");
-
-    const body = JSON.stringify({ symbol });
-    const headers = this.getHeaders("", body);
-
-    try {
-      const response = await axios.post(`${BASE_URL}/trade/cancel_all_orders`, JSON.parse(body), {
-        headers,
-        timeout: 10000,
-      });
-
-      return response.data;
-    } catch (error: any) {
-      console.error("[BITUNIX] Cancel all orders error:", error.message);
-      throw error;
-    }
-  }
-
-  async getOpenPositions(): Promise<Position[]> {
-    if (!this.config) throw new Error("Bitunix not configured");
-
-    const queryParams = "";
-    const headers = this.getHeaders(queryParams, "");
-
-    try {
-      const response = await axios.get(`${BASE_URL}/account/positions`, {
-        headers,
-        timeout: 10000,
-      });
-
-      if (response.data.code !== 0) {
-        throw new Error(response.data.msg || "Failed to get positions");
+      // Transform response to Kline format
+      if (data.data && Array.isArray(data.data)) {
+        return data.data.map((k: any) => ({
+          openTime: k[0],
+          open: k[1],
+          high: k[2],
+          low: k[3],
+          close: k[4],
+          volume: k[5],
+          closeTime: k[6],
+          quoteVolume: k[7],
+          trades: k[8],
+          takerBuyBaseVolume: k[9],
+          takerBuyQuoteVolume: k[10],
+        }));
       }
 
-      return response.data.data?.positionList || [];
-    } catch (error: any) {
-      console.error("[BITUNIX] Get positions error:", error.message);
+      return [];
+    } catch (error) {
+      console.error("[BITUNIX] Error fetching klines:", error);
       return [];
     }
   }
 
-  async getAccountInfo(): Promise<AccountInfo> {
-    if (!this.config) throw new Error("Bitunix not configured");
+  /**
+   * Detect Fair Value Gaps (FVG) in kline data
+   * FVG occurs when there's a gap between candles indicating imbalance
+   */
+  detectFVG(klines: Kline[]): FVG[] {
+    const fvgs: FVG[] = [];
 
-    const headers = this.getHeaders("", "");
+    for (let i = 2; i < klines.length; i++) {
+      const prev = klines[i - 2];
+      const curr = klines[i - 1];
+      const next = klines[i];
 
-    try {
-      const response = await axios.get(`${BASE_URL}/account/info`, {
-        headers,
-        timeout: 10000,
-      });
+      const prevHigh = parseFloat(prev.high);
+      const prevLow = parseFloat(prev.low);
+      const currHigh = parseFloat(curr.high);
+      const currLow = parseFloat(curr.low);
+      const nextHigh = parseFloat(next.high);
+      const nextLow = parseFloat(next.low);
 
-      if (response.data.code !== 0) {
-        throw new Error(response.data.msg || "Failed to get account");
+      // Bullish FVG: gap between prev.high and next.low
+      if (nextLow > prevHigh && currLow > prevHigh) {
+        fvgs.push({
+          type: "bullish",
+          top: nextLow,
+          bottom: prevHigh,
+          timestamp: curr.openTime,
+          filled: false,
+        });
       }
 
-      const data = response.data.data;
-      return {
-        totalBalance: parseFloat(data.totalBalance || "0"),
-        availableBalance: parseFloat(data.availableBalance || "0"),
-        unrealizedPnl: parseFloat(data.unrealizedPnl || "0"),
-        marginBalance: parseFloat(data.marginBalance || "0"),
-      };
-    } catch (error: any) {
-      console.error("[BITUNIX] Get account error:", error.message);
-      return {
-        totalBalance: 0,
-        availableBalance: 0,
-        unrealizedPnl: 0,
-        marginBalance: 0,
-      };
+      // Bearish FVG: gap between prev.low and next.high
+      if (nextHigh < prevLow && currHigh < prevLow) {
+        fvgs.push({
+          type: "bearish",
+          top: prevLow,
+          bottom: nextHigh,
+          timestamp: curr.openTime,
+          filled: false,
+        });
+      }
     }
+
+    return fvgs;
   }
 
-  async setLeverage(symbol: string, leverage: number): Promise<boolean> {
-    if (!this.config) throw new Error("Bitunix not configured");
+  /**
+   * Detect Order Blocks (OB) - High volume candles that preceded strong moves
+   */
+  detectOrderBlocks(klines: Kline[]): OrderBlock[] {
+    const obs: OrderBlock[] = [];
 
-    const body = JSON.stringify({ symbol, leverage: leverage.toString() });
-    const headers = this.getHeaders("", body);
+    if (klines.length < 10) return obs;
+
+    // Calculate average volume
+    const avgVolume =
+      klines.reduce((sum, k) => sum + parseFloat(k.volume), 0) / klines.length;
+
+    for (let i = 5; i < klines.length - 3; i++) {
+      const curr = klines[i];
+      const currVolume = parseFloat(curr.volume);
+      const currClose = parseFloat(curr.close);
+      const currOpen = parseFloat(curr.open);
+
+      // Check if this candle has above-average volume
+      if (currVolume < avgVolume * 1.5) continue;
+
+      // Check for bullish move after (3 candles)
+      const next3Close = parseFloat(klines[i + 3].close);
+      const bullishMove = next3Close > currClose * 1.02; // 2% move up
+
+      // Check for bearish move after (3 candles)
+      const bearishMove = next3Close < currClose * 0.98; // 2% move down
+
+      if (bullishMove && currClose > currOpen) {
+        obs.push({
+          type: "bullish",
+          high: parseFloat(curr.high),
+          low: parseFloat(curr.low),
+          timestamp: curr.openTime,
+          volume: currVolume,
+        });
+      } else if (bearishMove && currClose < currOpen) {
+        obs.push({
+          type: "bearish",
+          high: parseFloat(curr.high),
+          low: parseFloat(curr.low),
+          timestamp: curr.openTime,
+          volume: currVolume,
+        });
+      }
+    }
+
+    return obs;
+  }
+
+  /**
+   * Determine ICT/Smart Money location context
+   * Returns: 'premium', 'equilibrium', 'discount'
+   */
+  getICTLocation(klines: Kline[]): { location: string; percentage: number } {
+    if (klines.length === 0) {
+      return { location: "unknown", percentage: 50 };
+    }
+
+    // Get range high and low from recent swing
+    const recent = klines.slice(-50); // Last 50 candles
+    const high = Math.max(...recent.map((k) => parseFloat(k.high)));
+    const low = Math.min(...recent.map((k) => parseFloat(k.low)));
+    const current = parseFloat(klines[klines.length - 1].close);
+
+    const range = high - low;
+    const positionInRange = current - low;
+    const percentage = (positionInRange / range) * 100;
+
+    let location: string;
+    if (percentage > 70) {
+      location = "premium"; // Upper 30% - potential sell zone
+    } else if (percentage < 30) {
+      location = "discount"; // Lower 30% - potential buy zone
+    } else {
+      location = "equilibrium"; // Middle 40% - neutral zone
+    }
+
+    return { location, percentage };
+  }
+
+  // ============= TRADING METHODS =============
+
+  async getPositions(): Promise<Position[]> {
+    if (!this.initialized) {
+      console.log("[BITUNIX] Service not initialized");
+      return [];
+    }
 
     try {
-      const response = await axios.post(`${BASE_URL}/account/set_leverage`, JSON.parse(body), {
-        headers,
-        timeout: 10000,
+      const endpoint = "/api/v1/private/position";
+      const timestamp = Date.now().toString();
+      const signature = this.generateSignature("", timestamp);
+
+      const response = await fetch(`${this.baseUrl}${endpoint}`, {
+        headers: {
+          "X-BX-APIKEY": this.apiKey,
+          "X-BX-TIMESTAMP": timestamp,
+          "X-BX-SIGNATURE": signature,
+        },
       });
 
-      return response.data.code === 0;
-    } catch (error: any) {
-      console.error("[BITUNIX] Set leverage error:", error.message);
-      return false;
-    }
-  }
+      if (!response.ok) return [];
 
-  async setMarginType(symbol: string, marginType: "ISOLATED" | "CROSS"): Promise<boolean> {
-    if (!this.config) throw new Error("Bitunix not configured");
-
-    const body = JSON.stringify({ symbol, marginType });
-    const headers = this.getHeaders("", body);
-
-    try {
-      const response = await axios.post(`${BASE_URL}/account/set_margin_type`, JSON.parse(body), {
-        headers,
-        timeout: 10000,
-      });
-
-      return response.data.code === 0;
-    } catch (error: any) {
-      console.error("[BITUNIX] Set margin type error:", error.message);
-      return false;
-    }
-  }
-
-  async closePosition(symbol: string, position: Position): Promise<OrderResult | null> {
-    const side = position.side === "LONG" ? "SELL" : "BUY";
-    const qty = Math.abs(parseFloat(position.qty)).toString();
-
-    try {
-      return await this.placeMarketOrder(symbol, side, qty, "CLOSE");
+      const data = await response.json();
+      return data.data || [];
     } catch (error) {
-      console.error("[BITUNIX] Close position error:", error);
+      console.error("[BITUNIX] Error getting positions:", error);
+      return [];
+    }
+  }
+
+  async placeOrder(
+    symbol: string,
+    side: "BUY" | "SELL",
+    type: "LIMIT" | "MARKET",
+    quantity: number,
+    price?: number,
+  ): Promise<OrderResult | null> {
+    if (!this.initialized) {
+      console.log("[BITUNIX] Service not initialized");
+      return null;
+    }
+
+    try {
+      const endpoint = "/api/v1/private/order";
+      const timestamp = Date.now().toString();
+
+      const orderParams: any = {
+        symbol,
+        side,
+        type,
+        quantity,
+      };
+
+      if (type === "LIMIT" && price) {
+        orderParams.price = price;
+      }
+
+      const paramsString = JSON.stringify(orderParams);
+      const signature = this.generateSignature(paramsString, timestamp);
+
+      const response = await fetch(`${this.baseUrl}${endpoint}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-BX-APIKEY": this.apiKey,
+          "X-BX-TIMESTAMP": timestamp,
+          "X-BX-SIGNATURE": signature,
+        },
+        body: paramsString,
+      });
+
+      if (!response.ok) return null;
+
+      const data = await response.json();
+      return data.data || null;
+    } catch (error) {
+      console.error("[BITUNIX] Error placing order:", error);
       return null;
     }
   }
-
-  calculateQuantity(
-    balance: number,
-    riskPercent: number,
-    entryPrice: number,
-    stopLoss: number,
-    leverage: number
-  ): number {
-    const riskAmount = balance * (riskPercent / 100);
-    const riskPerUnit = Math.abs(entryPrice - stopLoss);
-
-    if (riskPerUnit <= 0) return 0;
-
-    const quantity = (riskAmount * leverage) / riskPerUnit / entryPrice;
-    return this.normalizeQuantity(quantity);
-  }
-
-  normalizeQuantity(qty: number, precision: number = 3): number {
-    const factor = Math.pow(10, precision);
-    return Math.floor(qty * factor) / factor;
-  }
-
-  formatQuantity(qty: number, precision: number = 3): string {
-    return this.normalizeQuantity(qty, precision).toFixed(precision);
-  }
 }
 
+// Export singleton instance
 export const bitunixTradeService = new BitunixTradeService();
-export type { OrderParams, OrderResult, Position, AccountInfo };

@@ -6,10 +6,10 @@ interface RateLimiter {
 }
 
 const rateLimiter: RateLimiter = {
-  tokens: 80,
+  tokens: 10,
   lastRefill: Date.now(),
-  maxTokens: 80,
-  refillRate: 80 / 60000,
+  maxTokens: 10,
+  refillRate: 0.5, // 1 token per 2 seconds = 30 requests per minute
 };
 
 // Cache for API responses to reduce redundant calls
@@ -40,7 +40,7 @@ function consumeToken(): Promise<void> {
     const elapsed = now - rateLimiter.lastRefill;
     rateLimiter.tokens = Math.min(
       rateLimiter.maxTokens,
-      rateLimiter.tokens + elapsed * rateLimiter.refillRate
+      rateLimiter.tokens + elapsed * rateLimiter.refillRate,
     );
     rateLimiter.lastRefill = now;
 
@@ -67,9 +67,12 @@ function getApiKey(): string {
   return key;
 }
 
-async function apiRequest<T>(endpoint: string, params: Record<string, string | number> = {}): Promise<T> {
+async function apiRequest<T>(
+  endpoint: string,
+  params: Record<string, string | number> = {},
+): Promise<T> {
   await consumeToken();
-  
+
   const url = new URL(`${BASE_URL}${endpoint}`);
   Object.entries(params).forEach(([key, value]) => {
     url.searchParams.append(key, String(value));
@@ -81,18 +84,24 @@ async function apiRequest<T>(endpoint: string, params: Record<string, string | n
     method: "GET",
     headers: {
       "CG-API-KEY": getApiKey(),
-      "accept": "application/json",
+      accept: "application/json",
     },
   });
 
   if (!response.ok) {
-    console.error(`[COINGLASS API] HTTP Error: ${response.status} ${response.statusText}`);
-    throw new Error(`Coinglass API error: ${response.status} ${response.statusText}`);
+    console.error(
+      `[COINGLASS API] HTTP Error: ${response.status} ${response.statusText}`,
+    );
+    throw new Error(
+      `Coinglass API error: ${response.status} ${response.statusText}`,
+    );
   }
 
   const data = await response.json();
-  console.log(`[COINGLASS API] Response code: ${data.code}, msg: ${data.msg || 'none'}`);
-  
+  console.log(
+    `[COINGLASS API] Response code: ${data.code}, msg: ${data.msg || "none"}`,
+  );
+
   if (data.code !== "0" && data.code !== 0) {
     console.error(`[COINGLASS API] API Error: ${data.msg || "Unknown error"}`);
     throw new Error(`Coinglass API error: ${data.msg || "Unknown error"}`);
@@ -110,7 +119,7 @@ export interface OpenInterestData {
 export async function getOpenInterestHistory(
   symbol: string = "BTC",
   interval: string = "1h",
-  limit: number = 100
+  limit: number = 100,
 ): Promise<OpenInterestData[]> {
   return apiRequest<OpenInterestData[]>("/futures/openInterest/ohlc-history", {
     symbol,
@@ -128,7 +137,7 @@ export interface LiquidationData {
 export async function getLiquidationHistory(
   symbol: string = "BTC",
   interval: string = "1h",
-  limit: number = 100
+  limit: number = 100,
 ): Promise<LiquidationData[]> {
   return apiRequest<LiquidationData[]>("/futures/liquidation/history", {
     symbol,
@@ -144,7 +153,7 @@ export interface LiquidationMapData {
 }
 
 export async function getLiquidationMap(
-  symbol: string = "BTC"
+  symbol: string = "BTC",
 ): Promise<LiquidationMapData[]> {
   try {
     const data = await apiRequest<any>("/futures/liquidation/aggregated-map", {
@@ -168,7 +177,7 @@ export interface OrderbookData {
 }
 
 export async function getOrderbookWalls(
-  symbol: string = "BTC"
+  symbol: string = "BTC",
 ): Promise<OrderbookWall[]> {
   try {
     const data = await apiRequest<any>("/futures/orderbook/large-limit-order", {
@@ -177,13 +186,13 @@ export async function getOrderbookWalls(
 
     const walls: OrderbookWall[] = [];
     if (!data || !Array.isArray(data)) return walls;
-    
+
     data.forEach((order: any) => {
       if (order.price && order.amount) {
         walls.push({
           price: order.price,
           amount: order.amount,
-          side: order.side === "buy" ? "bid" : "ask"
+          side: order.side === "buy" ? "bid" : "ask",
         });
       }
     });
@@ -205,21 +214,25 @@ export async function getLongShortRatio(
   symbol: string = "BTC",
   interval: string = "h1",
   limit: number = 100,
-  exchange: string = "Binance"
+  exchange: string = "Binance",
 ): Promise<LongShortRatioData[]> {
   try {
-    const data = await apiRequest<any[]>("/futures/global-long-short-account-ratio/history", {
-      symbol,
-      interval,
-      limit,
-      exchange,
-    });
+    const data = await apiRequest<any[]>(
+      "/futures/global-long-short-account-ratio/history",
+      {
+        symbol,
+        interval,
+        limit,
+        exchange,
+      },
+    );
     // Transform v4 response format
-    return data.map(item => ({
+    return data.map((item) => ({
       time: item.time,
       longRate: item.global_account_long_percent || item.longRate || 50,
       shortRate: item.global_account_short_percent || item.shortRate || 50,
-      longShortRatio: item.global_account_long_short_ratio || item.longShortRatio || 1,
+      longShortRatio:
+        item.global_account_long_short_ratio || item.longShortRatio || 1,
     }));
   } catch {
     return [];
@@ -237,17 +250,20 @@ export async function getTakerBuySell(
   symbol: string = "BTC",
   interval: string = "h1",
   limit: number = 100,
-  exchange: string = "Binance"
+  exchange: string = "Binance",
 ): Promise<TakerBuySellData[]> {
   try {
-    const data = await apiRequest<any[]>("/futures/taker-buy-sell-volume/history", {
-      symbol,
-      interval,
-      limit,
-      exchange,
-    });
+    const data = await apiRequest<any[]>(
+      "/futures/taker-buy-sell-volume/history",
+      {
+        symbol,
+        interval,
+        limit,
+        exchange,
+      },
+    );
     // Transform v4 response format
-    return data.map(item => ({
+    return data.map((item) => ({
       time: item.time || item.t,
       buyVolume: item.buy_volume || item.buyVolume || 0,
       sellVolume: item.sell_volume || item.sellVolume || 0,
@@ -265,7 +281,7 @@ export interface FundingRateData {
 }
 
 export async function getFundingRate(
-  symbol: string = "BTC"
+  symbol: string = "BTC",
 ): Promise<FundingRateData[]> {
   try {
     const data = await apiRequest<any>("/futures/funding-rate/exchange-list", {
@@ -277,7 +293,11 @@ export async function getFundingRate(
     data.forEach((item: any) => {
       if (item.stablecoin_margin_list) {
         item.stablecoin_margin_list.forEach((fr: any) => {
-          if (fr.funding_rate !== undefined && fr.funding_rate !== null && !isNaN(fr.funding_rate)) {
+          if (
+            fr.funding_rate !== undefined &&
+            fr.funding_rate !== null &&
+            !isNaN(fr.funding_rate)
+          ) {
             result.push({
               time: fr.next_funding_time || Date.now(),
               fundingRate: Number(fr.funding_rate),
@@ -287,7 +307,9 @@ export async function getFundingRate(
         });
       }
     });
-    console.log(`[COINGLASS] Funding rate: ${result.length} valid entries, sample: ${result[0]?.fundingRate}`);
+    console.log(
+      `[COINGLASS] Funding rate: ${result.length} valid entries, sample: ${result[0]?.fundingRate}`,
+    );
     return result;
   } catch {
     return [];
@@ -304,7 +326,7 @@ export async function getFuturesBasis(
   symbol: string = "BTC",
   interval: string = "h1",
   limit: number = 100,
-  exchange: string = "Binance"
+  exchange: string = "Binance",
 ): Promise<FuturesBasisData[]> {
   try {
     const data = await apiRequest<any[]>("/futures/basis/history", {
@@ -313,7 +335,7 @@ export async function getFuturesBasis(
       limit,
       exchange,
     });
-    return data.map(item => ({
+    return data.map((item) => ({
       time: item.time || item.t,
       basis: item.basis || 0,
       basisRate: item.basis_rate || item.basisRate || 0,
@@ -331,15 +353,19 @@ export interface FearGreedData {
 
 export async function getFearGreedIndex(): Promise<FearGreedData> {
   try {
-    const data = await apiRequest<FearGreedData[]>("/index/fear-greed-history", {
-      limit: 1,
-    });
+    const data = await apiRequest<FearGreedData[]>(
+      "/index/fear-greed-history",
+      {
+        limit: 1,
+      },
+    );
     if (Array.isArray(data) && data.length > 0) {
       const item = data[0];
       return {
         time: item.time || Date.now(),
         value: item.value || 50,
-        classification: item.classification || getClassification(item.value || 50),
+        classification:
+          item.classification || getClassification(item.value || 50),
       };
     }
     return { time: Date.now(), value: 50, classification: "Neutral" };
@@ -403,13 +429,18 @@ export interface EnhancedMarketData {
   fearGreed: FearGreedData;
   accumulationScore: number;
   distributionScore: number;
-  momentumStrength: "strong_bullish" | "bullish" | "neutral" | "bearish" | "strong_bearish";
+  momentumStrength:
+    | "strong_bullish"
+    | "bullish"
+    | "neutral"
+    | "bearish"
+    | "strong_bearish";
 }
 
 function calculateAccumulationScore(
   flowAnalysis: FlowAnalysis,
   positioningAnalysis: PositioningAnalysis,
-  fundingBasisAnalysis: FundingBasisAnalysis
+  fundingBasisAnalysis: FundingBasisAnalysis,
 ): number {
   let score = 50;
 
@@ -435,7 +466,7 @@ function calculateDistributionScore(accumulationScore: number): number {
 function classifyMomentum(
   accumulationScore: number,
   flowAnalysis: FlowAnalysis,
-  fearGreed: FearGreedData
+  fearGreed: FearGreedData,
 ): "strong_bullish" | "bullish" | "neutral" | "bearish" | "strong_bearish" {
   const fearGreedValue = fearGreed.value;
   let momentumScore = accumulationScore;
@@ -445,7 +476,9 @@ function classifyMomentum(
   else if (fearGreedValue <= 25) momentumScore -= 10;
   else if (fearGreedValue <= 45) momentumScore -= 5;
 
-  const netFlowRatio = flowAnalysis.netFlow / (flowAnalysis.buyVolume + flowAnalysis.sellVolume || 1);
+  const netFlowRatio =
+    flowAnalysis.netFlow /
+    (flowAnalysis.buyVolume + flowAnalysis.sellVolume || 1);
   if (netFlowRatio > 0.2) momentumScore += 10;
   else if (netFlowRatio < -0.2) momentumScore -= 10;
 
@@ -456,7 +489,9 @@ function classifyMomentum(
   return "neutral";
 }
 
-export async function getEnhancedMarketData(symbol: string = "BTC"): Promise<EnhancedMarketData> {
+export async function getEnhancedMarketData(
+  symbol: string = "BTC",
+): Promise<EnhancedMarketData> {
   // Check cache first to avoid redundant API calls
   const cacheKey = `enhanced_${symbol}`;
   const cached = getCached<EnhancedMarketData>(cacheKey);
@@ -465,7 +500,7 @@ export async function getEnhancedMarketData(symbol: string = "BTC"): Promise<Enh
   }
 
   console.log(`[ENHANCED-MARKET] Fetching data for ${symbol}...`);
-  
+
   const [
     liquidationMap,
     orderbookWalls,
@@ -481,10 +516,16 @@ export async function getEnhancedMarketData(symbol: string = "BTC"): Promise<Enh
     getTakerBuySell(symbol, "h1", 1).catch(() => [] as TakerBuySellData[]),
     getFundingRate(symbol).catch(() => [] as FundingRateData[]),
     getFuturesBasis(symbol, "h1", 1).catch(() => [] as FuturesBasisData[]),
-    getFearGreedIndex().catch(() => ({ time: Date.now(), value: 50, classification: "Neutral" })),
+    getFearGreedIndex().catch(() => ({
+      time: Date.now(),
+      value: 50,
+      classification: "Neutral",
+    })),
   ]);
-  
-  console.log(`[ENHANCED-MARKET] Data fetched - funding rates: ${fundingRates.length}, fear/greed value: ${fearGreed.value}`);
+
+  console.log(
+    `[ENHANCED-MARKET] Data fetched - funding rates: ${fundingRates.length}, fear/greed value: ${fearGreed.value}`,
+  );
 
   const liquidationAnalysis: LiquidationAnalysis = {
     maxPainLong: 0,
@@ -497,11 +538,11 @@ export async function getEnhancedMarketData(symbol: string = "BTC"): Promise<Enh
   if (liquidationMap.length > 0) {
     let maxLong = { price: 0, amount: 0 };
     let maxShort = { price: 0, amount: 0 };
-    
+
     liquidationMap.forEach((level) => {
       liquidationAnalysis.totalLongLiquidation += level.longLiquidation;
       liquidationAnalysis.totalShortLiquidation += level.shortLiquidation;
-      
+
       if (level.longLiquidation > maxLong.amount) {
         maxLong = { price: level.price, amount: level.longLiquidation };
       }
@@ -512,9 +553,12 @@ export async function getEnhancedMarketData(symbol: string = "BTC"): Promise<Enh
 
     liquidationAnalysis.maxPainLong = maxLong.price;
     liquidationAnalysis.maxPainShort = maxShort.price;
-    
-    const ratio = liquidationAnalysis.totalLongLiquidation / (liquidationAnalysis.totalShortLiquidation || 1);
-    liquidationAnalysis.liquidationBias = ratio > 1.2 ? "long" : ratio < 0.8 ? "short" : "neutral";
+
+    const ratio =
+      liquidationAnalysis.totalLongLiquidation /
+      (liquidationAnalysis.totalShortLiquidation || 1);
+    liquidationAnalysis.liquidationBias =
+      ratio > 1.2 ? "long" : ratio < 0.8 ? "short" : "neutral";
   }
 
   const supportWalls = orderbookWalls.filter((w) => w.side === "bid");
@@ -522,7 +566,8 @@ export async function getEnhancedMarketData(symbol: string = "BTC"): Promise<Enh
 
   const orderbookAnalysis: OrderbookAnalysis = {
     strongestSupport: supportWalls.length > 0 ? supportWalls[0].price : null,
-    strongestResistance: resistanceWalls.length > 0 ? resistanceWalls[0].price : null,
+    strongestResistance:
+      resistanceWalls.length > 0 ? resistanceWalls[0].price : null,
     supportWalls,
     resistanceWalls,
   };
@@ -535,45 +580,63 @@ export async function getEnhancedMarketData(symbol: string = "BTC"): Promise<Enh
     trend: !latestLongShort
       ? "balanced"
       : latestLongShort.longShortRatio > 1.1
-      ? "long_dominant"
-      : latestLongShort.longShortRatio < 0.9
-      ? "short_dominant"
-      : "balanced",
+        ? "long_dominant"
+        : latestLongShort.longShortRatio < 0.9
+          ? "short_dominant"
+          : "balanced",
   };
 
   const latestTakerFlow = takerBuySell[0];
   const flowAnalysis: FlowAnalysis = {
     buyVolume: latestTakerFlow?.buyVolume || 0,
     sellVolume: latestTakerFlow?.sellVolume || 0,
-    netFlow: (latestTakerFlow?.buyVolume || 0) - (latestTakerFlow?.sellVolume || 0),
+    netFlow:
+      (latestTakerFlow?.buyVolume || 0) - (latestTakerFlow?.sellVolume || 0),
     flowBias: !latestTakerFlow
       ? "neutral"
       : latestTakerFlow.buySellRatio > 1.05
-      ? "buying"
-      : latestTakerFlow.buySellRatio < 0.95
-      ? "selling"
-      : "neutral",
+        ? "buying"
+        : latestTakerFlow.buySellRatio < 0.95
+          ? "selling"
+          : "neutral",
   };
 
-  const validFundingRates = fundingRates.filter(fr => 
-    typeof fr.fundingRate === 'number' && !isNaN(fr.fundingRate)
+  const validFundingRates = fundingRates.filter(
+    (fr) => typeof fr.fundingRate === "number" && !isNaN(fr.fundingRate),
   );
-  const avgFundingRate = validFundingRates.length > 0
-    ? validFundingRates.reduce((sum, fr) => sum + fr.fundingRate, 0) / validFundingRates.length
-    : 0;
-  console.log(`[ENHANCED-MARKET] Avg funding rate: ${avgFundingRate}, from ${validFundingRates.length} entries`);
-  
+  const avgFundingRate =
+    validFundingRates.length > 0
+      ? validFundingRates.reduce((sum, fr) => sum + fr.fundingRate, 0) /
+        validFundingRates.length
+      : 0;
+  console.log(
+    `[ENHANCED-MARKET] Avg funding rate: ${avgFundingRate}, from ${validFundingRates.length} entries`,
+  );
+
   const latestBasis = futuresBasis[0];
   const fundingBasisAnalysis: FundingBasisAnalysis = {
     averageFundingRate: avgFundingRate,
-    fundingBias: avgFundingRate > 0.0001 ? "bullish" : avgFundingRate < -0.0001 ? "bearish" : "neutral",
+    fundingBias:
+      avgFundingRate > 0.0001
+        ? "bullish"
+        : avgFundingRate < -0.0001
+          ? "bearish"
+          : "neutral",
     basis: latestBasis?.basis || 0,
     basisRate: latestBasis?.basisRate || 0,
   };
 
-  const accumulationScore = calculateAccumulationScore(flowAnalysis, positioningAnalysis, fundingBasisAnalysis);
+  const accumulationScore = calculateAccumulationScore(
+    flowAnalysis,
+    positioningAnalysis,
+    fundingBasisAnalysis,
+  );
   const distributionScore = calculateDistributionScore(accumulationScore);
-  const momentumStrength = classifyMomentum(accumulationScore, flowAnalysis, fearGreed);
+  const momentumStrength = classifyMomentum(
+    accumulationScore,
+    flowAnalysis,
+    fearGreed,
+  );
 
   const result: EnhancedMarketData = {
     symbol,
