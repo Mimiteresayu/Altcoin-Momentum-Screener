@@ -81,12 +81,13 @@ export function calculateMarketPhase(
   }
 
   // ACCUMULATION: Low price, rising volume, neutral/low RSI, OI building
-    if (priceChange < 3 && volumeSpike >= 2 && rsi < 50) {    return "ACCUMULATION";
+  if (priceChange < 3 && volumeSpike >= 1.5 && rsi <= 55) {
+    return "ACCUMULATION";
   }
 
-  // DISTRIBUTION: High price area, volume spike but declining, high RSI
-    if (priceChange > 2 && rsi > 65) 
-    return "DISTRIBUTION";{    return "DISTRIBUTION";
+  // DISTRIBUTION: High price area, high RSI, with volume confirmation
+  if (priceChange > 3 && rsi > 70 && volumeSpike >= 1.5) {
+    return "DISTRIBUTION";
   }
 
   // Secondary checks
@@ -98,7 +99,10 @@ export function calculateMarketPhase(
     return "EXHAUST";
   }
 
-  return "UNKNOWN";
+  // Default based on RSI
+  if (rsi > 55) return "DISTRIBUTION";
+  if (rsi < 45) return "ACCUMULATION";
+  return "NEUTRAL";
 }
 
 export function calculatePreSpikeScore(
