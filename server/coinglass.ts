@@ -1,4 +1,4 @@
-interface RateLimiter {
+  interface RateLimiter {
   tokens: number;
   lastRefill: number;
   maxTokens: number;
@@ -56,7 +56,7 @@ function consumeToken(): Promise<void> {
     }
   });
 }
-
+  
 const BASE_URL = "https://open-api-v4.coinglass.com/api";
 
 function getApiKey(): string {
@@ -118,7 +118,9 @@ export interface OpenInterestData {
   openInterestUsd: number;
 }
 
-export async function getOpenInterestHistory(
+  // Long/Short Ratio - Requires Professional Plan
+export async function getFundingRate
+  getOpenInterestHistory(
   symbol: string = "BTC",
   interval: string = "1h",
   limit: number = 100,
@@ -489,6 +491,75 @@ function classifyMomentum(
   if (momentumScore <= 25) return "strong_bearish";
   if (momentumScore <= 40) return "bearish";
   return "neutral";
+}
+
+
+// Funding Rate - Works with Startup Plan
+export async function getFundingRate(symbol: string = "BTC"): Promise<{ rate: number; nextFundingTime: number } | null> {
+  try {
+    const cacheKey = `funding_${symbol}`;
+    const cached = getCached<{ rate: number; nextFundingTime: number }>(cacheKey);
+    if (cached) return cached;
+
+    const data = await apiRequest<any>("/futures/funding-rate/exchange-list", { symbol });
+    if (!data || !data.length) return null;
+
+    // Average funding rate across exchanges
+    const avgRate = data.reduce((sum: number, ex: any) => sum + (ex.rate || 0), 0) / data.length;
+    const result = { rate: avgRate, nextFundingTime: data[0]?.nextFundingTime || 0 };
+    setCache(cacheKey, result);
+    return result;
+  } catch (error) {
+    console.error(`Error fetching funding rate for ${symbol}:`, error);
+    return null;
+  }
+}
+
+// Long/Short Ratio - Requires Professional Plan (returns null for Startup)
+export async function getLongShortRatio(symbol: string = "BTC"): Promise<{ longRatio: number; shortRatio: number } | null> {
+  try {
+    const cacheKey = `lsr_${symbol}`;
+    const cached = getCached<{ longRatio: number; shortRatio: number }>(cacheKey);
+    if (cached) return cached;
+
+    const data = await apiRequest<any>("/futures/global-long-short-account-ratio/history", { symbol, interval: "h1", limit: 1 });
+    if (!data || !data.length) return null;
+
+    const latest = data[data.length - 1];
+    const result = { longRatio: latest.longRate || 50, shortRatio: latest.shortRate || 50 };
+    setCache(cacheKey, result);
+    return result;
+  } catch (error) {
+    console.error(`Error fetching L/S ratio for ${symbol}:`, error);
+    return null;
+  }
+}
+
+// Liquidation Map - Requires Professional Plan (returns null for Startup)
+export async function getLiquidationMap(symbol: string = "BTC"): Promise<LiquidationMapData | null> {
+  try {
+    const cacheKey = `liq_${symbol}`;
+    const cached = getCached<LiquidationMapData>(cacheKey);
+    if (cached) return cached;
+
+    const data = await apiRequest<any>("/futures/liquidation/aggregated-map", { symbol });
+    if (!data) return null;
+
+    const result: LiquidationMapData = {
+      symbol,
+      levels: data.map((item: any) => ({
+        price: item.price,
+        longLiquidation: item.longLiquidationUsd || 0,
+        shortLiquidation: item.shortLiquidationUsd || 0
+      })),
+      timestamp: Date.now()
+    };
+    setCache(cacheKey, result);
+    return result;
+  } catch (error) {
+    console.error(`Error fetching liquidation map for ${symbol}:`, error);
+    return null;
+  }
 }
 
 export async function getEnhancedMarketData(
