@@ -69,50 +69,66 @@ export function calculateMarketPhase(
 ): MarketPhase {
   const oiDelta = oiChange ?? 0;
   const acceleration = volAccel ?? 1;
+  const hasValidRsi = rsi !== 0 && rsi !== undefined && !isNaN(rsi);
 
-  // Check for missing data - only return UNKNOWN when data is truly missing
-  if (rsi === 0 || rsi === undefined || isNaN(rsi)) {
-    return "UNKNOWN";
-  }
-
-  // EXHAUST (Upside): Price pumping, RSI overbought - primary indicator
-  if (priceChange > 3 && rsi > 70) {
-    return "EXHAUST";
-  }
-  // EXHAUST (Downside): Price dumping, RSI oversold
-  if (priceChange < -3 && rsi < 30) {
-    return "EXHAUST";
-  }
-
-  // BREAKOUT: Significant price move with volume confirmation, RSI healthy
-  if (volumeSpike >= 1.5 && Math.abs(priceChange) > 2 && rsi >= 40 && rsi <= 70) {
+  // ===== RSI-INDEPENDENT CONDITIONS (evaluate first) =====
+  
+  // BREAKOUT: Strong price move with volume (no RSI needed)
+  if (volumeSpike >= 1.5 && Math.abs(priceChange) > 3) {
     return "BREAKOUT";
   }
-  // Fallback BREAKOUT: Strong price move even without volume spike
-  if (Math.abs(priceChange) > 4 && rsi >= 35 && rsi <= 75) {
+  // BREAKOUT: Very strong price move (no volume/RSI needed)
+  if (Math.abs(priceChange) > 5) {
     return "BREAKOUT";
   }
 
-  // ACCUMULATION: Price flat/down, RSI low/neutral, OI building or volume rising
-  if (Math.abs(priceChange) < 2 && volumeSpike >= 1.2 && rsi < 50 && oiDelta > 0) {
+  // ACCUMULATION: Flat price with rising volume and OI building (no RSI needed)
+  if (Math.abs(priceChange) < 2 && volumeSpike >= 1.3 && oiDelta > 0) {
     return "ACCUMULATION";
   }
-  // Fallback ACCUMULATION: RSI oversold zone with flat price (buying dip)
-  if (rsi < 35 && Math.abs(priceChange) < 3) {
-    return "ACCUMULATION";
-  }
-  // Alternative ACCUMULATION: Volume acceleration with neutral RSI
-  if (volumeSpike >= 1.3 && acceleration >= 1.5 && rsi >= 40 && rsi <= 55) {
+  // ACCUMULATION: Strong volume acceleration (no RSI needed)
+  if (volumeSpike >= 1.5 && acceleration >= 1.5 && Math.abs(priceChange) < 3) {
     return "ACCUMULATION";
   }
 
-  // DISTRIBUTION: Price rising but OI declining or RSI getting high
-  if (priceChange > 1.5 && rsi > 60 && oiDelta < 0) {
+  // DISTRIBUTION: Price rising but OI declining (smart money exiting, no RSI needed)
+  if (priceChange > 2 && oiDelta < -2) {
     return "DISTRIBUTION";
   }
-  // Fallback DISTRIBUTION: RSI overbought zone
-  if (rsi > 65 && priceChange > 0) {
-    return "DISTRIBUTION";
+
+  // ===== RSI-BASED CONDITIONS (if RSI is valid) =====
+  if (hasValidRsi) {
+    // EXHAUST (Upside): Price pumping, RSI overbought
+    if (priceChange > 3 && rsi > 70) {
+      return "EXHAUST";
+    }
+    // EXHAUST (Downside): Price dumping, RSI oversold
+    if (priceChange < -3 && rsi < 30) {
+      return "EXHAUST";
+    }
+
+    // BREAKOUT with RSI confirmation
+    if (volumeSpike >= 1.2 && Math.abs(priceChange) > 2 && rsi >= 40 && rsi <= 70) {
+      return "BREAKOUT";
+    }
+
+    // ACCUMULATION: RSI oversold zone with flat price (buying dip)
+    if (rsi < 35 && Math.abs(priceChange) < 3) {
+      return "ACCUMULATION";
+    }
+    // ACCUMULATION: Volume with neutral RSI
+    if (volumeSpike >= 1.2 && rsi >= 40 && rsi <= 55 && oiDelta >= 0) {
+      return "ACCUMULATION";
+    }
+
+    // DISTRIBUTION: RSI overbought zone with positive price
+    if (rsi > 65 && priceChange > 0) {
+      return "DISTRIBUTION";
+    }
+    // DISTRIBUTION: RSI getting high with OI declining
+    if (priceChange > 1.5 && rsi > 60 && oiDelta < 0) {
+      return "DISTRIBUTION";
+    }
   }
 
   // Default: Normal market conditions = NEUTRAL
