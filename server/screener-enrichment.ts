@@ -8,8 +8,7 @@ import {
   type LiquidationMapData,
 } from "./coinglass";
 import { bitunixTradeService, BitunixTradeService } from "./bitunix-trade";
-"./binance";
-  import { getBinanceFuturesData } from "./binance";
+import { getBinanceFuturesData } from "./binance";
 
 type PriceLocation = "DISCOUNT" | "NEUTRAL" | "PREMIUM";
 type MarketPhase =
@@ -17,7 +16,7 @@ type MarketPhase =
   | "DISTRIBUTION"
   | "BREAKOUT"
   | "EXHAUST"
-  | "NEUTRAL"rom
+  | "NEUTRAL"
   | "UNKNOWN";
 type Confidence = "high" | "medium" | "low";
 
