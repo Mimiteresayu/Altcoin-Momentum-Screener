@@ -17,7 +17,7 @@ type MarketPhase =
   | "DISTRIBUTION"
   | "BREAKOUT"
   | "EXHAUST"
-  | "NEUTRAL"
+  | "NEUTRAL"rom
   | "UNKNOWN";
 type Confidence = "high" | "medium" | "low";
 
@@ -71,41 +71,38 @@ export function calculateMarketPhase(
   const oiDelta = oiChange ?? 0;
   const acceleration = volAccel ?? 1;
 
-  // EXHAUST: Price up but volume fading, RSI overbought
-  if (priceChange > 5 && volumeSpike < 2 && rsi > 75) {
-    return "EXHAUST";
-  }
-
-  // BREAKOUT: High volume spike + price move + RSI not extreme
-  if (volumeSpike >= 5 && Math.abs(priceChange) > 3 && rsi >= 40 && rsi <= 75) {
-    return "BREAKOUT";
-  }
-
-  // ACCUMULATION: Low price, rising volume, neutral/low RSI, OI building
-  if (priceChange < 3 && volumeSpike >= 1.5 && rsi <= 55) {
+  // ACCUMULATION: Smart Money Entry - price flat, volume rising, RSI not overbought, OI building
+  if (Math.abs(priceChange) < 3 && volumeSpike >= 3 && rsi < 55 && oiDelta > 5) {
     return "ACCUMULATION";
   }
-
-  // DISTRIBUTION: High price area, high RSI, with volume confirmation
-  if (priceChange > 3 && rsi > 70 && volumeSpike >= 1.5) {
-    return "DISTRIBUTION";
-  }
-
-  // Secondary checks
+  // Alternative ACCUMULATION check
   if (volumeSpike >= 4 && acceleration >= 2 && rsi >= 45 && rsi <= 65) {
     return "ACCUMULATION";
   }
 
+  // BREAKOUT: Explosive Momentum - massive volume, significant price move, RSI healthy
+  if (volumeSpike >= 5 && Math.abs(priceChange) > 3 && rsi >= 40 && rsi <= 75) {
+    return "BREAKOUT";
+  }
+
+  // DISTRIBUTION: Smart Money Exit - price rising but OI declining (smart money selling)
+  if (priceChange > 2 && rsi > 60 && oiDelta < 0) {
+    return "DISTRIBUTION";
+  }
+
+  // EXHAUST (Upside): Price pumping but volume fading, RSI overbought
+  if (priceChange > 5 && volumeSpike < 2 && rsi > 75) {
+    return "EXHAUST";
+  }
+  // EXHAUST (Downside): Price dumping but volume fading, RSI oversold
   if (priceChange < -3 && volumeSpike < 2 && rsi < 35) {
     return "EXHAUST";
   }
 
-  // Default based on RSI (extreme thresholds only)
-  if (rsi > 70) return "DISTRIBUTION";
-  if (rsi < 30) return "ACCUMULATION";
-  return "NEUTRAL";
+  return "UNKNOWN";
 }
-606export function calculatePreSpikeScore(
+
+export function calculatePreSpikeScore(
   volumeSpike: number,
   volAccel: number | undefined,
   oiChange: number | undefined,
