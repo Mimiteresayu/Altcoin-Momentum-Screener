@@ -71,23 +71,22 @@ export function calculateMarketPhase(
   const acceleration = volAccel ?? 1;
 
   // EXHAUST: Price up but volume fading, RSI overbought
-  if (priceChange > 3 && volumeSpike < 1.5 && rsi > 70) {
+  if (priceChange > 5 && volumeSpike < 2 && rsi > 75) {
     return "EXHAUST";
   }
 
   // BREAKOUT: High volume spike + price move + RSI not extreme
-  if (volumeSpike >= 3 && Math.abs(priceChange) > 2 && rsi >= 40 && rsi <= 75) {
+  if (volumeSpike >= 5 && Math.abs(priceChange) > 3 && rsi >= 40 && rsi <= 75) {
     return "BREAKOUT";
   }
 
   // ACCUMULATION: Low price, rising volume, neutral/low RSI, OI building
-  if (priceChange < 3 && volumeSpike >= 1.5 && rsi <= 55) {
-    return "ACCUMULATION";
+    if (priceChange < 3 && volumeSpike >= 2 && rsi < 50) {    return "ACCUMULATION";
   }
 
   // DISTRIBUTION: High price area, volume spike but declining, high RSI
-  if (priceChange > 1 && rsi > 60) {
-    return "DISTRIBUTION";
+    if (priceChange > 2 && rsi > 65) 
+    return "DISTRIBUTION";{    return "DISTRIBUTION";
   }
 
   // Secondary checks
