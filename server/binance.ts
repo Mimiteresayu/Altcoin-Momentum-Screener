@@ -533,19 +533,19 @@ export interface VolumeProfileData {
   valueAreaLow: number; // Lower bound of 70% volume area
   highVolumeLevels: number[]; // Key support/resistance levels
   currentPrice: number;
-  priceRelativeToPOC: "above" | "below" | "at";
+  priceRelativeToPOC: 'above' | 'below' | 'at';
 }
 
 export async function getVolumeProfile(
   symbol: string,
-  interval: string = "1h",
+  interval: string = '1h',
   lookbackCandles: number = 200,
-  numLevels: number = 50,
+  numLevels: number = 50
 ): Promise<VolumeProfileData | null> {
   try {
     // Get historical klines from Binance FREE API
     const response = await fetch(
-      `https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${interval}&limit=${lookbackCandles}`,
+      `https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${interval}&limit=${lookbackCandles}`
     );
 
     if (!response.ok) return null;
@@ -580,7 +580,7 @@ export async function getVolumeProfile(
         volume: 0,
         buyVolume: 0,
         sellVolume: 0,
-        percentage: 0,
+        percentage: 0
       });
     }
 
@@ -640,8 +640,7 @@ export async function getVolumeProfile(
 
     while (vaVolume < valueAreaVolume) {
       const expandLow = vaLowIndex > 0 ? levels[vaLowIndex - 1].volume : 0;
-      const expandHigh =
-        vaHighIndex < levels.length - 1 ? levels[vaHighIndex + 1].volume : 0;
+      const expandHigh = vaHighIndex < levels.length - 1 ? levels[vaHighIndex + 1].volume : 0;
 
       if (expandLow >= expandHigh && vaLowIndex > 0) {
         vaLowIndex--;
@@ -660,8 +659,8 @@ export async function getVolumeProfile(
     // Find high volume nodes (potential S/R levels)
     const avgVolume = totalVolume / numLevels;
     const highVolumeLevels = levels
-      .filter((l) => l.volume > avgVolume * 1.5)
-      .map((l) => l.price)
+      .filter(l => l.volume > avgVolume * 1.5)
+      .map(l => l.price)
       .sort((a, b) => a - b);
 
     // Get current price
@@ -676,13 +675,10 @@ export async function getVolumeProfile(
       valueAreaLow,
       highVolumeLevels,
       currentPrice,
-      priceRelativeToPOC:
-        currentPrice > poc * 1.005
-          ? "above"
-          : currentPrice < poc * 0.995
-            ? "below"
-            : "at",
+      priceRelativeToPOC: currentPrice > poc * 1.005 ? 'above' : 
+                          currentPrice < poc * 0.995 ? 'below' : 'at'
     };
+
   } catch (error) {
     console.error(`Error calculating volume profile for ${symbol}:`, error);
     return null;
@@ -694,130 +690,26 @@ export function getLiquidityZonesFromVP(vp: VolumeProfileData): {
   resistanceZones: number[];
   supportZones: number[];
   strongestLevel: number;
-  bias: "bullish" | "bearish" | "neutral";
+  bias: 'bullish' | 'bearish' | 'neutral';
 } {
-  const { currentPrice, highVolumeLevels, poc, valueAreaHigh, valueAreaLow } =
-    vp;
+  const { currentPrice, highVolumeLevels, poc, valueAreaHigh, valueAreaLow } = vp;
 
   // Zones above current price = resistance (potential short squeeze targets)
-  const resistanceZones = highVolumeLevels.filter((p) => p > currentPrice);
+  const resistanceZones = highVolumeLevels.filter(p => p > currentPrice);
 
   // Zones below current price = support (potential long liquidation zones)
-  const supportZones = highVolumeLevels.filter((p) => p < currentPrice);
+  const supportZones = highVolumeLevels.filter(p => p < currentPrice);
 
   // Strongest level is POC
   const strongestLevel = poc;
 
   // Bias based on price position relative to value area
-  let bias: "bullish" | "bearish" | "neutral" = "neutral";
+  let bias: 'bullish' | 'bearish' | 'neutral' = 'neutral';
   if (currentPrice > valueAreaHigh) {
-    bias = "bullish"; // Price accepted above value area
+    bias = 'bullish'; // Price accepted above value area
   } else if (currentPrice < valueAreaLow) {
-    bias = "bearish"; // Price rejected below value area
+    bias = 'bearish'; // Price rejected below value area
   }
 
   return { resistanceZones, supportZones, strongestLevel, bias };
-}
-
-// ============================================
-// FREE Long/Short Ratio from Binance API
-// Replaces Coinglass Professional-only endpoint
-// ============================================
-
-export interface BinanceLongShortRatio {
-  symbol: string;
-  longAccount: number; // % of accounts long
-  shortAccount: number; // % of accounts short
-  longShortRatio: number;
-  timestamp: number;
-}
-
-// Get Global Long/Short Account Ratio (FREE - no API key needed)
-export async function getBinanceLongShortRatio(
-  symbol: string,
-  period: string = "1h",
-): Promise<BinanceLongShortRatio | null> {
-  try {
-    const response = await fetch(
-      `https://fapi.binance.com/futures/data/globalLongShortAccountRatio?symbol=${symbol}&period=${period}&limit=1`,
-    );
-
-    if (!response.ok) return null;
-
-    const data = await response.json();
-    if (!data || !data.length) return null;
-
-    const latest = data[0];
-    return {
-      symbol,
-      longAccount: parseFloat(latest.longAccount) * 100,
-      shortAccount: parseFloat(latest.shortAccount) * 100,
-      longShortRatio: parseFloat(latest.longShortRatio),
-      timestamp: latest.timestamp,
-    };
-  } catch (error) {
-    console.error(`Error fetching L/S ratio for ${symbol}:`, error);
-    return null;
-  }
-}
-
-// Get Top Trader Long/Short Ratio (FREE)
-export async function getTopTraderLongShortRatio(
-  symbol: string,
-  period: string = "1h",
-): Promise<BinanceLongShortRatio | null> {
-  try {
-    const response = await fetch(
-      `https://fapi.binance.com/futures/data/topLongShortAccountRatio?symbol=${symbol}&period=${period}&limit=1`,
-    );
-
-    if (!response.ok) return null;
-
-    const data = await response.json();
-    if (!data || !data.length) return null;
-
-    const latest = data[0];
-    return {
-      symbol,
-      longAccount: parseFloat(latest.longAccount) * 100,
-      shortAccount: parseFloat(latest.shortAccount) * 100,
-      longShortRatio: parseFloat(latest.longShortRatio),
-      timestamp: latest.timestamp,
-    };
-  } catch (error) {
-    console.error(`Error fetching top trader L/S ratio for ${symbol}:`, error);
-    return null;
-  }
-}
-
-// Get Taker Buy/Sell Volume Ratio (FREE)
-export async function getTakerBuySellRatio(
-  symbol: string,
-  period: string = "1h",
-): Promise<{ buyRatio: number; sellRatio: number } | null> {
-  try {
-    const response = await fetch(
-      `https://fapi.binance.com/futures/data/takerlongshortRatio?symbol=${symbol}&period=${period}&limit=1`,
-    );
-
-    if (!response.ok) return null;
-
-    const data = await response.json();
-    if (!data || !data.length) return null;
-
-    const latest = data[0];
-    return {
-      buyRatio:
-        (parseFloat(latest.buyVol) /
-          (parseFloat(latest.buyVol) + parseFloat(latest.sellVol))) *
-        100,
-      sellRatio:
-        (parseFloat(latest.sellVol) /
-          (parseFloat(latest.buyVol) + parseFloat(latest.sellVol))) *
-        100,
-    };
-  } catch (error) {
-    console.error(`Error fetching taker buy/sell for ${symbol}:`, error);
-    return null;
-  }
 }

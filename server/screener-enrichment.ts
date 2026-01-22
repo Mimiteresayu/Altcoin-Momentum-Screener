@@ -10,7 +10,6 @@ import {
 import { bitunixTradeService, BitunixTradeService } from "./bitunix-trade";
 "./binance";
   import { getBinanceFuturesData } from "./binance";
-import { getBinanceLongShortRatio, getVolumeProfile, getLiquidityZonesFromVP } from "./binance";
 
 type PriceLocation = "DISCOUNT" | "NEUTRAL" | "PREMIUM";
 type MarketPhase =
@@ -103,48 +102,6 @@ export function calculateMarketPhase(
   return "UNKNOWN";
 }
 
-
-// Calculate market phase using Volume Profile data (POC, VAH, VAL)
-export function calculateVPMarketPhase(
-  vpData: { poc: number; valueAreaHigh: number; valueAreaLow: number; currentPrice: number; priceRelativeToPOC: 'above' | 'below' | 'at' } | null,
-  priceChange: number,
-  volumeSpike: number,
-  rsi: number
-): MarketPhase {
-  if (!vpData) return "UNKNOWN";
-
-  const { poc, valueAreaHigh, valueAreaLow, currentPrice, priceRelativeToPOC } = vpData;
-  const valueAreaRange = valueAreaHigh - valueAreaLow;
-  const distanceFromPOC = Math.abs(currentPrice - poc) / poc * 100;
-  const isPriceNearVAL = currentPrice <= valueAreaLow * 1.02;
-  const isPriceNearVAH = currentPrice >= valueAreaHigh * 0.98;
-  const isPriceAboveVA = currentPrice > valueAreaHigh;
-  const isPriceBelowVA = currentPrice < valueAreaLow;
-
-  // ACCUMULATION: Price below VAL or near VAL with volume building
-  if (isPriceBelowVA || (isPriceNearVAL && volumeSpike >= 2 && rsi < 45)) {
-    return "ACCUMULATION";
-  }
-
-  // DISTRIBUTION: Price above VAH or near VAH with selling pressure
-  if (isPriceAboveVA || (isPriceNearVAH && volumeSpike >= 2 && rsi > 65)) {
-    return "DISTRIBUTION";
-  }
-
-  // BREAKOUT: Price broke through VA boundaries with high volume
-  if ((isPriceAboveVA && priceChange > 5 && volumeSpike >= 5) ||
-      (isPriceBelowVA && priceChange < -5 && volumeSpike >= 5)) {
-    return "BREAKOUT";
-  }
-
-  // EXHAUST: Price extended far from POC with declining momentum
-  if (distanceFromPOC > 8 && volumeSpike < 2 && (rsi > 75 || rsi < 25)) {
-    return "EXHAUST";
-  }
-
-  // Default: within value area is neutral/consolidation
-  return "UNKNOWN";
-  }  
 export function calculatePreSpikeScore(
   volumeSpike: number,
   volAccel: number | undefined,
@@ -480,7 +437,8 @@ async function getBitunixKlines(
   }
 }
 
-  export async function enrichSignalWithCoinglass(  signal: Signal,
+export async function enrichSignalWithCoinglass(
+  signal: Signal,
   high24h: number,
   low24h: number,
 ): Promise<EnrichedSignalData> {
@@ -496,8 +454,7 @@ async function getBitunixKlines(
       getBitunixKlines(symbol, "5m", 100),
     ]);
     console.log(
-      klines5M.length
-  `[ENRICHMENT] ${symbol} - Fetched klines: 4H=${klines4H.length}, 1H=${klines1H.length}, 15M=${klines15M.length}, 5M=${klines5M.klines5M.length}, 5M=${klines5M.length}`,
+      `[ENRICHMENT] ${symbol} - Fetched klines: 4H=${klines4H.length}, 1H=${klines1H.length}, 15M=${klines15M.length}, 5M=${klines5M.lengt}, 5M=${klines5M.length}`,
     );
   } catch (error) {
     console.log(`[ENRICHMENT] Failed to fetch klines for ${signal.symbol}`);
@@ -544,15 +501,6 @@ async function getBitunixKlines(
   const fundingBias = enhancedData?.fundingBasisAnalysis?.fundingBias;
   const longShortRatio = enhancedData?.positioningAnalysis?.longShortRatio;
   const lsrBias = enhancedData?.positioningAnalysis?.trend;
-
-  // Fetch Volume Profile data for dual-phase detection
-  let vpData: { poc: number; valueAreaHigh: number; valueAreaLow: number; currentPrice: number; priceRelativeToPOC: 'above' | 'below' | 'at' } | null = null;
-  try {
-    vpData = await getVolumeProfile(symbol, '1h', 200, 50);
-  } catch (error) {
-    console.log(`[ENRICHMENT] VP data fetch failed for ${symbol}:`, error);
-    }
-    
 
   // Calculate market phase
   // Determine market phase using multi-timeframe structure
@@ -656,13 +604,15 @@ async function getBitunixKlines(
     lsrBias,
   );
 
-  // Calculate alternative phase detection using Volume Profile
-  const marketPhaseAlt = calculateVPMarketPhase(
-    vpData,
-    signal.priceChange24h || 0,
+  // Calculate alternative phase detection using RSI/OI method
+  const marketPhaseAlt = calculateMarketPhase(
     signal.volSpike || 1,
-    signal.rsi14 || 50
+    enhancedData?.openInterest?.change24h || 0,
+    signal.rsi14 || 50,
+    signal.priceChange24h || 0,
+    signal.volAccel || 1,
   );
+
   return {
     priceLocation,
 
@@ -735,4 +685,3 @@ export function applyScreenerFilters(
     return true;
   });
 }
-marketPhaseAlt:
