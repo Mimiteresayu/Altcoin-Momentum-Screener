@@ -17,6 +17,7 @@ type MarketPhase =
   | "DISTRIBUTION"
   | "BREAKOUT"
   | "EXHAUST"
+  | "NEUTRAL"
   | "UNKNOWN";
 type Confidence = "high" | "medium" | "low";
 
