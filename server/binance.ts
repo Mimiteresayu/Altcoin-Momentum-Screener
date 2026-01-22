@@ -1,4 +1,4 @@
-import crypto from "crypto";
+import * as crypto from "crypto";
 
 const FUTURES_BASE_URL = "https://fapi.binance.com";
 

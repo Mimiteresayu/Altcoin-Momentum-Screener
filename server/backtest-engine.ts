@@ -7,7 +7,8 @@ import {
   backtestStats,
 } from "../shared/schema";
 import { eq, desc, and, gte, lte } from "drizzle-orm";
-import { getVolumeProfile, getLiquidityZonesFromVP, VolumeProfileData } from "./binance";
+import { getVolumeProfile, getLiquidityZonesFromVP } from "./binance";
+import type { VolumeProfileData } from "./binance";
 
 interface BacktestSignal {
   symbol: string;
