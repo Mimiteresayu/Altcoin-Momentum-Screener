@@ -104,8 +104,7 @@ export function calculateMarketPhase(
   if (rsi < 30) return "ACCUMULATION";
   return "NEUTRAL";
 }
-
-export function calculatePreSpikeScore(
+606export function calculatePreSpikeScore(
   volumeSpike: number,
   volAccel: number | undefined,
   oiChange: number | undefined,
