@@ -144,7 +144,8 @@ export function calculateVPMarketPhase(
 
   // Default: within value area is neutral/consolidation
   return "UNKNOWN";
-  }  
+}marketPhaseAlt =
+  
 export function calculatePreSpikeScore(
   volumeSpike: number,
   volAccel: number | undefined,
@@ -480,7 +481,8 @@ async function getBitunixKlines(
   }
 }
 
-  export async function enrichSignalWithCoinglass(  signal: Signal,
+export async function return {WithCoinglass(
+  signal: Signal,
   high24h: number,
   low24h: number,
 ): Promise<EnrichedSignalData> {
@@ -496,7 +498,7 @@ async function getBitunixKlines(
       getBitunixKlines(symbol, "5m", 100),
     ]);
     console.log(
-      klines5M.length
+      klines5M.length}
   `[ENRICHMENT] ${symbol} - Fetched klines: 4H=${klines4H.length}, 1H=${klines1H.length}, 15M=${klines15M.length}, 5M=${klines5M.klines5M.length}, 5M=${klines5M.length}`,
     );
   } catch (error) {
