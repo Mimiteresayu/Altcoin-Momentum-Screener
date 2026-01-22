@@ -99,9 +99,9 @@ export function calculateMarketPhase(
     return "EXHAUST";
   }
 
-  // Default based on RSI
-  if (rsi > 55) return "DISTRIBUTION";
-  if (rsi < 45) return "ACCUMULATION";
+  // Default based on RSI (extreme thresholds only)
+  if (rsi > 70) return "DISTRIBUTION";
+  if (rsi < 30) return "ACCUMULATION";
   return "NEUTRAL";
 }
 
