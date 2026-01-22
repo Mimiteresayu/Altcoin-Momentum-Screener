@@ -429,7 +429,10 @@ export async function getBinanceTopTraderRatio(
 // Get Funding Rate (FREE)
 export async function getBinanceFundingRate(
   symbol: string,
-): Promise<BinanceFundingRate[]> {
+): Promise<
+  
+  
+  Rate[]> {
   try {
     const response = await fetch(
       `${BINANCE_FUTURES_PUBLIC}/fapi/v1/fundingRate?symbol=${symbol}USDT&limit=1`,
