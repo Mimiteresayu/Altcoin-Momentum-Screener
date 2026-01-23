@@ -11,13 +11,7 @@ import { bitunixTradeService, BitunixTradeService } from "./bitunix-trade";
 import { getBinanceFuturesData } from "./binance";
 
 type PriceLocation = "DISCOUNT" | "NEUTRAL" | "PREMIUM";
-type MarketPhase =
-  | "ACCUMULATION"
-  | "DISTRIBUTION"
-  | "BREAKOUT"
-  | "EXHAUST"
-  | "NEUTRAL"
-  | "UNKNOWN";
+type MarketPhase = "ACCUMULATION" | "DISTRIBUTION" | "BREAKOUT" | "EXHAUST" | "NEUTRAL" | "UNKNOWN";
 type Confidence = "high" | "medium" | "low";
 
 interface EnrichedSignalData {
