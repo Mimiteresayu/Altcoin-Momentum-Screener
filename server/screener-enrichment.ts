@@ -14,6 +14,14 @@ type PriceLocation = "DISCOUNT" | "NEUTRAL" | "PREMIUM";
 type MarketPhase = "ACCUMULATION" | "DISTRIBUTION" | "BREAKOUT" | "EXHAUST" | "NEUTRAL" | "UNKNOWN";
 type Confidence = "high" | "medium" | "low";
 
+type HtfBias = {
+  side: "LONG" | "SHORT";
+  confidence: "high" | "medium" | "low";
+  supertrendBias: "LONG" | "SHORT";
+  fundingConfirms: boolean;
+  supertrendValue: number;
+};
+
 interface EnrichedSignalData {
   priceLocation: PriceLocation;
   marketPhase: MarketPhase;
@@ -23,6 +31,7 @@ interface EnrichedSignalData {
   fundingBias: "bullish" | "bearish" | "neutral" | undefined;
   longShortRatio: number | undefined;
   lsrBias: "long_dominant" | "short_dominant" | "balanced" | undefined;
+  htfBias: HtfBias | undefined;
   fvgLevels: { price: number; type: "bullish" | "bearish"; strength: number }[];
   obLevels: { price: number; type: "bullish" | "bearish"; strength: number }[];
   liquidationZones: {
@@ -177,6 +186,115 @@ export function calculatePreSpikeScore(
   if (longShortRatio !== undefined && longShortRatio < 0.9) score += 0.25;
 
   return Math.min(5, Math.round(score * 10) / 10);
+}
+
+export function calculateATR(
+  klines: { high: string; low: string; close: string }[],
+  period: number = 10
+): number {
+  if (klines.length < period + 1) return 0;
+
+  const trueRanges: number[] = [];
+  for (let i = 1; i < klines.length; i++) {
+    const high = parseFloat(klines[i].high);
+    const low = parseFloat(klines[i].low);
+    const prevClose = parseFloat(klines[i - 1].close);
+    const tr = Math.max(
+      high - low,
+      Math.abs(high - prevClose),
+      Math.abs(low - prevClose)
+    );
+    trueRanges.push(tr);
+  }
+
+  if (trueRanges.length < period) return 0;
+  const recentTR = trueRanges.slice(-period);
+  return recentTR.reduce((a, b) => a + b, 0) / period;
+}
+
+export function calculateSupertrend(
+  klines: { high: string; low: string; close: string }[],
+  atrPeriod: number = 10,
+  multiplier: number = 3
+): { value: number; direction: "LONG" | "SHORT" } | null {
+  if (klines.length < atrPeriod + 1) return null;
+
+  const atr = calculateATR(klines, atrPeriod);
+  if (atr === 0) return null;
+
+  const lastCandle = klines[klines.length - 1];
+  const high = parseFloat(lastCandle.high);
+  const low = parseFloat(lastCandle.low);
+  const close = parseFloat(lastCandle.close);
+  const hl2 = (high + low) / 2;
+
+  const upperBand = hl2 + (multiplier * atr);
+  const lowerBand = hl2 - (multiplier * atr);
+
+  let supertrendValue: number;
+  let direction: "LONG" | "SHORT";
+
+  if (close > upperBand) {
+    supertrendValue = lowerBand;
+    direction = "LONG";
+  } else if (close < lowerBand) {
+    supertrendValue = upperBand;
+    direction = "SHORT";
+  } else {
+    const prevCandle = klines[klines.length - 2];
+    const prevClose = parseFloat(prevCandle.close);
+    const prevHigh = parseFloat(prevCandle.high);
+    const prevLow = parseFloat(prevCandle.low);
+    const prevHl2 = (prevHigh + prevLow) / 2;
+    const prevUpper = prevHl2 + (multiplier * atr);
+    const prevLower = prevHl2 - (multiplier * atr);
+    
+    if (prevClose > prevUpper || close > hl2) {
+      supertrendValue = lowerBand;
+      direction = "LONG";
+    } else {
+      supertrendValue = upperBand;
+      direction = "SHORT";
+    }
+  }
+
+  return { value: supertrendValue, direction };
+}
+
+export function calculateHtfBias(
+  klines4H: { high: string; low: string; close: string }[],
+  fundingRate: number | undefined
+): HtfBias | undefined {
+  const supertrend = calculateSupertrend(klines4H, 10, 3);
+  if (!supertrend) return undefined;
+
+  const supertrendBias = supertrend.direction;
+  const supertrendValue = supertrend.value;
+
+  let fundingConfirms = false;
+  let confidence: "high" | "medium" | "low" = "medium";
+
+  if (fundingRate !== undefined) {
+    if (supertrendBias === "LONG" && fundingRate >= 0) {
+      fundingConfirms = true;
+      confidence = "high";
+    } else if (supertrendBias === "SHORT" && fundingRate <= 0) {
+      fundingConfirms = true;
+      confidence = "high";
+    } else if (Math.abs(fundingRate) < 0.0001) {
+      confidence = "medium";
+    } else {
+      confidence = "low";
+    }
+  }
+
+  return {
+    side: supertrendBias,
+    confidence,
+    supertrendBias,
+    fundingConfirms,
+    supertrendValue,
+  };
 }
 
 function calculateLiquidationZones(
@@ -640,6 +758,9 @@ export async function enrichSignalWithCoinglass(
     signal.volAccel || 1,
   );
 
+  // Calculate HTF bias using Supertrend (4H) + Funding Rate
+  const htfBias = calculateHtfBias(klines4H, fundingRate);
+
   return {
     priceLocation,
 
@@ -650,6 +771,7 @@ export async function enrichSignalWithCoinglass(
     fundingBias,
     longShortRatio,
     lsrBias,
+    htfBias,
     fvgLevels,
     obLevels,
     liquidationZones,

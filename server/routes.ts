@@ -25,6 +25,7 @@ import {
   calculatePriceLocation,
   calculateMarketPhase,
   calculatePreSpikeScore,
+  calculateHtfBias,
   type ScreenerFilters,
 } from "./screener-enrichment";
 
@@ -951,7 +952,8 @@ export async function registerRoutes(
           const priceChange24h = ((currentPrice - openPrice) / openPrice) * 100;
           if (isNaN(priceChange24h)) continue;
 
-          const [klines1H, klines15M, orderBook] = await Promise.all([
+          const [klines4H, klines1H, klines15M, orderBook] = await Promise.all([
+            fetchKlines(item.symbol, "4h", 50),
             fetchKlines(item.symbol, "1h", 100),
             fetchKlines(item.symbol, "15m", 100),
             fetchOrderBook(item.symbol),
@@ -989,6 +991,24 @@ export async function registerRoutes(
           // Get OI data for this symbol
           const oiChange24h = oiData.get(item.symbol) ?? null;
           const hasVolAlert = volumeSpikeRatio > 2.0; // VOL ALERT badge for > 2.0x
+
+          // Calculate HTF Bias using Supertrend (4H) + Funding Rate
+          const klines4HFormatted = klines4H.map(k => ({
+            high: k.high.toString(),
+            low: k.low.toString(),
+            close: k.close.toString(),
+          }));
+          // Get funding rate for htfBias calculation (use cached data if available)
+          let fundingRateForBias: number | undefined = undefined;
+          try {
+            const fundingData = await getFundingRate(item.symbol.replace('USDT', ''));
+            if (fundingData.length > 0) {
+              fundingRateForBias = fundingData.reduce((sum, fr) => sum + fr.fundingRate, 0) / fundingData.length;
+            }
+          } catch {
+            // Ignore funding rate errors, htfBias will use supertrend only
+          }
+          const htfBias = calculateHtfBias(klines4HFormatted, fundingRateForBias);
 
           // Coinglass data placeholder - populated from cache if available
           // Note: Full Coinglass data available via /api/coinglass/:symbol endpoint
@@ -1142,13 +1162,21 @@ export async function registerRoutes(
           );
           const spikeReadiness = getSpikeReadiness(timeOnListMinutes);
 
-          // Determine trade direction: LONG or SHORT based on comprehensive analysis
-          // Uses balanced scoring system to avoid bias
+          // Determine trade direction: LONG or SHORT based on HTF bias (Supertrend + Funding)
+          // HTF bias is the PRIMARY indicator - Supertrend on 4H is the trend filter
           const determineSide = (): "LONG" | "SHORT" => {
+            // PRIMARY: Use HTF Bias (Supertrend 4H + Funding Rate) if available
+            if (htfBias) {
+              // Supertrend is the primary trend indicator
+              // Funding rate confirms or weakens confidence
+              return htfBias.side;
+            }
+
+            // FALLBACK: If no HTF data, use scoring system
             let longScore = 0;
             let shortScore = 0;
 
-            // Factor 1: Price trend direction (primary indicator, weight: 3)
+            // Factor 1: Price trend direction (weight: 3)
             if (priceChange24h >= 5) longScore += 3;
             else if (priceChange24h >= 2) longScore += 2;
             else if (priceChange24h >= 0) longScore += 1;
@@ -1157,7 +1185,6 @@ export async function registerRoutes(
             else shortScore += 1; // priceChange24h < 0
 
             // Factor 2: RSI trend context (weight: 2)
-            // RSI confirms trend, not contra-trades
             if (rsi >= 60 && rsi <= 75)
               longScore += 2; // Strong bullish momentum
             else if (rsi >= 50 && rsi < 60)
@@ -1165,11 +1192,9 @@ export async function registerRoutes(
             else if (rsi >= 40 && rsi < 50)
               shortScore += 1; // Bearish
             else if (rsi >= 25 && rsi < 40) shortScore += 2; // Strong bearish momentum
-            // Extreme RSI (>75 or <25) doesn't add points - could go either way
 
             // Factor 3: Volume with price direction (weight: 2)
             if (volumeSpikeRatio >= 3.0) {
-              // Strong volume confirms current price direction
               if (priceChange24h >= 0) longScore += 2;
               else shortScore += 2;
             } else if (volumeSpikeRatio >= 1.5) {
@@ -1179,8 +1204,6 @@ export async function registerRoutes(
 
             // Factor 4: Open Interest with price (weight: 2)
             if (oiChange24h !== null && oiChange24h !== undefined) {
-              // Rising OI + rising price = longs entering (bullish)
-              // Rising OI + falling price = shorts entering (bearish)
               if (oiChange24h > 10 && priceChange24h >= 2) longScore += 2;
               else if (oiChange24h > 5 && priceChange24h >= 0) longScore += 1;
               else if (oiChange24h > 10 && priceChange24h <= -2)
@@ -1194,8 +1217,6 @@ export async function registerRoutes(
             if (ob?.type === "bullish") longScore += 1;
             else if (ob?.type === "bearish") shortScore += 1;
 
-            // Decision: whichever side has more conviction wins
-            // Tie or slight edge goes to LONG (pre-spike scanner bias)
             return shortScore > longScore ? "SHORT" : "LONG";
           };
 
@@ -1203,7 +1224,7 @@ export async function registerRoutes(
 
           signals.push({
             symbol: item.symbol,
-            side, // Trade direction: LONG or SHORT
+            side, // Trade direction: LONG or SHORT (based on HTF Supertrend)
             currentPrice,
             priceChange24h,
             volumeSpikeRatio,
@@ -1220,6 +1241,13 @@ export async function registerRoutes(
             tpLevels,
             riskReward,
             signalStrength,
+            htfBias: htfBias ? {
+              side: htfBias.side,
+              confidence: htfBias.confidence,
+              supertrendBias: htfBias.supertrendBias,
+              fundingConfirms: htfBias.fundingConfirms,
+              supertrendValue: htfBias.supertrendValue,
+            } : null,
             strengthBreakdown: {
               priceInRange,
               volumeInRange,
