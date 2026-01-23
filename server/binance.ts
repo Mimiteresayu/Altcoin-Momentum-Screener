@@ -432,7 +432,7 @@ export async function getBinanceFundingRate(
 ): Promise<
   
   
-  Rate[]> {
+  BinanceFundingRate[]> {
   try {
     const response = await fetch(
       `${BINANCE_FUTURES_PUBLIC}/fapi/v1/fundingRate?symbol=${symbol}USDT&limit=1`,
@@ -512,6 +512,46 @@ export async function getBinanceFuturesData(symbol: string) {
     takerVolume: takerVol,
     source: "binance-free" as const,
   };
+}
+
+// Get Klines/Candlestick data (FREE)
+export interface BinanceKline {
+  open: string;
+  high: string;
+  low: string;
+  close: string;
+  volume: string;
+  openTime: number;
+  closeTime: number;
+}
+
+export async function getBinanceKlines(
+  symbol: string,
+  interval: string = "4h",
+  limit: number = 100
+): Promise<BinanceKline[]> {
+  try {
+    const response = await fetch(
+      `${BINANCE_FUTURES_PUBLIC}/fapi/v1/klines?symbol=${symbol}USDT&interval=${interval}&limit=${limit}`
+    );
+    if (!response.ok) {
+      console.log(`[BINANCE] Klines fetch failed for ${symbol}: ${response.status}`);
+      return [];
+    }
+    const data = await response.json();
+    return data.map((k: any[]) => ({
+      openTime: k[0],
+      open: k[1],
+      high: k[2],
+      low: k[3],
+      close: k[4],
+      volume: k[5],
+      closeTime: k[6]
+    }));
+  } catch (error) {
+    console.log(`[BINANCE] Klines error for ${symbol}:`, error);
+    return [];
+  }
 }
 
 // ============================================
