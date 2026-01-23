@@ -8,7 +8,19 @@ import {
   type LiquidationMapData,
 } from "./coinglass";
 import { bitunixTradeService, BitunixTradeService } from "./bitunix-trade";
-import { getBinanceFuturesData } from "./binance";
+
+// Simple kline interface for internal use
+interface SimpleKline {
+  open: string;
+  high: string;
+  low: string;
+  close: string;
+  volume: string;
+  openTime: number;
+  closeTime: number;
+}
+import { getBinanceFuturesData, getBinanceKlines } from "./binance";
+import { getOKXMarketData, getOKXFundingRate, getOKXKlines } from "./okx";
 
 type PriceLocation = "DISCOUNT" | "NEUTRAL" | "PREMIUM";
 type MarketPhase = "ACCUMULATION" | "DISTRIBUTION" | "BREAKOUT" | "EXHAUST" | "NEUTRAL" | "UNKNOWN";
@@ -602,12 +614,12 @@ function calculateVolumeProfilePOC(klines: { high: string; low: string; close: s
   // Find POC (price with highest volume)
   let pocPrice = 0;
   let maxVolume = 0;
-  for (const [price, volume] of priceVolume.entries()) {
+  priceVolume.forEach((volume, price) => {
     if (volume > maxVolume) {
       maxVolume = volume;
       pocPrice = price;
     }
-  }
+  });
   
   return pocPrice > 0 ? pocPrice : undefined;
 }
@@ -640,38 +652,49 @@ export async function enrichSignalWithCoinglass(
 ): Promise<EnrichedSignalData> {
   const symbol = signal.symbol.replace("USDT", "");
 
-  // Fetch multi-timeframe Klines for technical analysis
-  let klines4H, klines1H, klines15M, klines5M;
-  try {
-    [klines4H, klines1H, klines15M, klines5M] = await Promise.all([
-      getBitunixKlines(symbol, "4h", 100),
-      getBitunixKlines(symbol, "1h", 100),
-      getBitunixKlines(symbol, "15m", 100),
-      getBitunixKlines(symbol, "5m", 100),
-    ]);
-    console.log(
-      `[ENRICHMENT] ${symbol} - Fetched klines: 4H=${klines4H.length}, 1H=${klines1H.length}, 15M=${klines15M.length}, 5M=${klines5M.lengt}, 5M=${klines5M.length}`,
-    );
-  } catch (error) {
-    console.log(`[ENRICHMENT] Failed to fetch klines for ${signal.symbol}`);
-    // Set empty arrays as fallback
-    klines4H = [];
-    klines1H = [];
-    klines15M = [];
-    klines5M = [];
-  }
-
-  // PRIORITY 1: Try FREE Binance Futures API first
-  let binanceData: { openInterest: number; oiChange24h: number; longShortRatio: number; longRate: number; shortRate: number; fundingRate: number; source: string } | null = null;
-  try {
-    binanceData = await getBinanceFuturesData(symbol);
-    console.log(`[ENRICHMENT] Binance FREE data fetched for ${symbol}:`, binanceData?.source);
-  } catch (error) {
-    console.log(`[ENRICHMENT] Binance FREE API failed for ${symbol}, falling back to Coinglass`);
-  }
-
-  // PRIORITY 2: Use Coinglass as fallback (paid STARTUP plan)const marketPhaseAlt =
+  // PRIORITY 1: Use OKX as primary data source (works from Replit, no geo-restrictions)
+  let okxData: { fundingRate: number | null; klines4H: SimpleKline[]; klines1H: SimpleKline[]; openInterest: number | null; longShortRatio: number | null; source: string } | null = null;
+  let klines4H: SimpleKline[] = [];
+  let klines1H: SimpleKline[] = [];
   
+  try {
+    const rawOkxData = await getOKXMarketData(symbol);
+    
+    klines4H = rawOkxData.klines4H.map(k => ({
+      open: k.open,
+      high: k.high,
+      low: k.low,
+      close: k.close,
+      volume: k.volume,
+      openTime: k.ts,
+      closeTime: k.ts + 14400000
+    }));
+    
+    klines1H = rawOkxData.klines1H.map(k => ({
+      open: k.open,
+      high: k.high,
+      low: k.low,
+      close: k.close,
+      volume: k.volume,
+      openTime: k.ts,
+      closeTime: k.ts + 3600000
+    }));
+    
+    okxData = {
+      fundingRate: rawOkxData.fundingRate,
+      klines4H,
+      klines1H,
+      openInterest: rawOkxData.openInterest,
+      longShortRatio: rawOkxData.longShortRatio,
+      source: rawOkxData.source
+    };
+    
+    console.log(`[ENRICHMENT] ${symbol} - OKX data: FR=${okxData.fundingRate !== null ? (okxData.fundingRate * 100).toFixed(4) + '%' : 'N/A'}, L/S=${okxData.longShortRatio ?? 'N/A'}, 4H=${klines4H.length}, 1H=${klines1H.length}`);
+  } catch (error) {
+    console.log(`[ENRICHMENT] OKX API failed for ${symbol}:`, error);
+  }
+
+  // PRIORITY 2: Use Coinglass as fallback (paid plan - may fail)
   let enhancedData: EnhancedMarketData | null = null;
   let liquidationMap: LiquidationMapData[] = [];
 
@@ -681,52 +704,47 @@ export async function enrichSignalWithCoinglass(
       getLiquidationMap(symbol).catch(() => []),
     ]);
   } catch (error) {
-    console.log(
-      `[ENRICHMENT] Failed to fetch Coinglass data for ${symbol}:`,
-      error,
-    );
+    // Coinglass may fail due to rate limits or paid plan requirements
   }
 
-  // Calculate price location
-  // Use ICT/Smart Money location from 1H klines
-  const ictAnalysis = bitunixTradeService.getICTLocation(klines1H);
-  const priceLocation: PriceLocation =
-    ictAnalysis.location.toUpperCase() as PriceLocation;
+  // Calculate price location from 1H klines
+  let priceLocation: PriceLocation = "NEUTRAL";
+  if (klines1H.length > 0) {
+    const ictResult = bitunixTradeService.getICTLocation(klines1H as any);
+    priceLocation = ictResult.location.toUpperCase() as PriceLocation;
+  }
     
-  // Extract funding rate and L/S data with BINANCE FALLBACK
-  // Priority: Coinglass > Binance (for both funding and L/S ratio)
+  // Extract funding rate and L/S data - OKX IS PRIMARY (works from Replit)
   let fundingRate: number | undefined = undefined;
   let fundingBias: "bullish" | "bearish" | "neutral" | undefined = undefined;
   let longShortRatio: number | undefined = undefined;
   let lsrBias: "long_dominant" | "short_dominant" | "balanced" | undefined = undefined;
   
-  // Try Coinglass first
-  if (enhancedData?.fundingBasisAnalysis?.averageFundingRate !== undefined) {
+  // OKX FIRST (works from Replit, no geo-restrictions)
+  if (okxData && okxData.fundingRate !== null) {
+    fundingRate = okxData.fundingRate;
+    fundingBias = fundingRate < -0.0001 ? "bullish" : fundingRate > 0.0003 ? "bearish" : "neutral";
+    console.log(`[ENRICHMENT] ${symbol} - FR: ${(fundingRate * 100).toFixed(4)}% (${fundingBias})`);
+  } else if (enhancedData?.fundingBasisAnalysis?.averageFundingRate !== undefined) {
     fundingRate = enhancedData.fundingBasisAnalysis.averageFundingRate;
     fundingBias = enhancedData.fundingBasisAnalysis.fundingBias;
-  } else if (binanceData && binanceData.fundingRate !== undefined) {
-    // Binance returns funding rate as percentage (already multiplied by 100)
-    fundingRate = binanceData.fundingRate / 100; // Convert back to decimal for consistency
-    // Typical funding rates: 0.0001 (0.01%) is neutral, >0.0003 is high, <-0.0001 is bullish
-    fundingBias = fundingRate < -0.0001 ? "bullish" : fundingRate > 0.0003 ? "bearish" : "neutral";
-    console.log(`[ENRICHMENT] ${symbol} - Using Binance funding rate: ${fundingRate}`);
   }
   
-  // L/S Ratio: Coinglass > Binance
-  if (enhancedData?.positioningAnalysis?.longShortRatio !== undefined) {
+  // L/S Ratio: OKX FIRST
+  if (okxData && okxData.longShortRatio !== null) {
+    longShortRatio = okxData.longShortRatio;
+    lsrBias = longShortRatio > 1.1 ? "long_dominant" : longShortRatio < 0.9 ? "short_dominant" : "balanced";
+    console.log(`[ENRICHMENT] ${symbol} - L/S: ${longShortRatio.toFixed(2)} (${lsrBias})`);
+  } else if (enhancedData?.positioningAnalysis?.longShortRatio !== undefined) {
     longShortRatio = enhancedData.positioningAnalysis.longShortRatio;
     lsrBias = enhancedData.positioningAnalysis.trend;
-  } else if (binanceData && binanceData.longShortRatio !== undefined) {
-    longShortRatio = binanceData.longShortRatio;
-    lsrBias = longShortRatio > 1.1 ? "long_dominant" : longShortRatio < 0.9 ? "short_dominant" : "balanced";
-    console.log(`[ENRICHMENT] ${symbol} - Using Binance L/S ratio: ${longShortRatio}`);
   }
   
   // Calculate Volume Profile POC (Point of Control) from 4H klines
   let volumeProfilePOC: number | undefined = undefined;
   if (klines4H.length >= 20) {
     volumeProfilePOC = calculateVolumeProfilePOC(klines4H);
-    console.log(`[ENRICHMENT] ${symbol} - Volume POC: ${volumeProfilePOC}`);
+    console.log(`[ENRICHMENT] ${symbol} - POC: $${volumeProfilePOC?.toFixed(4)}`);
   }
 
   // Calculate market phase
@@ -764,8 +782,11 @@ export async function enrichSignalWithCoinglass(
     }
   }
 
-  // Calculate pre-spike score
-  // Calculate pattern score using FVG/OB and ICT analysis (0-5 scale)
+  // Detect FVG and Order Blocks from 1H klines FIRST (before using in preSpikeScore)
+  const fvgs1H = klines1H.length > 0 ? bitunixTradeService.detectFVG(klines1H as any) : [];
+  const obs1H = klines1H.length > 0 ? bitunixTradeService.detectOrderBlocks(klines1H as any) : [];
+  
+  // Calculate pre-spike score using FVG/OB and ICT analysis (0-5 scale)
   let preSpikeScore = 0;
 
   // FVG presence (0-1 points)
@@ -782,8 +803,8 @@ export async function enrichSignalWithCoinglass(
   }
 
   // ICT Location (0-1 points) - discount zone favored for longs
-  if (ictAnalysis.location === "discount") preSpikeScore += 1;
-  else if (ictAnalysis.location === "equilibrium") preSpikeScore += 0.5;
+  if (priceLocation === "DISCOUNT") preSpikeScore += 1;
+  else if (priceLocation === "NEUTRAL") preSpikeScore += 0.5;
 
   // Volume spike (0-1 points)
   if (signal.volumeSpikeRatio && signal.volumeSpikeRatio >= 3)
@@ -804,17 +825,13 @@ export async function enrichSignalWithCoinglass(
     liquidationMap,
   );
 
-  // Estimate FVG and OB levels
-  // Detect real FVG from Klines (use 1H for significant levels)
-  const fvgs1H = bitunixTradeService.detectFVG(klines1H);
+  // Extract FVG and OB levels for display
   const fvgLevels = fvgs1H.slice(-5).map((fvg) => ({
     price: (fvg.top + fvg.bottom) / 2,
     type: fvg.type,
     strength: 0.7,
   }));
 
-  // Detect real Order Blocks from Klines (use 1H for significant levels)
-  const obs1H = bitunixTradeService.detectOrderBlocks(klines1H);
   const obLevels = obs1H.slice(-5).map((ob) => ({
     price: (ob.high + ob.low) / 2,
     type: ob.type,
@@ -833,15 +850,15 @@ export async function enrichSignalWithCoinglass(
 
   // Calculate alternative phase detection using RSI/OI method
   const marketPhaseAlt = calculateMarketPhase(
-    signal.volSpike || 1,
-    enhancedData?.openInterest?.change24h || 0,
-    signal.rsi14 || 50,
+    signal.volumeSpikeRatio || 1,
+    0, // OI change not available from OKX
+    signal.rsi || 50,
     signal.priceChange24h || 0,
     signal.volAccel || 1,
   );
 
   // Calculate HTF bias using Supertrend (4H) + Funding Rate
-  const htfBias = calculateHtfBias(klines4H, fundingRate);
+  const htfBias = calculateHtfBias(klines4H as any, fundingRate);
 
   return {
     priceLocation,
