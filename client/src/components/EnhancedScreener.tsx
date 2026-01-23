@@ -33,6 +33,14 @@ import {
 } from "lucide-react";
 import { clsx } from "clsx";
 
+interface HtfBias {
+  side: "LONG" | "SHORT";
+  confidence: "high" | "medium" | "low";
+  supertrendBias: "LONG" | "SHORT";
+  fundingConfirms: boolean;
+  supertrendValue: number;
+}
+
 interface EnhancedSignal {
   symbol: string;
   side: "LONG" | "SHORT";
@@ -49,11 +57,14 @@ interface EnhancedSignal {
     | "BREAKOUT"
     | "EXHAUST"
     | "UNKNOWN";
+  marketPhaseAlt?: string;
   preSpikeScore?: number;
   fundingRate?: number;
   fundingBias?: "bullish" | "bearish" | "neutral";
   longShortRatio?: number;
   lsrBias?: "long_dominant" | "short_dominant" | "balanced";
+  htfBias?: HtfBias;
+  volumeProfilePOC?: number;
   fvgLevels?: {
     price: number;
     type: "bullish" | "bearish";
@@ -355,7 +366,40 @@ export function EnhancedScreener() {
                 <thead>
                   <tr className="bg-muted/30 border-b border-white/5 text-left text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
                     <th className="px-2 py-2">Symbol</th>
-                    <th className="px-2 py-2 text-center">Side</th>
+                    <th className="px-2 py-2 text-center">
+                      <Tooltip>
+                        <TooltipTrigger className="flex items-center gap-1 cursor-help">
+                          BIAS (4H) <Info className="w-3 h-3" />
+                        </TooltipTrigger>
+                        <TooltipContent className="max-w-[280px]">
+                          <p className="text-xs">
+                            <strong>HTF Bias Logic (4H Supertrend + Funding):</strong>
+                            <br /><br />
+                            <strong>1. Supertrend (Primary):</strong>
+                            <br />
+                            ATR Period: 10, Multiplier: 3
+                            <br />
+                            Price above Supertrend = LONG
+                            <br />
+                            Price below Supertrend = SHORT
+                            <br /><br />
+                            <strong>2. Funding Rate (Confirmation):</strong>
+                            <br />
+                            Negative FR = Longs pay shorts (bullish)
+                            <br />
+                            Positive FR = Shorts pay longs (bearish)
+                            <br /><br />
+                            <strong>Confidence:</strong>
+                            <br />
+                            HIGH = Supertrend + FR align
+                            <br />
+                            MEDIUM = Supertrend only, FR neutral
+                            <br />
+                            LOW = Supertrend and FR conflict
+                          </p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </th>
                     <th className="px-2 py-2 text-right">Price</th>
                     <th className="px-2 py-2 text-center">
                       <Tooltip>
@@ -431,14 +475,20 @@ export function EnhancedScreener() {
                           L/S
                         </TooltipTrigger>
                         <TooltipContent>
-                          <p className="text-xs max-w-[200px]">
-                            <strong>Long/Short Ratio:</strong>
+                          <p className="text-xs max-w-[220px]">
+                            <strong>Long/Short Ratio (1H):</strong>
+                            <br /><br />
+                            <strong>Display Format:</strong>
                             <br />
-                            &gt;1.1 = Long dominant
+                            L:1.25 = 1.25 longs per short
                             <br />
-                            &lt;0.9 = Short dominant
+                            S:1.50 = 1.50 shorts per long
+                            <br /><br />
+                            <strong>Interpretation:</strong>
                             <br />
-                            Contrarian signal when extreme
+                            High L = Crowded longs (contrarian bearish)
+                            <br />
+                            High S = Crowded shorts (contrarian bullish)
                           </p>
                         </TooltipContent>
                       </Tooltip>
@@ -446,13 +496,15 @@ export function EnhancedScreener() {
                     <th className="px-2 py-2 text-center">
                       <Tooltip>
                         <TooltipTrigger className="flex items-center gap-1 cursor-help">
-                          <Waves className="w-3 h-3" /> LIQ
+                          <Waves className="w-3 h-3" /> POC
                         </TooltipTrigger>
                         <TooltipContent>
                           <p className="text-xs max-w-[200px]">
-                            <strong>Nearest Liquidation Zones:</strong>
+                            <strong>Volume Profile POC:</strong>
                             <br />
-                            Distance to major liquidation clusters
+                            Point of Control - price level with highest traded volume (4H)
+                            <br />
+                            Acts as strong support/resistance
                           </p>
                         </TooltipContent>
                       </Tooltip>
@@ -503,21 +555,40 @@ export function EnhancedScreener() {
                           </span>
                         </td>
                         <td className="px-2 py-2 text-center">
-                          <Badge
-                            className={clsx(
-                              "text-[10px] px-1.5",
-                              signal.side === "LONG"
-                                ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/30"
-                                : "bg-rose-500/20 text-rose-400 border-rose-500/30",
-                            )}
-                          >
-                            {signal.side === "LONG" ? (
-                              <TrendingUp className="w-3 h-3 mr-0.5" />
-                            ) : (
-                              <TrendingDown className="w-3 h-3 mr-0.5" />
-                            )}
-                            {signal.side}
-                          </Badge>
+                          <Tooltip>
+                            <TooltipTrigger>
+                              <Badge
+                                className={clsx(
+                                  "text-[10px] px-1.5",
+                                  (signal.htfBias?.side ?? signal.side) === "LONG"
+                                    ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/30"
+                                    : "bg-rose-500/20 text-rose-400 border-rose-500/30",
+                                )}
+                              >
+                                {(signal.htfBias?.side ?? signal.side) === "LONG" ? (
+                                  <TrendingUp className="w-3 h-3 mr-0.5" />
+                                ) : (
+                                  <TrendingDown className="w-3 h-3 mr-0.5" />
+                                )}
+                                {signal.htfBias?.side ?? signal.side} (4H)
+                              </Badge>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              <p className="text-xs">
+                                {signal.htfBias ? (
+                                  <>
+                                    <strong>Supertrend:</strong> {signal.htfBias.supertrendBias}
+                                    <br />
+                                    <strong>Confidence:</strong> {signal.htfBias.confidence}
+                                    <br />
+                                    <strong>Funding Confirms:</strong> {signal.htfBias.fundingConfirms ? "Yes" : "No"}
+                                  </>
+                                ) : (
+                                  "Bias from scoring system (HTF data unavailable)"
+                                )}
+                              </p>
+                            </TooltipContent>
+                          </Tooltip>
                         </td>
                         <td className="px-2 py-2 text-right font-mono text-xs">
                           ${formatPrice(signal.currentPrice)}
@@ -575,31 +646,18 @@ export function EnhancedScreener() {
                                   : "text-muted-foreground",
                             )}
                           >
-                            {signal.longShortRatio?.toFixed(2) ?? "N/A"}
+                            {signal.longShortRatio !== undefined
+                              ? signal.longShortRatio >= 1
+                                ? `L:${signal.longShortRatio.toFixed(2)}`
+                                : `S:${(1 / signal.longShortRatio).toFixed(2)}`
+                              : "N/A"}
                           </span>
                         </td>
                         <td className="px-2 py-2 text-center">
-                          {signal.liquidationZones?.longLiqDistance !==
-                          undefined ? (
-                            <div className="text-[10px]">
-                              <span className="text-rose-400">
-                                -
-                                {signal.liquidationZones.longLiqDistance.toFixed(
-                                  1,
-                                )}
-                                %
-                              </span>
-                              {signal.liquidationZones.shortLiqDistance !==
-                                undefined && (
-                                <span className="text-emerald-400 ml-1">
-                                  +
-                                  {signal.liquidationZones.shortLiqDistance.toFixed(
-                                    1,
-                                  )}
-                                  %
-                                </span>
-                              )}
-                            </div>
+                          {signal.volumeProfilePOC !== undefined ? (
+                            <span className="text-xs font-mono text-cyan-400">
+                              ${formatPrice(signal.volumeProfilePOC)}
+                            </span>
                           ) : (
                             <span className="text-muted-foreground text-xs">
                               N/A

@@ -40,6 +40,7 @@ interface EnrichedSignalData {
     longLiqDistance: number | undefined;
     shortLiqDistance: number | undefined;
   };
+  volumeProfilePOC: number | undefined; // Point of Control - highest volume price level
   storytelling: {
     summary: string;
     interpretation: string;
@@ -178,8 +179,8 @@ export function calculatePreSpikeScore(
   if (signalStrength >= 4) score += 0.5;
 
   // Funding rate confluence (0-0.25 points)
-  // Negative funding = bullish for longs
-  if (fundingRate !== undefined && fundingRate < -0.01) score += 0.25;
+  // Negative funding = bullish for longs (typical rate is 0.01% = 0.0001 decimal)
+  if (fundingRate !== undefined && fundingRate < -0.0001) score += 0.25;
 
   // Long/Short ratio (0-0.25 points)
   // Low ratio = fewer longs = contrarian bullish
@@ -561,6 +562,56 @@ function estimateOBLevels(
   return levels;
 }
 
+// Calculate Volume Profile POC (Point of Control) from Klines
+// POC is the price level where the most volume was traded
+function calculateVolumeProfilePOC(klines: { high: string; low: string; close: string; volume?: string }[]): number | undefined {
+  if (klines.length < 10) return undefined;
+  
+  // Create price bins and aggregate volume
+  const priceVolume: Map<number, number> = new Map();
+  
+  // Determine price range
+  const prices = klines.map(k => parseFloat(k.close));
+  const highs = klines.map(k => parseFloat(k.high));
+  const lows = klines.map(k => parseFloat(k.low));
+  const maxPrice = Math.max(...highs);
+  const minPrice = Math.min(...lows);
+  const range = maxPrice - minPrice;
+  
+  if (range === 0) return undefined;
+  
+  // Create bins (20 bins across the range)
+  const numBins = 20;
+  const binSize = range / numBins;
+  
+  // Aggregate volume into bins using typical price (H+L+C)/3
+  for (const k of klines) {
+    const high = parseFloat(k.high);
+    const low = parseFloat(k.low);
+    const close = parseFloat(k.close);
+    const volume = k.volume ? parseFloat(k.volume) : 1;
+    const typicalPrice = (high + low + close) / 3;
+    
+    // Find bin for this candle
+    const binIndex = Math.floor((typicalPrice - minPrice) / binSize);
+    const binPrice = minPrice + (binIndex + 0.5) * binSize; // Midpoint of bin
+    
+    priceVolume.set(binPrice, (priceVolume.get(binPrice) || 0) + volume);
+  }
+  
+  // Find POC (price with highest volume)
+  let pocPrice = 0;
+  let maxVolume = 0;
+  for (const [price, volume] of priceVolume.entries()) {
+    if (volume > maxVolume) {
+      maxVolume = volume;
+      pocPrice = price;
+    }
+  }
+  
+  return pocPrice > 0 ? pocPrice : undefined;
+}
+
 // Helper function to fetch Binance Klines
 // Helper function to fetch Bitunix Klines
 async function getBitunixKlines(
@@ -641,11 +692,42 @@ export async function enrichSignalWithCoinglass(
   const ictAnalysis = bitunixTradeService.getICTLocation(klines1H);
   const priceLocation: PriceLocation =
     ictAnalysis.location.toUpperCase() as PriceLocation;
-  // Extract funding and L/S data
-  const fundingRate = enhancedData?.fundingBasisAnalysis?.averageFundingRate;
-  const fundingBias = enhancedData?.fundingBasisAnalysis?.fundingBias;
-  const longShortRatio = enhancedData?.positioningAnalysis?.longShortRatio;
-  const lsrBias = enhancedData?.positioningAnalysis?.trend;
+    
+  // Extract funding rate and L/S data with BINANCE FALLBACK
+  // Priority: Coinglass > Binance (for both funding and L/S ratio)
+  let fundingRate: number | undefined = undefined;
+  let fundingBias: "bullish" | "bearish" | "neutral" | undefined = undefined;
+  let longShortRatio: number | undefined = undefined;
+  let lsrBias: "long_dominant" | "short_dominant" | "balanced" | undefined = undefined;
+  
+  // Try Coinglass first
+  if (enhancedData?.fundingBasisAnalysis?.averageFundingRate !== undefined) {
+    fundingRate = enhancedData.fundingBasisAnalysis.averageFundingRate;
+    fundingBias = enhancedData.fundingBasisAnalysis.fundingBias;
+  } else if (binanceData && binanceData.fundingRate !== undefined) {
+    // Binance returns funding rate as percentage (already multiplied by 100)
+    fundingRate = binanceData.fundingRate / 100; // Convert back to decimal for consistency
+    // Typical funding rates: 0.0001 (0.01%) is neutral, >0.0003 is high, <-0.0001 is bullish
+    fundingBias = fundingRate < -0.0001 ? "bullish" : fundingRate > 0.0003 ? "bearish" : "neutral";
+    console.log(`[ENRICHMENT] ${symbol} - Using Binance funding rate: ${fundingRate}`);
+  }
+  
+  // L/S Ratio: Coinglass > Binance
+  if (enhancedData?.positioningAnalysis?.longShortRatio !== undefined) {
+    longShortRatio = enhancedData.positioningAnalysis.longShortRatio;
+    lsrBias = enhancedData.positioningAnalysis.trend;
+  } else if (binanceData && binanceData.longShortRatio !== undefined) {
+    longShortRatio = binanceData.longShortRatio;
+    lsrBias = longShortRatio > 1.1 ? "long_dominant" : longShortRatio < 0.9 ? "short_dominant" : "balanced";
+    console.log(`[ENRICHMENT] ${symbol} - Using Binance L/S ratio: ${longShortRatio}`);
+  }
+  
+  // Calculate Volume Profile POC (Point of Control) from 4H klines
+  let volumeProfilePOC: number | undefined = undefined;
+  if (klines4H.length >= 20) {
+    volumeProfilePOC = calculateVolumeProfilePOC(klines4H);
+    console.log(`[ENRICHMENT] ${symbol} - Volume POC: ${volumeProfilePOC}`);
+  }
 
   // Calculate market phase
   // Determine market phase using multi-timeframe structure
@@ -763,7 +845,6 @@ export async function enrichSignalWithCoinglass(
 
   return {
     priceLocation,
-
     marketPhase,
     marketPhaseAlt,
     preSpikeScore,
@@ -775,6 +856,7 @@ export async function enrichSignalWithCoinglass(
     fvgLevels,
     obLevels,
     liquidationZones,
+    volumeProfilePOC,
     storytelling,
   };
 }
