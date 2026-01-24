@@ -230,56 +230,118 @@ export function calculateSupertrend(
   atrPeriod: number = 10,
   multiplier: number = 3
 ): { value: number; direction: "LONG" | "SHORT" } | null {
-  if (klines.length < atrPeriod + 1) return null;
+  // Need enough candles to calculate ATR and iterate
+  if (klines.length < atrPeriod + 2) return null;
 
-  const atr = calculateATR(klines, atrPeriod);
-  if (atr === 0) return null;
-
-  const lastCandle = klines[klines.length - 1];
-  const high = parseFloat(lastCandle.high);
-  const low = parseFloat(lastCandle.low);
-  const close = parseFloat(lastCandle.close);
-  const hl2 = (high + low) / 2;
-
-  const upperBand = hl2 + (multiplier * atr);
-  const lowerBand = hl2 - (multiplier * atr);
-
-  let supertrendValue: number;
-  let direction: "LONG" | "SHORT";
-
-  if (close > upperBand) {
-    supertrendValue = lowerBand;
-    direction = "LONG";
-  } else if (close < lowerBand) {
-    supertrendValue = upperBand;
-    direction = "SHORT";
-  } else {
-    const prevCandle = klines[klines.length - 2];
-    const prevClose = parseFloat(prevCandle.close);
-    const prevHigh = parseFloat(prevCandle.high);
-    const prevLow = parseFloat(prevCandle.low);
-    const prevHl2 = (prevHigh + prevLow) / 2;
-    const prevUpper = prevHl2 + (multiplier * atr);
-    const prevLower = prevHl2 - (multiplier * atr);
-    
-    if (prevClose > prevUpper || close > hl2) {
-      supertrendValue = lowerBand;
-      direction = "LONG";
-    } else {
-      supertrendValue = upperBand;
-      direction = "SHORT";
+  // Calculate ATR for each candle (we need ATR values for the iteration)
+  const atrValues: number[] = [];
+  for (let i = atrPeriod; i < klines.length; i++) {
+    const trueRanges: number[] = [];
+    for (let j = i - atrPeriod + 1; j <= i; j++) {
+      const high = parseFloat(klines[j].high);
+      const low = parseFloat(klines[j].low);
+      const prevClose = parseFloat(klines[j - 1].close);
+      const tr = Math.max(
+        high - low,
+        Math.abs(high - prevClose),
+        Math.abs(low - prevClose)
+      );
+      trueRanges.push(tr);
     }
+    const atr = trueRanges.reduce((a, b) => a + b, 0) / atrPeriod;
+    atrValues.push(atr);
   }
 
-  return { value: supertrendValue, direction };
+  if (atrValues.length === 0) return null;
+
+  // Initialize Supertrend state
+  let prevFinalUpperBand = Infinity;
+  let prevFinalLowerBand = 0;
+  let prevSupertrend = 0;
+  let prevDirection: "LONG" | "SHORT" = "LONG";
+
+  // Iterate through candles starting from where we have ATR
+  for (let i = 0; i < atrValues.length; i++) {
+    const candleIndex = atrPeriod + i;
+    const candle = klines[candleIndex];
+    const atr = atrValues[i];
+    
+    const high = parseFloat(candle.high);
+    const low = parseFloat(candle.low);
+    const close = parseFloat(candle.close);
+    const hl2 = (high + low) / 2;
+
+    // Calculate basic bands
+    const basicUpperBand = hl2 + (multiplier * atr);
+    const basicLowerBand = hl2 - (multiplier * atr);
+
+    // Calculate final bands (they can only move in favorable direction)
+    // Final Upper Band: can only go DOWN (tighten the stop for shorts)
+    let finalUpperBand: number;
+    if (basicUpperBand < prevFinalUpperBand || parseFloat(klines[candleIndex - 1].close) > prevFinalUpperBand) {
+      finalUpperBand = basicUpperBand;
+    } else {
+      finalUpperBand = prevFinalUpperBand;
+    }
+
+    // Final Lower Band: can only go UP (tighten the stop for longs)
+    let finalLowerBand: number;
+    if (basicLowerBand > prevFinalLowerBand || parseFloat(klines[candleIndex - 1].close) < prevFinalLowerBand) {
+      finalLowerBand = basicLowerBand;
+    } else {
+      finalLowerBand = prevFinalLowerBand;
+    }
+
+    // Determine Supertrend value and direction
+    let supertrend: number;
+    let direction: "LONG" | "SHORT";
+
+    if (prevSupertrend === prevFinalUpperBand) {
+      // Was in downtrend (using upper band)
+      if (close > finalUpperBand) {
+        // Price crossed above - flip to uptrend
+        supertrend = finalLowerBand;
+        direction = "LONG";
+      } else {
+        supertrend = finalUpperBand;
+        direction = "SHORT";
+      }
+    } else {
+      // Was in uptrend (using lower band)
+      if (close < finalLowerBand) {
+        // Price crossed below - flip to downtrend
+        supertrend = finalUpperBand;
+        direction = "SHORT";
+      } else {
+        supertrend = finalLowerBand;
+        direction = "LONG";
+      }
+    }
+
+    // Update state for next iteration
+    prevFinalUpperBand = finalUpperBand;
+    prevFinalLowerBand = finalLowerBand;
+    prevSupertrend = supertrend;
+    prevDirection = direction;
+  }
+
+  return { value: prevSupertrend, direction: prevDirection };
 }
 
 export function calculateHtfBias(
   klines4H: { high: string; low: string; close: string }[],
-  fundingRate: number | undefined
+  fundingRate: number | undefined,
+  symbol?: string
 ): HtfBias | undefined {
-  const supertrend = calculateSupertrend(klines4H, 10, 3.5);
+  // Use ATR period 14, multiplier 3.5 to match TradingView defaults
+  const supertrend = calculateSupertrend(klines4H, 14, 3.5);
   if (!supertrend) return undefined;
+  
+  // Debug logging for specific symbols
+  if (symbol && ["RIVER", "BTC", "ETH"].includes(symbol.replace("USDT", ""))) {
+    const lastCandle = klines4H[klines4H.length - 1];
+    console.log(`[SUPERTREND] ${symbol}: price=${lastCandle?.close}, ST=${supertrend.value.toFixed(4)}, dir=${supertrend.direction}`);
+  }
 
   const supertrendBias = supertrend.direction;
   const supertrendValue = supertrend.value;
@@ -858,7 +920,7 @@ export async function enrichSignalWithCoinglass(
   );
 
   // Calculate HTF bias using Supertrend (4H) + Funding Rate
-  const htfBias = calculateHtfBias(klines4H as any, fundingRate);
+  const htfBias = calculateHtfBias(klines4H as any, fundingRate, signal.symbol);
 
   return {
     priceLocation,

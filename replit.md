@@ -64,7 +64,7 @@ Both Classic view (`/api/tickers`) and Enhanced view (`/api/screen`) use the sam
 - **Priority 4**: High movers (>10% change either direction) - up to 20
 
 ## HTF Bias (Supertrend + Funding Rate)
-- **Supertrend Settings**: ATR period=10, Multiplier=3.5 (optimized for 4H crypto volatility)
+- **Supertrend Settings**: ATR period=14, Multiplier=3.5 (matches TradingView defaults)
 - **Primary Indicator**: Supertrend direction determines LONG/SHORT bias
 - **Confirmation**: Funding rate confirms or diverges from Supertrend
 - **Confidence Levels**: High (funding confirms), Medium (neutral funding), Low (funding diverges)
