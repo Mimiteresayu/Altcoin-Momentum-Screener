@@ -613,21 +613,40 @@ export function SignalTable({ signals }: SignalTableProps) {
                         className="px-2 py-2 text-center"
                         data-testid={`side-${signal.symbol}`}
                       >
-                        <Badge
-                          className={clsx(
-                            "font-bold text-[10px] px-2",
-                            signal.side === "LONG"
-                              ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/30"
-                              : "bg-rose-500/20 text-rose-400 border-rose-500/30",
-                          )}
-                        >
-                          {signal.side === "LONG" ? (
-                            <TrendingUp className="w-3 h-3 mr-0.5" />
-                          ) : (
-                            <TrendingDown className="w-3 h-3 mr-0.5" />
-                          )}
-                          {signal.side}
-                        </Badge>
+                        <Tooltip>
+                          <TooltipTrigger>
+                            <Badge
+                              className={clsx(
+                                "font-bold text-[10px] px-2",
+                                (signal.htfBias?.side ?? signal.side) === "LONG"
+                                  ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/30"
+                                  : "bg-rose-500/20 text-rose-400 border-rose-500/30",
+                              )}
+                            >
+                              {(signal.htfBias?.side ?? signal.side) === "LONG" ? (
+                                <TrendingUp className="w-3 h-3 mr-0.5" />
+                              ) : (
+                                <TrendingDown className="w-3 h-3 mr-0.5" />
+                              )}
+                              {signal.htfBias?.side ?? signal.side} (4H)
+                            </Badge>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <p className="text-xs">
+                              {signal.htfBias ? (
+                                <>
+                                  <strong>Supertrend:</strong> {signal.htfBias.supertrendBias}
+                                  <br />
+                                  <strong>Confidence:</strong> {signal.htfBias.confidence}
+                                  <br />
+                                  <strong>Funding Confirms:</strong> {signal.htfBias.fundingConfirms ? "Yes" : "No"}
+                                </>
+                              ) : (
+                                <>Based on price direction (4H data unavailable)</>
+                              )}
+                            </p>
+                          </TooltipContent>
+                        </Tooltip>
                       </td>
                       <td className="px-2 py-2 font-medium text-foreground">
                         <div className="flex items-center gap-1.5">

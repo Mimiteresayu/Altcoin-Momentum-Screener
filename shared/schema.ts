@@ -275,6 +275,14 @@ export const signalSchema = z.object({
     confidence: z.enum(["high", "medium", "low"]),
     actionSuggestion: z.string(),
   }).optional(),
+  
+  // HTF Bias (Supertrend 4H + Funding Rate)
+  htfBias: z.object({
+    side: z.enum(["LONG", "SHORT"]),
+    supertrendBias: z.enum(["LONG", "SHORT"]),
+    fundingConfirms: z.boolean(),
+    confidence: z.enum(["high", "medium", "low"]),
+  }).optional(),
 });
 
 export type Signal = z.infer<typeof signalSchema>;

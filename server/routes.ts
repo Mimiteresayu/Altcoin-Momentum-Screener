@@ -28,6 +28,7 @@ import {
   calculateHtfBias,
   type ScreenerFilters,
 } from "./screener-enrichment";
+import { getOKXKlines, getOKXFundingRate } from "./okx";
 
 interface Kline {
   openTime: number;
@@ -2301,7 +2302,7 @@ export async function registerRoutes(
     }
   });
 
-  // GET /api/screen - Returns top coins with basic Coinglass data for screening
+  // GET /120 - Returns top coins with basic Coinglass data for screening
   app.get("/api/screen", async (req, res) => {
     try {
       const limit = Math.min(parseInt(req.query.limit as string) || 20, 50);
@@ -2341,6 +2342,12 @@ export async function registerRoutes(
         volume24h: number;
         high24h: number;
         low24h: number;
+        htfBias?: {
+          side: "LONG" | "SHORT";
+          supertrendBias: "bullish" | "bearish";
+          fundingConfirms: boolean;
+          confidence: "high" | "medium" | "low";
+        };
         coinglass?: {
           oiChange24h: number | null;
           longShortRatio: number | null;
@@ -2369,6 +2376,27 @@ export async function registerRoutes(
           high24h: parseFloat(coin.high),
           low24h: parseFloat(coin.low),
         };
+
+        // Fetch OKX 4H klines and funding rate for htfBias calculation
+        try {
+          const [okxKlines, okxFundingRate] = await Promise.all([
+            getOKXKlines(cleanSymbol, "4H", 50),
+            getOKXFundingRate(cleanSymbol),
+          ]);
+          
+          if (okxKlines.length >= 14) {
+            const klines4HFormatted = okxKlines.map(k => ({
+              high: k.high,
+              low: k.low,
+              close: k.close,
+            }));
+            
+            const htfBias = calculateHtfBias(klines4HFormatted, okxFundingRate ?? undefined);
+            coinData.htfBias = htfBias;
+          }
+        } catch (err) {
+          // Skip htfBias if OKX data unavailable
+        }
 
         // Fetch Coinglass data for first 10 coins only (rate limit protection)
         if (includeCoinglass && process.env.COINGLASS_API_KEY && i < coinglassLimit) {
