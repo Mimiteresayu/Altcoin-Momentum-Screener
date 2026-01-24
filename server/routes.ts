@@ -1022,7 +1022,7 @@ export async function registerRoutes(
           } catch {
             // Ignore funding rate errors, htfBias will use supertrend only
           }
-          const htfBias = calculateHtfBias(klines4HFormatted, fundingRateForBias, symbol);
+          const htfBias = calculateHtfBias(klines4HFormatted, fundingRateForBias, item.symbol);
 
           // Coinglass data placeholder - populated from cache if available
           // Note: Full Coinglass data available via /api/coinglass/:symbol endpoint
@@ -1312,7 +1312,8 @@ export async function registerRoutes(
           });
 
           await new Promise((resolve) => setTimeout(resolve, 30));
-        } catch (err) {
+        } catch (err: any) {
+          console.log(`[SIGNAL ERROR] ${item.symbol}: ${err?.message || err}`);
           continue;
         }
       }
