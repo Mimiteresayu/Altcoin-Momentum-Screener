@@ -51,6 +51,10 @@ Preferred communication style: Simple, everyday language.
 
 ### Third-Party APIs
 - **Bitunix Futures API**: Primary data source for cryptocurrency ticker data (no authentication required for public endpoints)
+- **OKX API**: Primary source for market enrichment data (funding rates, klines, L/S ratio) - works without geo-restrictions from Replit
+  - File: `server/okx.ts`
+  - Endpoints: Funding rate, 4H/1H klines, Open Interest, Long/Short ratio
+  - No authentication required for public endpoints
 
 ### Database
 - **PostgreSQL**: Required via `DATABASE_URL` environment variable
