@@ -56,6 +56,19 @@ Preferred communication style: Simple, everyday language.
   - Endpoints: Funding rate, 4H/1H klines, Open Interest, Long/Short ratio
   - No authentication required for public endpoints
 
+## Unified Symbol Universe
+Both Classic view (`/api/tickers`) and Enhanced view (`/api/screen`) use the same symbol selection logic via `getUnifiedSymbolUniverse()`:
+- **Priority 1**: Major pairs (BTC, ETH) - always included
+- **Priority 2**: Watchlist symbols - always included regardless of volume
+- **Priority 3**: Top 50 by 24h volume
+- **Priority 4**: High movers (>10% change either direction) - up to 20
+
+## HTF Bias (Supertrend + Funding Rate)
+- **Supertrend Settings**: ATR period=10, Multiplier=3.5 (optimized for 4H crypto volatility)
+- **Primary Indicator**: Supertrend direction determines LONG/SHORT bias
+- **Confirmation**: Funding rate confirms or diverges from Supertrend
+- **Confidence Levels**: High (funding confirms), Medium (neutral funding), Low (funding diverges)
+
 ### Database
 - **PostgreSQL**: Required via `DATABASE_URL` environment variable
 - **Session Storage**: `connect-pg-simple` available for session persistence

@@ -278,7 +278,7 @@ export function calculateHtfBias(
   klines4H: { high: string; low: string; close: string }[],
   fundingRate: number | undefined
 ): HtfBias | undefined {
-  const supertrend = calculateSupertrend(klines4H, 10, 3);
+  const supertrend = calculateSupertrend(klines4H, 10, 3.5);
   if (!supertrend) return undefined;
 
   const supertrendBias = supertrend.direction;

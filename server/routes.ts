@@ -52,6 +52,76 @@ interface LiquidityCluster {
 const MAJOR_SYMBOLS = ["BTCUSDT", "ETHUSDT"];
 const UPDATE_FREQUENCY_MINUTES = 5;
 
+// Shared symbol selection logic - used by both Classic view (calculateSignals) and Enhanced view (/api/screen)
+// Ensures both views work on the SAME coin universe for consistency
+async function getUnifiedSymbolUniverse(rawData: any[]): Promise<any[]> {
+  // Get watchlist to prioritize those symbols
+  let watchlistSymbols: string[] = [];
+  try {
+    const watchlist = await getStorage().getWatchlist();
+    watchlistSymbols = watchlist.map((w) => w.symbol);
+  } catch (err) {
+    console.warn('[SYMBOLS] Could not fetch watchlist, proceeding without it');
+  }
+
+  const allSymbols = rawData.filter((t: any) => {
+    const symbol = t.symbol || "";
+    const price = parseFloat(t.lastPrice);
+    const volume = parseFloat(t.quoteVol);
+    if (symbol.includes("USDC") || (symbol.includes("USDT") && !symbol.endsWith("USDT"))) return false;
+    return price > 0 && volume > 0 && !isNaN(price) && !isNaN(volume) && symbol.endsWith("USDT");
+  });
+
+  // Priority 1: Major pairs (BTC, ETH)
+  const majorSymbols = allSymbols.filter((t: any) =>
+    MAJOR_SYMBOLS.includes(t.symbol),
+  );
+
+  // Priority 2: Watchlist symbols (always analyze regardless of volume)
+  const watchedSymbols = allSymbols.filter(
+    (t: any) =>
+      watchlistSymbols.includes(t.symbol) &&
+      !MAJOR_SYMBOLS.includes(t.symbol),
+  );
+
+  // Priority 3: Top 50 by volume (excluding already selected)
+  const selectedSymbols = new Set([...MAJOR_SYMBOLS, ...watchlistSymbols]);
+  const otherSymbols = allSymbols
+    .filter((t: any) => !selectedSymbols.has(t.symbol))
+    .sort((a: any, b: any) => parseFloat(b.quoteVol) - parseFloat(a.quoteVol))
+    .slice(0, 50);
+
+  // Priority 4: High movers (>10% change) not already selected - catch early spikes!
+  const highMovers = allSymbols
+    .filter((t: any) => {
+      if (selectedSymbols.has(t.symbol)) return false;
+      if (otherSymbols.some((o: any) => o.symbol === t.symbol)) return false;
+      const price = parseFloat(t.lastPrice);
+      const open = parseFloat(t.open);
+      const change = ((price - open) / open) * 100;
+      return change >= 10 || change <= -10; // Big movers either direction
+    })
+    .slice(0, 20);
+
+  const symbolsToProcess = [
+    ...majorSymbols,
+    ...watchedSymbols,
+    ...otherSymbols,
+    ...highMovers,
+  ];
+  
+  // Remove duplicates
+  const uniqueSymbols = Array.from(
+    new Map(symbolsToProcess.map((s) => [s.symbol, s])).values(),
+  );
+
+  console.log(
+    `[SYMBOLS] Unified universe: ${majorSymbols.length} major, ${watchedSymbols.length} watched, ${otherSymbols.length} volume, ${highMovers.length} movers = ${uniqueSymbols.length} total`,
+  );
+
+  return uniqueSymbols;
+}
+
 // Cache for OI data from Coinglass/Binance
 let oiDataCache: Map<string, number> = new Map();
 let binanceOiHistory: Map<string, number> = new Map(); // Binance-only history for change calculation
@@ -870,67 +940,10 @@ export async function registerRoutes(
 
       const signals: any[] = [];
 
-      // Get watchlist to prioritize those symbols
-      let watchlistSymbols: string[] = [];
-      try {
-        const watchlist = await getStorage().getWatchlist();
-        watchlistSymbols = watchlist.map((w) => w.symbol);
-      } catch (err) {
-        console.warn('[SIGNALS] Could not fetch watchlist, proceeding without it');
-      }
-
-      const allSymbols = rawData.filter((t: any) => {
-        const price = parseFloat(t.lastPrice);
-        const open = parseFloat(t.open);
-        return price > 0 && open > 0 && !isNaN(price) && !isNaN(open);
-      });
-
-      // Priority 1: Major pairs (BTC, ETH)
-      const majorSymbols = allSymbols.filter((t: any) =>
-        MAJOR_SYMBOLS.includes(t.symbol),
-      );
-
-      // Priority 2: Watchlist symbols (always analyze regardless of volume)
-      const watchedSymbols = allSymbols.filter(
-        (t: any) =>
-          watchlistSymbols.includes(t.symbol) &&
-          !MAJOR_SYMBOLS.includes(t.symbol),
-      );
-
-      // Priority 3: Top 50 by volume (excluding already selected)
-      const selectedSymbols = new Set([...MAJOR_SYMBOLS, ...watchlistSymbols]);
-      const otherSymbols = allSymbols
-        .filter((t: any) => !selectedSymbols.has(t.symbol))
-        .sort(
-          (a: any, b: any) => parseFloat(b.quoteVol) - parseFloat(a.quoteVol),
-        )
-        .slice(0, 50);
-
-      // Priority 4: High movers (>10% change) not already selected - catch early spikes!
-      const highMovers = allSymbols
-        .filter((t: any) => {
-          if (selectedSymbols.has(t.symbol)) return false;
-          const price = parseFloat(t.lastPrice);
-          const open = parseFloat(t.open);
-          const change = ((price - open) / open) * 100;
-          return change >= 10 || change <= -10; // Big movers either direction
-        })
-        .slice(0, 20);
-
-      const symbolsToProcess = [
-        ...majorSymbols,
-        ...watchedSymbols,
-        ...otherSymbols,
-        ...highMovers,
-      ];
-      // Remove duplicates
-      const uniqueSymbols = Array.from(
-        new Map(symbolsToProcess.map((s) => [s.symbol, s])).values(),
-      );
-
-      console.log(
-        `Processing ${uniqueSymbols.length} symbols (${majorSymbols.length} major, ${watchedSymbols.length} watched, ${otherSymbols.length} top volume, ${highMovers.length} high movers)...`,
-      );
+      // Use shared symbol selection logic for consistency with Enhanced view
+      const uniqueSymbols = await getUnifiedSymbolUniverse(rawData);
+      
+      console.log(`Processing ${uniqueSymbols.length} symbols from unified universe...`);
 
       // Fetch OI data for all symbols (with Binance fallback if no Coinglass API key)
       const symbolList = uniqueSymbols.map((s: any) => s.symbol);
@@ -2302,13 +2315,13 @@ export async function registerRoutes(
     }
   });
 
-  // GET /120 - Returns top coins with basic Coinglass data for screening
+  // GET /api/screen - Returns coins using SAME symbol universe as Classic view for consistency
   app.get("/api/screen", async (req, res) => {
     try {
       const limit = Math.min(parseInt(req.query.limit as string) || 20, 50);
       const includeCoinglass = req.query.coinglass !== "false";
       
-      console.log(`[SCREEN] Fetching top ${limit} coins...`);
+      console.log(`[SCREEN] Fetching unified symbol universe (up to ${limit} coins)...`);
       
       // Fetch market data from Bitunix
       const response = await axios.get(
@@ -2322,17 +2335,11 @@ export async function registerRoutes(
         return;
       }
 
-      // Filter and sort by volume
-      const validCoins = rawData
-        .filter((t: any) => {
-          const symbol = t.symbol || "";
-          const price = parseFloat(t.lastPrice);
-          const volume = parseFloat(t.quoteVol);
-          if (symbol.includes("USDC") || (symbol.includes("USDT") && !symbol.endsWith("USDT"))) return false;
-          return price > 0 && volume > 0 && !isNaN(price) && !isNaN(volume) && symbol.endsWith("USDT");
-        })
-        .sort((a: any, b: any) => parseFloat(b.quoteVol) - parseFloat(a.quoteVol))
-        .slice(0, limit);
+      // Use shared symbol selection logic for consistency with Classic view
+      const unifiedSymbols = await getUnifiedSymbolUniverse(rawData);
+      const validCoins = unifiedSymbols.slice(0, limit);
+
+      console.log(`[SCREEN] Using ${validCoins.length} of ${unifiedSymbols.length} unified universe coins`);
 
       // Build screen data
       const screenData: Array<{
