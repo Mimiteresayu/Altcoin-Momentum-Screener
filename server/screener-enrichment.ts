@@ -23,7 +23,7 @@ import { getBinanceFuturesData, getBinanceKlines } from "./binance";
 import { getOKXMarketData, getOKXFundingRate, getOKXKlines } from "./okx";
 
 type PriceLocation = "DISCOUNT" | "NEUTRAL" | "PREMIUM";
-type MarketPhase = "ACCUMULATION" | "BREAKOUT" | "DISTRIBUTION" | "TREND" | "EXHAUST" | "SMART_MONEY";
+type MarketPhase = "ACCUMULATION" | "BREAKOUT" | "DISTRIBUTION" | "TREND" | "EXHAUST";
 type Confidence = "high" | "medium" | "low";
 
 type HtfBias = {
@@ -79,7 +79,7 @@ export function calculatePriceLocation(
 /**
  * Market Phase Detection - Exact Google Doc Definitions
  * 
- * 6 Phases: ACCUMULATION | BREAKOUT | DISTRIBUTION | TREND | EXHAUST | SMART_MONEY
+ * 5 Phases: ACCUMULATION | BREAKOUT | DISTRIBUTION | TREND | EXHAUST
  */
 export function calculateMarketPhase(
   volumeSpike: number,
@@ -116,19 +116,19 @@ export function calculateMarketPhase(
     }
   }
 
-  // ===== 2. SMART_MONEY: Squeeze Setup - Absorption before explosive move =====
-  // Formula: (Math.abs(priceChange) < 2%) AND (volumeSpike >= 2.0) AND (fundingRate < 0 OR fundingRate < 0.005%) AND (oiChange > 0)
-  // Price flat but high volume = absorption, OI building, funding negative/low
+  // ===== 2. ACCUMULATION (Squeeze/Absorption variant): Smart money building =====
+  // Flat price + high volume + building OI = absorption/squeeze setup
+  // Merged from SMART_MONEY phase - same concept as accumulation
   
   if (Math.abs(priceChange) < 2 && volumeSpike >= 2.0 && oiDelta > 0) {
-    if (fr < 0 || fr < 0.00005) { // 0.005% = 0.00005
-      return "SMART_MONEY";
+    if (fr < 0 || fr < 0.00005) { // 0.005% = 0.00005 - negative funding = squeeze setup
+      return "ACCUMULATION";
     }
   }
   
   // High volume absorption with flat price and building OI
   if (Math.abs(priceChange) < 2 && volumeSpike >= 2.0 && oiDelta > 5) {
-    return "SMART_MONEY";
+    return "ACCUMULATION";
   }
 
   // ===== 3. BREAKOUT: Explosive Momentum - Confirmed directional move =====
@@ -286,9 +286,9 @@ export function calculateMarketPhaseAlt(
     
     // Moderate OI changes - use secondary indicators
     if (Math.abs(oiDelta) <= 2 && Math.abs(priceChange) <= 2) {
-      // Consolidation with high volume = SMART_MONEY absorption
+      // Consolidation with high volume = absorption (smart money accumulating)
       if (volumeSpike >= 2.0) {
-        return "SMART_MONEY";
+        return "ACCUMULATION";
       }
       // Slight OI increase with flat price = quiet accumulation
       if (oiDelta > 0 && volumeSpike >= 0.8) {
@@ -708,13 +708,6 @@ function generateStorytelling(
       actionSuggestion =
         "AVOID new entries. Tighten stops on existing positions. Expect reversal.";
       confidence = "medium";
-      break;
-
-    case "SMART_MONEY":
-      summary = `${signal.symbol} SMART_MONEY squeeze setup detected`;
-      interpretation = `Absorption pattern: high volume despite flat price = smart money building. ${oiDesc} confirms position accumulation. ${fundingBias === "bearish" ? "Negative funding suggests squeeze setup." : ""}`;
-      actionSuggestion = "Prepare for explosive move. Consider scaling into position ahead of squeeze.";
-      confidence = "high";
       break;
 
     default:

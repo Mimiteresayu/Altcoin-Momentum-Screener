@@ -59,9 +59,10 @@ interface EnhancedSignal {
     | "ACCUMULATION"
     | "DISTRIBUTION"
     | "BREAKOUT"
+    | "TREND"
     | "EXHAUST"
     | "UNKNOWN";
-  marketPhaseAlt?: string;
+  entryModel?: string;
   preSpikeScore?: number;
   fundingRate?: number;
   fundingBias?: "bullish" | "bearish" | "neutral";
@@ -197,6 +198,12 @@ export function EnhancedScreener() {
             BREAKOUT
           </Badge>
         );
+      case "TREND":
+        return (
+          <Badge className="bg-blue-500/20 text-blue-400 border-blue-500/30">
+            TREND
+          </Badge>
+        );
       case "EXHAUST":
         return (
           <Badge className="bg-rose-500/20 text-rose-400 border-rose-500/30">
@@ -211,6 +218,95 @@ export function EnhancedScreener() {
             NEUTRAL
           </Badge>
         );
+    }
+  };
+
+  const getEntryBadge = (entry: string | undefined, phase: string | undefined) => {
+    const model = entry || getDefaultEntry(phase);
+    switch (model) {
+      case "BUY DIP":
+        return (
+          <Badge className="bg-emerald-500/20 text-emerald-400 border-emerald-500/30">
+            BUY DIP
+          </Badge>
+        );
+      case "SCALE IN":
+        return (
+          <Badge className="bg-teal-500/20 text-teal-400 border-teal-500/30">
+            SCALE IN
+          </Badge>
+        );
+      case "BOS ENTRY":
+        return (
+          <Badge className="bg-cyan-500/20 text-cyan-400 border-cyan-500/30 animate-pulse">
+            BOS
+          </Badge>
+        );
+      case "FVG ENTRY":
+        return (
+          <Badge className="bg-blue-500/20 text-blue-400 border-blue-500/30">
+            FVG
+          </Badge>
+        );
+      case "PULLBACK":
+        return (
+          <Badge className="bg-indigo-500/20 text-indigo-400 border-indigo-500/30">
+            PULLBACK
+          </Badge>
+        );
+      case "ADD":
+        return (
+          <Badge className="bg-violet-500/20 text-violet-400 border-violet-500/30">
+            ADD
+          </Badge>
+        );
+      case "TAKE PROFIT":
+        return (
+          <Badge className="bg-amber-500/20 text-amber-400 border-amber-500/30">
+            TP
+          </Badge>
+        );
+      case "SHORT SETUP":
+        return (
+          <Badge className="bg-rose-500/20 text-rose-400 border-rose-500/30">
+            SHORT
+          </Badge>
+        );
+      case "AVOID":
+        return (
+          <Badge className="bg-red-500/20 text-red-400 border-red-500/30">
+            AVOID
+          </Badge>
+        );
+      case "REVERSAL":
+        return (
+          <Badge className="bg-orange-500/20 text-orange-400 border-orange-500/30">
+            REVERSAL
+          </Badge>
+        );
+      default:
+        return (
+          <Badge className="bg-slate-500/20 text-slate-400 border-slate-500/30">
+            WAIT
+          </Badge>
+        );
+    }
+  };
+
+  const getDefaultEntry = (phase: string | undefined): string => {
+    switch (phase) {
+      case "ACCUMULATION":
+        return "BUY DIP";
+      case "BREAKOUT":
+        return "BOS ENTRY";
+      case "TREND":
+        return "PULLBACK";
+      case "DISTRIBUTION":
+        return "TAKE PROFIT";
+      case "EXHAUST":
+        return "AVOID";
+      default:
+        return "WAIT";
     }
   };
 
@@ -450,7 +546,28 @@ export function EnhancedScreener() {
                         </TooltipContent>
                       </Tooltip>
                     </th>
-                    <th className="px-2 py-2 text-center">PHASE-ALT</th>
+                    <th className="px-2 py-2 text-center">
+                      <Tooltip>
+                        <TooltipTrigger className="flex items-center gap-1 cursor-help">
+                          ENTRY <Info className="w-3 h-3" />
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p className="text-xs max-w-[200px]">
+                            <strong>Entry Model Setup:</strong>
+                            <br />
+                            BUY DIP / SCALE IN = Accumulation entries
+                            <br />
+                            BOS / FVG = Breakout entries
+                            <br />
+                            PULLBACK / ADD = Trend entries
+                            <br />
+                            TAKE PROFIT / SHORT = Distribution
+                            <br />
+                            AVOID / REVERSAL = Exhaustion
+                          </p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </th>
                     <th className="px-2 py-2 text-center">
                       <Tooltip>
                         <TooltipTrigger className="flex items-center gap-1 cursor-help">
@@ -656,7 +773,7 @@ export function EnhancedScreener() {
                           {getPhaseBadge(signal.marketPhase)}
                         </td>
                         <td className="px-2 py-2 text-center">
-                          {getPhaseBadge(signal.marketPhaseAlt || "NEUTRAL")}
+                          {getEntryBadge(signal.entryModel, signal.marketPhase)}
                         </td>
                         <td className="px-2 py-2 text-center">
                           {getPScoreBadge(signal.preSpikeScore)}
