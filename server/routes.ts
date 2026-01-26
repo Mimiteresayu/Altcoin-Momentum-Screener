@@ -2551,18 +2551,66 @@ export async function registerRoutes(
         return;
       }
 
-      // Filter valid symbols and sort by volume
-      const validCoins = rawData
-        .filter((t: any) => {
-          const symbol = t.symbol || "";
-          const price = parseFloat(t.lastPrice);
-          const volume = parseFloat(t.quoteVol);
-          if (!symbol.endsWith("USDT")) return false;
-          if (symbol.includes("USDC")) return false;
-          return price > 0 && volume > 0 && !isNaN(price) && !isNaN(volume);
-        })
-        .sort((a: any, b: any) => parseFloat(b.quoteVol) - parseFloat(a.quoteVol))
-        .slice(0, limit);
+      // Use shared symbol selection logic for consistency with Classic view
+      const unifiedSymbols = await getUnifiedSymbolUniverse(rawData);
+      
+      // Apply Classic View signal filters (HOT, ACTIVE, PRE, MAJOR)
+      const filteredCoins: any[] = [];
+      const signalTypesMap: Map<string, string> = new Map();
+      const coinDataMap: Map<string, { rsi: number; volumeSpikeRatio: number; priceChange24h: number }> = new Map();
+      
+      for (const coin of unifiedSymbols) {
+        const symbol = coin.symbol;
+        const price = parseFloat(coin.lastPrice);
+        const open = parseFloat(coin.open);
+        const priceChange24h = open > 0 ? ((price - open) / open) * 100 : 0;
+        const isMajor = MAJOR_SYMBOLS.includes(symbol);
+        
+        // Fetch 1H klines for RSI and volume spike calculation
+        let rsi = 50;
+        let volumeSpikeRatio = 1.0;
+        try {
+          const klines1H = await fetchKlines(symbol, "1h", 100);
+          if (klines1H.length >= 14) {
+            const closes = klines1H.map(k => k.close);
+            const volumes = klines1H.map(k => k.volume);
+            rsi = calculateRSI(closes);
+            volumeSpikeRatio = calculateVolumeSpike(volumes);
+          }
+        } catch {
+          // Use defaults if klines unavailable
+        }
+        
+        // Apply Classic View signal type filters
+        const isHotMomentum = priceChange24h >= 20 && volumeSpikeRatio >= 2.0;
+        const isActiveMomentum = !isHotMomentum && 
+          volumeSpikeRatio >= 1.0 && 
+          priceChange24h >= 5 && priceChange24h <= 60 && 
+          rsi >= 50 && rsi <= 85;
+        const isPreConsolidation = 
+          volumeSpikeRatio >= 0.5 && volumeSpikeRatio < 1.0 && 
+          priceChange24h >= -8 && priceChange24h <= 15 && 
+          rsi >= 35 && rsi <= 65;
+        // MAJOR: Always include BTC/ETH regardless of volume
+        const isMajorQualified = isMajor;
+        
+        // Determine signal type
+        let signalType: string | null = null;
+        if (isHotMomentum) signalType = "HOT";
+        else if (isMajorQualified) signalType = "MAJOR";
+        else if (isActiveMomentum) signalType = "ACTIVE";
+        else if (isPreConsolidation) signalType = "PRE";
+        
+        // Only include if matches a signal category
+        if (signalType !== null) {
+          filteredCoins.push(coin);
+          signalTypesMap.set(symbol, signalType);
+          coinDataMap.set(symbol, { rsi, volumeSpikeRatio, priceChange24h });
+        }
+      }
+      
+      const validCoins = filteredCoins.slice(0, limit);
+      console.log(`[ENHANCED-SCREENER] Filtered to ${validCoins.length} signals from ${unifiedSymbols.length} universe coins`);
 
       // Build signals with enriched data
       const signals: any[] = [];
@@ -2578,15 +2626,12 @@ export async function registerRoutes(
         const high24h = parseFloat(coin.high);
         const low24h = parseFloat(coin.low);
         const volume = parseFloat(coin.quoteVol);
-        const priceChange24h = open > 0 ? ((price - open) / open) * 100 : 0;
         
-        // Estimate volume spike (simplified without historical data)
-        const avgVolume = volume * 0.7; // Rough estimate
-        const volumeSpikeRatio = avgVolume > 0 ? volume / avgVolume : 1;
-        
-        // Calculate basic RSI placeholder
-        const rsi = 50 + (priceChange24h * 2); // Simplified RSI estimate based on price change
-        const clampedRsi = Math.max(20, Math.min(80, rsi));
+        // Get cached data from filtering pass
+        const cachedData = coinDataMap.get(symbol);
+        const rsi = cachedData?.rsi ?? 50;
+        const volumeSpikeRatio = cachedData?.volumeSpikeRatio ?? 1.0;
+        const priceChange24h = cachedData?.priceChange24h ?? (open > 0 ? ((price - open) / open) * 100 : 0);
         
         // Calculate price location
         const priceLocation = calculatePriceLocation(price, high24h, low24h);
@@ -2595,7 +2640,7 @@ export async function registerRoutes(
         const marketPhase = calculateMarketPhase(
           volumeSpikeRatio,
           undefined, // OI will be fetched if enriching
-          clampedRsi,
+          rsi,
           priceChange24h,
           undefined,
           priceLocation
@@ -2603,30 +2648,14 @@ export async function registerRoutes(
         
         // Calculate alternative market phase using RSI-based method
         const marketPhaseAlt = calculateMarketPhaseAlt(
-          clampedRsi,
+          rsi,
           priceChange24h,
           volumeSpikeRatio,
           priceLocation
         );
         
-        // Determine signal type using same logic as Classic View
-        const isMajor = symbol === "BTCUSDT" || symbol === "ETHUSDT";
-        const isHotMomentum = priceChange24h >= 20 && volumeSpikeRatio >= 2.0;
-        const isActiveMomentum = !isHotMomentum && 
-          volumeSpikeRatio >= 1.0 && 
-          priceChange24h >= 5 && priceChange24h <= 60 && 
-          clampedRsi >= 50 && clampedRsi <= 85;
-        const isPreConsolidation = 
-          volumeSpikeRatio >= 0.5 && volumeSpikeRatio < 1.0 && 
-          priceChange24h >= -8 && priceChange24h <= 15 && 
-          clampedRsi >= 35 && clampedRsi <= 65;
-        
-        let signalType: "HOT" | "MAJOR" | "ACTIVE" | "PRE" | null = null;
-        if (isHotMomentum) signalType = "HOT";
-        else if (isMajor) signalType = "MAJOR";
-        else if (isActiveMomentum) signalType = "ACTIVE";
-        else if (isPreConsolidation) signalType = "PRE";
-        else signalType = "PRE"; // Default to PRE for all other signals
+        // Get signal type from filtering pass
+        const signalType = signalTypesMap.get(symbol) as "HOT" | "MAJOR" | "ACTIVE" | "PRE";
         
         // Build base signal
         const signal: any = {
