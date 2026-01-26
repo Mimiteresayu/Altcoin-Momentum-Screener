@@ -2537,101 +2537,34 @@ export async function registerRoutes(
       const limit = Math.min(parseInt(req.query.limit as string) || 30, 50);
       const enrichCoinglass = req.query.enrich !== "false";
       
-      console.log(`[ENHANCED-SCREENER] Fetching signals with filters:`, filters);
+      console.log(`[ENHANCED-SCREENER] Using cachedSignals from Classic View (${cachedSignals.length} signals)`);
       
-      // Fetch market data from Bitunix
-      const response = await axios.get(
-        "https://fapi.bitunix.com/api/v1/futures/market/tickers",
-        { timeout: 10000 }
-      );
-      
-      const rawData = response.data.data;
-      if (!Array.isArray(rawData)) {
-        res.status(500).json({ error: "Failed to fetch market data" });
-        return;
-      }
-
-      // Use shared symbol selection logic for consistency with Classic view
-      const unifiedSymbols = await getUnifiedSymbolUniverse(rawData);
-      
-      // Apply Classic View signal filters (HOT, ACTIVE, PRE, MAJOR)
-      const filteredCoins: any[] = [];
-      const signalTypesMap: Map<string, string> = new Map();
-      const coinDataMap: Map<string, { rsi: number; volumeSpikeRatio: number; priceChange24h: number }> = new Map();
-      
-      for (const coin of unifiedSymbols) {
-        const symbol = coin.symbol;
-        const price = parseFloat(coin.lastPrice);
-        const open = parseFloat(coin.open);
-        const priceChange24h = open > 0 ? ((price - open) / open) * 100 : 0;
-        const isMajor = MAJOR_SYMBOLS.includes(symbol);
-        
-        // Fetch 1H klines for RSI and volume spike calculation
-        let rsi = 50;
-        let volumeSpikeRatio = 1.0;
-        try {
-          const klines1H = await fetchKlines(symbol, "1h", 100);
-          if (klines1H.length >= 14) {
-            const closes = klines1H.map(k => k.close);
-            const volumes = klines1H.map(k => k.volume);
-            rsi = calculateRSI(closes);
-            volumeSpikeRatio = calculateVolumeSpike(volumes);
-          }
-        } catch {
-          // Use defaults if klines unavailable
-        }
-        
-        // Apply Classic View signal type filters
-        const isHotMomentum = priceChange24h >= 20 && volumeSpikeRatio >= 2.0;
-        const isActiveMomentum = !isHotMomentum && 
-          volumeSpikeRatio >= 1.0 && 
-          priceChange24h >= 5 && priceChange24h <= 60 && 
-          rsi >= 50 && rsi <= 85;
-        const isPreConsolidation = 
-          volumeSpikeRatio >= 0.5 && volumeSpikeRatio < 1.0 && 
-          priceChange24h >= -8 && priceChange24h <= 15 && 
-          rsi >= 35 && rsi <= 65;
-        // MAJOR: Always include BTC/ETH regardless of volume
-        const isMajorQualified = isMajor;
-        
-        // Determine signal type
-        let signalType: string | null = null;
-        if (isHotMomentum) signalType = "HOT";
-        else if (isMajorQualified) signalType = "MAJOR";
-        else if (isActiveMomentum) signalType = "ACTIVE";
-        else if (isPreConsolidation) signalType = "PRE";
-        
-        // Only include if matches a signal category
-        if (signalType !== null) {
-          filteredCoins.push(coin);
-          signalTypesMap.set(symbol, signalType);
-          coinDataMap.set(symbol, { rsi, volumeSpikeRatio, priceChange24h });
-        }
+      // USE THE SAME cachedSignals AS CLASSIC VIEW - this ensures both views show identical symbols
+      if (cachedSignals.length === 0) {
+        console.log(`[ENHANCED-SCREENER] No cached signals available, triggering calculation...`);
+        await calculateSignals();
       }
       
-      const validCoins = filteredCoins.slice(0, limit);
-      console.log(`[ENHANCED-SCREENER] Filtered to ${validCoins.length} signals from ${unifiedSymbols.length} universe coins`);
+      // Take the same signals from cachedSignals
+      const validSignals = cachedSignals.slice(0, limit);
+      console.log(`[ENHANCED-SCREENER] Processing ${validSignals.length} signals from cachedSignals`);
 
-      // Build signals with enriched data
+      // Build enhanced signals from cachedSignals data
       const signals: any[] = [];
       
       // Limit Coinglass enrichment to first 15 to respect rate limits
-      const enrichLimit = Math.min(validCoins.length, 15);
+      const enrichLimit = Math.min(validSignals.length, 15);
 
-      for (let i = 0; i < validCoins.length; i++) {
-        const coin = validCoins[i];
-        const symbol = coin.symbol;
-        const price = parseFloat(coin.lastPrice);
-        const open = parseFloat(coin.open);
-        const high24h = parseFloat(coin.high);
-        const low24h = parseFloat(coin.low);
-        const volume = parseFloat(coin.quoteVol);
-        
-        // Get cached data from filtering pass
-        const cachedData = coinDataMap.get(symbol);
-        const rsi = cachedData?.rsi ?? 50;
-        const volumeSpikeRatio = cachedData?.volumeSpikeRatio ?? 1.0;
-        const priceChange24h = cachedData?.priceChange24h ?? (open > 0 ? ((price - open) / open) * 100 : 0);
+      for (let i = 0; i < validSignals.length; i++) {
+        const classicSignal = validSignals[i];
+        const symbol = classicSignal.symbol;
+        const price = classicSignal.currentPrice;
+        const high24h = classicSignal.high24h || price * 1.05;
+        const low24h = classicSignal.low24h || price * 0.95;
+        const volume = classicSignal.volume24h || 0;
+        const priceChange24h = classicSignal.priceChange24h || 0;
+        const volumeSpikeRatio = classicSignal.volumeSpikeRatio || 1.0;
+        const rsi = classicSignal.rsi || 50;
         
         // Calculate price location
         const priceLocation = calculatePriceLocation(price, high24h, low24h);
@@ -2639,7 +2572,7 @@ export async function registerRoutes(
         // Calculate market phase (with estimated values)
         const marketPhase = calculateMarketPhase(
           volumeSpikeRatio,
-          undefined, // OI will be fetched if enriching
+          classicSignal.oiChange24h,
           rsi,
           priceChange24h,
           undefined,
@@ -2654,38 +2587,38 @@ export async function registerRoutes(
           priceLocation
         );
         
-        // Get signal type from filtering pass
-        const signalType = signalTypesMap.get(symbol) as "HOT" | "MAJOR" | "ACTIVE" | "PRE";
+        // Use signalType from Classic View
+        const signalType = classicSignal.signalType as "HOT" | "MAJOR" | "ACTIVE" | "PRE";
         
-        // Build base signal
+        // Build base signal from Classic View data
         const signal: any = {
           symbol,
           signalType,
-          side: priceChange24h > 0 ? "LONG" : "SHORT",
+          side: classicSignal.side || (priceChange24h > 0 ? "LONG" : "SHORT"),
           currentPrice: price,
           priceChange24h,
           volumeSpikeRatio,
-          volAccel: undefined,
-          oiChange24h: undefined,
-          rsi: clampedRsi,
-          entryPrice: price * (priceChange24h > 0 ? 0.995 : 1.005),
-          slPrice: price * (priceChange24h > 0 ? 0.95 : 1.05),
-          slDistancePct: 5,
-          slReason: "5% default stop",
-          tpLevels: [
+          volAccel: classicSignal.volAccel,
+          oiChange24h: classicSignal.oiChange24h,
+          rsi,
+          entryPrice: classicSignal.entryPrice || price * (priceChange24h > 0 ? 0.995 : 1.005),
+          slPrice: classicSignal.slPrice || price * (priceChange24h > 0 ? 0.95 : 1.05),
+          slDistancePct: classicSignal.slDistancePct || 5,
+          slReason: classicSignal.slReason || "5% default stop",
+          tpLevels: classicSignal.tpLevels || [
             { label: "TP1", price: price * (priceChange24h > 0 ? 1.03 : 0.97), pct: 3, reason: "3% target" },
             { label: "TP2", price: price * (priceChange24h > 0 ? 1.06 : 0.94), pct: 6, reason: "6% target" },
           ],
-          riskReward: 1.2,
-          signalStrength: 3,
-          strengthBreakdown: {
+          riskReward: classicSignal.riskReward || 1.2,
+          signalStrength: classicSignal.signalStrength || 3,
+          strengthBreakdown: classicSignal.strengthBreakdown || {
             priceInRange: true,
             volumeInRange: volumeSpikeRatio >= 2,
-            rsiInRange: clampedRsi >= 40 && clampedRsi <= 70,
+            rsiInRange: rsi >= 40 && rsi <= 70,
             rrInRange: true,
             hasLeadingIndicators: false,
           },
-          leadingIndicators: {
+          leadingIndicators: classicSignal.leadingIndicators || {
             hasFVG: false,
             hasOB: false,
             hasLiquidityGrab: false,
@@ -2695,8 +2628,8 @@ export async function registerRoutes(
             liquidityLevel: null,
             liquidityStrength: 0,
           },
-          timeframes: [],
-          confirmedTimeframes: [],
+          timeframes: classicSignal.timeframes || [],
+          confirmedTimeframes: classicSignal.confirmedTimeframes || [],
           isMajor: symbol === "BTCUSDT" || symbol === "ETHUSDT",
           high24h,
           low24h,
