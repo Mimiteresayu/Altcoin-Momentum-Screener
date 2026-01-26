@@ -24,9 +24,9 @@ import {
   applyScreenerFilters,
   calculatePriceLocation,
   calculateMarketPhase,
-  calculateMarketPhaseAlt,
   calculatePreSpikeScore,
   calculateHtfBias,
+  calculateEntryModel,
   type ScreenerFilters,
 } from "./screener-enrichment";
 import { getOKXKlines, getOKXFundingRate } from "./okx";
@@ -2582,7 +2582,6 @@ export async function registerRoutes(
         );
         
         // Calculate entry model based on phase and RSI (will be refined with enrichment)
-        const { calculateEntryModel } = await import("./screener-enrichment");
         const entryModel = calculateEntryModel(
           marketPhase,
           rsi,

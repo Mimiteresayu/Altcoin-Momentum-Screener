@@ -47,7 +47,8 @@ Preferred communication style: Simple, everyday language.
 - **HTF Bias**: Utilizes Supertrend and Funding Rate for determining LONG/SHORT bias and confidence levels.
 - **Enhanced Screener**: Incorporates fields like priceLocation, marketPhase, preSpikeScore, fundingRate, longShortRatio, FVG/OB levels, liquidation zones, and AI-generated storytelling.
 - **PSCORE Calculation**: A composite score (0-5) based on volume spike, acceleration, OI change, RSI, risk/reward, and signal strength.
-- **Market Phase Detection**: Identifies ACCUMULATION, DISTRIBUTION, BREAKOUT, and EXHAUST phases.
+- **Market Phase Detection**: 5-phase system (ACCUMULATION, BREAKOUT, DISTRIBUTION, TREND, EXHAUST) based on SMC + Order Flow analysis.
+- **Entry Model Recommendations**: Actionable entry suggestions based on phase and candlestick patterns (BUY DIP, BOS ENTRY, FVG ENTRY, PULLBACK, TAKE PROFIT, etc.).
 - **Signal Direction**: Determines LONG/SHORT bias using multi-factor scoring (Price Trend, RSI, Volume, OI, Market Structure).
 - **Discord Notifications**: Sends formatted embed messages for key signals.
 - **Real-Time Comments**: WebSocket-based live comments with persistence to PostgreSQL.
@@ -57,10 +58,13 @@ Preferred communication style: Simple, everyday language.
 ## External Dependencies
 
 ### Third-Party APIs
-- **Bitunix Futures API**: Primary data source for real-time cryptocurrency ticker data.
-- **OKX API**: Provides market enrichment data such as funding rates, klines, and L/S ratios.
+- **Bitunix Futures API**: Primary data source for real-time cryptocurrency ticker data and symbol list. All symbols shown in the screener come directly from Bitunix's futures market.
+- **OKX API**: Primary enrichment source for funding rates, klines (4H/1H), and Long/Short ratios. Used for candlestick analysis and HTF bias calculation.
+- **Binance Futures API**: Fallback for Open Interest data when OKX is unavailable.
 - **Coinalyze API**: Used for Open Interest data (requires API key).
-- **Coinglass API (v4)**: Provides extensive enhanced market data, including funding rates, accumulation/distribution scores, and momentum strength classification (requires API key).
+- **Coinglass API (v4)**: Fallback enrichment source for funding rates, accumulation/distribution scores, and momentum strength classification (requires API key).
+
+**Note**: All symbols displayed in Classic and Enhanced views come from Bitunix Futures. If a symbol appears in the screener, it is available for trading on Bitunix.
 
 ### Database
 - **PostgreSQL**: Used for persistent storage, including session data, watchlist items, autotrade configurations, trades, and comments.
