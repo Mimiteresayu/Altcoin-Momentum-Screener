@@ -1090,8 +1090,8 @@ export async function registerRoutes(
             rsi >= 35 &&
             rsi <= 65;
 
-          // MAJOR criteria: VOL >= 0.5x, any price range
-          const isMajorQualified = isMajor && volumeSpikeRatio >= 0.5;
+          // MAJOR: Always include BTC/ETH regardless of volume
+          const isMajorQualified = isMajor;
 
           // Determine signal type (priority order: HOT > MAJOR > ACTIVE > PRE)
           let signalType: "HOT" | "ACTIVE" | "PRE" | "MAJOR" | null = null;
@@ -2316,13 +2316,13 @@ export async function registerRoutes(
     }
   });
 
-  // GET /api/screen - Returns coins using SAME symbol universe as Classic view for consistency
+  // GET /api/screen - Returns coins using SAME symbol universe AND signal filters as Classic view
   app.get("/api/screen", async (req, res) => {
     try {
-      const limit = Math.min(parseInt(req.query.limit as string) || 20, 50);
+      const limit = Math.min(parseInt(req.query.limit as string) || 30, 50);
       const includeCoinglass = req.query.coinglass !== "false";
       
-      console.log(`[SCREEN] Fetching unified symbol universe (up to ${limit} coins)...`);
+      console.log(`[SCREEN] Fetching unified symbol universe with Classic View filters...`);
       
       // Fetch market data from Bitunix
       const response = await axios.get(
@@ -2338,9 +2338,64 @@ export async function registerRoutes(
 
       // Use shared symbol selection logic for consistency with Classic view
       const unifiedSymbols = await getUnifiedSymbolUniverse(rawData);
-      const validCoins = unifiedSymbols.slice(0, limit);
-
-      console.log(`[SCREEN] Using ${validCoins.length} of ${unifiedSymbols.length} unified universe coins`);
+      
+      // Apply Classic View signal filters (HOT, ACTIVE, PRE, MAJOR)
+      const filteredCoins: any[] = [];
+      const signalTypes: Map<string, string> = new Map();
+      
+      for (const coin of unifiedSymbols) {
+        const symbol = coin.symbol;
+        const cleanSymbol = symbol.replace("USDT", "");
+        const price = parseFloat(coin.lastPrice);
+        const open = parseFloat(coin.open);
+        const priceChange24h = open > 0 ? ((price - open) / open) * 100 : 0;
+        const isMajor = MAJOR_SYMBOLS.includes(symbol);
+        
+        // Fetch 1H klines for RSI and volume spike calculation
+        let rsi = 50;
+        let volumeSpikeRatio = 1.0;
+        try {
+          const klines1H = await fetchKlines(symbol, "1h", 100);
+          if (klines1H.length >= 14) {
+            const closes = klines1H.map(k => k.close);
+            const volumes = klines1H.map(k => k.volume);
+            rsi = calculateRSI(closes);
+            volumeSpikeRatio = calculateVolumeSpike(volumes);
+          }
+        } catch {
+          // Use defaults if klines unavailable
+        }
+        
+        // Apply Classic View signal type filters
+        const isHotMomentum = priceChange24h >= 20 && volumeSpikeRatio >= 2.0;
+        const isActiveMomentum = !isHotMomentum && 
+          volumeSpikeRatio >= 1.0 && 
+          priceChange24h >= 5 && priceChange24h <= 60 && 
+          rsi >= 50 && rsi <= 85;
+        const isPreConsolidation = 
+          volumeSpikeRatio >= 0.5 && volumeSpikeRatio < 1.0 && 
+          priceChange24h >= -8 && priceChange24h <= 15 && 
+          rsi >= 35 && rsi <= 65;
+        // MAJOR: Always include BTC/ETH regardless of volume
+        const isMajorQualified = isMajor;
+        
+        // Determine signal type
+        let signalType: string | null = null;
+        if (isHotMomentum) signalType = "HOT";
+        else if (isMajorQualified) signalType = "MAJOR";
+        else if (isActiveMomentum) signalType = "ACTIVE";
+        else if (isPreConsolidation) signalType = "PRE";
+        
+        // Only include if matches a signal category
+        if (signalType !== null) {
+          filteredCoins.push({ ...coin, rsi, volumeSpikeRatio, priceChange24h });
+          signalTypes.set(symbol, signalType);
+        }
+      }
+      
+      const validCoins = filteredCoins.slice(0, limit);
+      
+      console.log(`[SCREEN] Filtered to ${validCoins.length} signals from ${unifiedSymbols.length} universe coins`);
 
       // Build screen data
       const screenData: Array<{
@@ -2373,16 +2428,17 @@ export async function registerRoutes(
         const symbol = coin.symbol;
         const cleanSymbol = symbol.replace("USDT", "");
         const price = parseFloat(coin.lastPrice);
-        const open = parseFloat(coin.open);
-        const priceChange24h = open > 0 ? ((price - open) / open) * 100 : 0;
         
         const coinData: any = {
           symbol,
           price,
-          priceChange24h,
+          priceChange24h: coin.priceChange24h,
           volume24h: parseFloat(coin.quoteVol),
           high24h: parseFloat(coin.high),
           low24h: parseFloat(coin.low),
+          signalType: signalTypes.get(symbol) || null,
+          rsi: coin.rsi,
+          volumeSpikeRatio: coin.volumeSpikeRatio,
         };
 
         // Fetch OKX 4H klines and funding rate for htfBias calculation
