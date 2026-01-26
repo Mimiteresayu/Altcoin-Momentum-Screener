@@ -34,10 +34,21 @@ type HtfBias = {
   supertrendValue: number;
 };
 
+type EntryModel = "BUY DIP" | "SCALE IN" | "BOS ENTRY" | "FVG ENTRY" | "PULLBACK" | "ADD" | "TAKE PROFIT" | "SHORT SETUP" | "AVOID" | "REVERSAL" | "WAIT";
+
+interface CandlestickAnalysis {
+  isBullish: boolean;
+  isBearish: boolean;
+  hasLongUpperWick: boolean;  // Selling pressure
+  hasLongLowerWick: boolean;  // Buying pressure
+  bodySize: number;           // Relative body size
+  wickRatio: number;          // Wick to body ratio
+}
+
 interface EnrichedSignalData {
   priceLocation: PriceLocation;
   marketPhase: MarketPhase;
-  marketPhaseAlt: MarketPhase; // Alternative phase detection using RSI/OI method
+  entryModel: EntryModel;
   preSpikeScore: number;
   fundingRate: number | undefined;
   fundingBias: "bullish" | "bearish" | "neutral" | undefined;
@@ -74,6 +85,107 @@ export function calculatePriceLocation(
   if (position <= 0.33) return "DISCOUNT";
   if (position >= 0.67) return "PREMIUM";
   return "NEUTRAL";
+}
+
+/**
+ * Analyze candlestick pattern for phase refinement
+ * Uses open, close, high, low to determine candle characteristics
+ */
+export function analyzeCandlestick(kline: SimpleKline): CandlestickAnalysis {
+  const open = parseFloat(kline.open);
+  const close = parseFloat(kline.close);
+  const high = parseFloat(kline.high);
+  const low = parseFloat(kline.low);
+  
+  const isBullish = close > open;
+  const isBearish = close < open;
+  
+  const body = Math.abs(close - open);
+  const fullRange = high - low;
+  const upperWick = high - Math.max(open, close);
+  const lowerWick = Math.min(open, close) - low;
+  
+  // Relative measurements (as ratio of full range)
+  const bodyRatio = fullRange > 0 ? body / fullRange : 0;
+  const upperWickRatio = fullRange > 0 ? upperWick / fullRange : 0;
+  const lowerWickRatio = fullRange > 0 ? lowerWick / fullRange : 0;
+  
+  // Long wick = >30% of total range
+  const hasLongUpperWick = upperWickRatio > 0.3;
+  const hasLongLowerWick = lowerWickRatio > 0.3;
+  
+  // Wick to body ratio (for doji/reversal detection)
+  const wickRatio = body > 0 ? (upperWick + lowerWick) / body : Infinity;
+  
+  return {
+    isBullish,
+    isBearish,
+    hasLongUpperWick,
+    hasLongLowerWick,
+    bodySize: bodyRatio,
+    wickRatio,
+  };
+}
+
+/**
+ * Calculate Entry Model based on market phase, RSI, and candlestick patterns
+ */
+export function calculateEntryModel(
+  marketPhase: MarketPhase,
+  rsi: number,
+  priceLocation: PriceLocation,
+  candleAnalysis?: CandlestickAnalysis,
+  fvgLevels?: { price: number; type: string }[],
+): EntryModel {
+  const hasValidRsi = rsi !== 0 && rsi !== undefined && !isNaN(rsi);
+  const hasFVG = fvgLevels && fvgLevels.length > 0;
+  const hasBullishFVG = fvgLevels?.some(f => f.type === "bullish");
+  const hasBearishFVG = fvgLevels?.some(f => f.type === "bearish");
+  
+  switch (marketPhase) {
+    case "ACCUMULATION":
+      // Use RSI to determine entry style
+      if (hasValidRsi) {
+        if (rsi < 40) return "BUY DIP";  // RSI oversold = aggressive buy
+        if (rsi >= 40 && rsi <= 55) return "SCALE IN";  // Neutral = gradual entry
+      }
+      // Use candle pattern
+      if (candleAnalysis?.hasLongLowerWick) return "BUY DIP";  // Buying pressure
+      return "SCALE IN";
+      
+    case "BREAKOUT":
+      // BOS = Break of Structure (momentum confirmation)
+      // FVG = Fair Value Gap (retest entry)
+      if (hasBullishFVG && priceLocation !== "PREMIUM") return "FVG ENTRY";
+      if (candleAnalysis?.isBullish && candleAnalysis?.bodySize > 0.5) return "BOS ENTRY";
+      return "BOS ENTRY";
+      
+    case "TREND":
+      // Pullback = wait for dip in uptrend
+      // Add = increase position on continuation
+      if (hasValidRsi && rsi > 60) return "ADD";  // Strong momentum
+      if (candleAnalysis?.hasLongLowerWick) return "PULLBACK";  // Rejection = good entry
+      if (priceLocation === "NEUTRAL") return "PULLBACK";
+      return "ADD";
+      
+    case "DISTRIBUTION":
+      // Take Profit = close longs
+      // Short Setup = consider shorting
+      if (hasValidRsi && rsi > 70) return "TAKE PROFIT";  // Overbought
+      if (candleAnalysis?.hasLongUpperWick) return "SHORT SETUP";  // Selling pressure
+      if (priceLocation === "PREMIUM") return "TAKE PROFIT";
+      return "TAKE PROFIT";
+      
+    case "EXHAUST":
+      // Avoid = don't enter
+      // Reversal = potential counter-trend
+      if (candleAnalysis && candleAnalysis.wickRatio > 2) return "REVERSAL";  // High wick = reversal candle
+      if (hasValidRsi && (rsi > 80 || rsi < 20)) return "AVOID";  // Extreme RSI
+      return "AVOID";
+      
+    default:
+      return "WAIT";
+  }
 }
 
 /**
@@ -1112,13 +1224,21 @@ export async function enrichSignalWithCoinglass(
     lsrBias,
   );
 
-  // Calculate alternative phase detection using OI + Price correlation method
-  const marketPhaseAlt = calculateMarketPhaseAlt(
+  // Analyze latest candlestick for entry model refinement
+  let candleAnalysis: CandlestickAnalysis | undefined = undefined;
+  if (klines1H.length > 0) {
+    candleAnalysis = analyzeCandlestick(klines1H[klines1H.length - 1]);
+  } else if (klines4H.length > 0) {
+    candleAnalysis = analyzeCandlestick(klines4H[klines4H.length - 1]);
+  }
+  
+  // Calculate entry model based on phase, RSI, candlestick, and FVG levels
+  const entryModel = calculateEntryModel(
+    marketPhase,
     signal.rsi || 50,
-    signal.priceChange24h || 0,
-    signal.volumeSpikeRatio || 1,
     priceLocation,
-    signal.oiChange24h,
+    candleAnalysis,
+    fvgLevels,
   );
 
   // Calculate HTF bias using Supertrend (4H) + Funding Rate
@@ -1127,7 +1247,7 @@ export async function enrichSignalWithCoinglass(
   return {
     priceLocation,
     marketPhase,
-    marketPhaseAlt,
+    entryModel,
     preSpikeScore,
     fundingRate,
     fundingBias,

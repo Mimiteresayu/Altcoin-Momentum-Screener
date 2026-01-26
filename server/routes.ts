@@ -2581,13 +2581,14 @@ export async function registerRoutes(
           classicSignal.longShortRatio
         );
         
-        // Calculate alternative market phase using OI + Price correlation
-        const marketPhaseAlt = calculateMarketPhaseAlt(
+        // Calculate entry model based on phase and RSI (will be refined with enrichment)
+        const { calculateEntryModel } = await import("./screener-enrichment");
+        const entryModel = calculateEntryModel(
+          marketPhase,
           rsi,
-          priceChange24h,
-          volumeSpikeRatio,
           priceLocation,
-          classicSignal.oiChange24h
+          undefined, // No candlestick data yet
+          undefined  // No FVG data yet
         );
         
         // Use signalType from Classic View
@@ -2641,7 +2642,7 @@ export async function registerRoutes(
           // Enhanced fields (defaults)
           priceLocation,
           marketPhase,
-          marketPhaseAlt,
+          entryModel,
           preSpikeScore: 0,
           fundingRate: undefined,
           fundingBias: undefined,
