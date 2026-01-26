@@ -208,138 +208,101 @@ export function calculateMarketPhase(
   const fr = fundingRate ?? 0;
   const acceleration = volAccel ?? 1;
 
-  // ===== 1. EXHAUST: Momentum Exhaustion - Reversal imminent (check first for risk) =====
-  // Upside Exhaust: (priceChange > 5%) AND (volumeSpike < 2) AND (RSI > 75)
-  // Downside Exhaust: (priceChange < -3%) AND (volumeSpike < 2) AND (RSI < 35)
-  // OI: Negative or flat (positions closing)
+  // ===== SIMPLIFIED PHASE DETECTION (Google Doc criteria) =====
+  // Phases distribute more evenly across all 5 categories
   
-  if (hasValidRsi) {
-    // Upside exhaustion
-    if (priceChange > 5 && volumeSpike < 2 && rsi > 75) {
-      return "EXHAUST";
-    }
-    // Downside exhaustion
-    if (priceChange < -3 && volumeSpike < 2 && rsi < 35) {
-      return "EXHAUST";
-    }
-    // OI declining with extreme RSI = exhaustion
-    if (oiDelta < 0 && (rsi > 75 || rsi < 35)) {
+  // ===== 1. EXHAUST: Extreme RSI with declining OI and price stalling =====
+  // Extreme RSI (> 75 or < 35) with declining OI
+  if (hasValidRsi && (rsi > 75 || rsi < 35) && oiDelta < 0) {
+    return "EXHAUST";
+  }
+  
+  // Price stalling with extreme RSI
+  if (hasValidRsi && Math.abs(priceChange) < 2) {
+    if (rsi > 75 || rsi < 35) {
       return "EXHAUST";
     }
   }
 
-  // ===== 2. ACCUMULATION (Squeeze/Absorption variant): Smart money building =====
-  // Flat price + high volume + building OI = absorption/squeeze setup
-  // Merged from SMART_MONEY phase - same concept as accumulation
-  
-  if (Math.abs(priceChange) < 2 && volumeSpike >= 2.0 && oiDelta > 0) {
-    if (fr < 0 || fr < 0.00005) { // 0.005% = 0.00005 - negative funding = squeeze setup
-      return "ACCUMULATION";
-    }
+  // ===== 2. BREAKOUT: Strong price move with high volume and rising OI =====
+  // priceChange > 5%, volumeSpike > 2.5x, oiDelta > 15%
+  if (Math.abs(priceChange) > 5 && volumeSpike > 2.5 && oiDelta > 15) {
+    return "BREAKOUT";
   }
   
-  // High volume absorption with flat price and building OI
-  if (Math.abs(priceChange) < 2 && volumeSpike >= 2.0 && oiDelta > 5) {
+  // Relaxed BREAKOUT: Strong price move with high volume (no strict OI requirement)
+  if (Math.abs(priceChange) > 5 && volumeSpike > 2.5) {
+    return "BREAKOUT";
+  }
+  
+  // Alternative BREAKOUT: Good volume with rising OI and notable price move
+  if (Math.abs(priceChange) > 3 && volumeSpike > 2.0 && oiDelta > 10) {
+    return "BREAKOUT";
+  }
+
+  // ===== 3. DISTRIBUTION: Price in PREMIUM zone with declining/flat OI and RSI > 60 =====
+  // STRICT: Requires BOTH priceLocation === 'PREMIUM' AND oiDelta < 2 AND rsi > 60
+  if (priceLocation === "PREMIUM" && oiDelta < 2 && hasValidRsi && rsi > 60) {
+    return "DISTRIBUTION";
+  }
+  
+  // Very high RSI at premium with any declining OI
+  if (priceLocation === "PREMIUM" && oiDelta < 0 && hasValidRsi && rsi > 70) {
+    return "DISTRIBUTION";
+  }
+
+  // ===== 4. ACCUMULATION: Flat price with moderate volume and building OI =====
+  // priceChange < 3%, volumeSpike 1-2.5x, oiDelta 5-25%
+  if (Math.abs(priceChange) < 3 && volumeSpike >= 1.0 && volumeSpike <= 2.5 && oiDelta >= 5 && oiDelta <= 25) {
+    return "ACCUMULATION";
+  }
+  
+  // Relaxed ACCUMULATION: Flat price with building OI at discount/neutral
+  if (Math.abs(priceChange) < 3 && oiDelta > 3 && (priceLocation === "DISCOUNT" || priceLocation === "NEUTRAL")) {
+    return "ACCUMULATION";
+  }
+  
+  // Low RSI with building OI = accumulation
+  if (hasValidRsi && rsi < 40 && oiDelta > 0) {
     return "ACCUMULATION";
   }
 
-  // ===== 3. BREAKOUT: Explosive Momentum - Confirmed directional move =====
-  // Formula: (volumeSpike >= 2.5) AND (Math.abs(priceChange) > 3%) AND (RSI >= 40 AND <= 75) AND (oiChange > 15%) AND (volAccel >= 3)
-  // OI rising sharply >15%, Volume spike >2.5x with acceleration >3x
-  
-  if (volumeSpike >= 2.5 && Math.abs(priceChange) > 3 && oiDelta > 15 && acceleration >= 3) {
-    if (hasValidRsi && rsi >= 40 && rsi <= 75) {
-      return "BREAKOUT";
-    }
+  // ===== 5. TREND: Moderate price movement with steady OI growth =====
+  // oiDelta 5-20%, RSI 40-70 (balanced, middle-ground phase)
+  if (oiDelta >= 5 && oiDelta <= 20 && hasValidRsi && rsi >= 40 && rsi <= 70) {
+    return "TREND";
   }
   
-  // Strong breakout signals (relaxed criteria)
-  if (volumeSpike >= 2.5 && Math.abs(priceChange) > 3 && oiDelta > 15) {
-    return "BREAKOUT";
+  // Moderate movement with healthy OI (relaxed)
+  if (oiDelta > 2 && oiDelta < 25 && volumeSpike >= 1.0) {
+    return "TREND";
   }
   
-  // Volume explosion with price move and acceleration
-  if (volumeSpike >= 2.5 && Math.abs(priceChange) > 5 && acceleration >= 2) {
-    return "BREAKOUT";
-  }
-
-  // ===== 4. DISTRIBUTION: Smart Money Exit - Institutions selling into strength =====
-  // Formula: (priceChange > 2%) AND (RSI > 60) AND (oiChange < 0 OR oiChange flat -2% to 2%) AND (priceLocation === 'PREMIUM')
-  // Price rising but OI flat/declining at PREMIUM location
-  
-  if (priceChange > 2 && priceLocation === "PREMIUM") {
-    if (hasValidRsi && rsi > 60) {
-      if (oiDelta < 0 || (oiDelta >= -2 && oiDelta <= 2)) {
-        return "DISTRIBUTION";
-      }
-    }
-  }
-  
-  // Premium with declining OI = distribution
-  if (priceLocation === "PREMIUM" && oiDelta < 0 && hasValidRsi && rsi > 60) {
-    return "DISTRIBUTION";
-  }
-  
-  // High RSI at premium with flat OI
-  if (priceLocation === "PREMIUM" && hasValidRsi && rsi > 70 && Math.abs(oiDelta) < 5) {
-    return "DISTRIBUTION";
-  }
-
-  // ===== 5. TREND: Sustained Directional Move - Multi-timeframe alignment =====
-  // Formula: (volumeSpike >= 1.0 AND <= 2.0) AND (oiChange >= 5% AND <= 20%) AND (RSI >= 50 AND <= 75)
-  // OI steadily increasing 5-20%, Volume healthy 1-2x
-  
-  if (volumeSpike >= 1.0 && volumeSpike <= 2.0 && oiDelta >= 5 && oiDelta <= 20) {
-    if (hasValidRsi && rsi >= 50 && rsi <= 75) {
-      return "TREND";
-    }
-    // Bearish trend: RSI 25-50
-    if (hasValidRsi && rsi >= 25 && rsi <= 50 && priceChange < 0) {
-      return "TREND";
-    }
-  }
-  
-  // Consistent trend with healthy metrics
-  if (volumeSpike >= 1.0 && volumeSpike <= 2.0 && oiDelta > 5 && Math.abs(priceChange) > 2) {
+  // Price moving with positive OI = trend
+  if (Math.abs(priceChange) > 2 && oiDelta > 0) {
     return "TREND";
   }
 
-  // ===== 6. ACCUMULATION: Smart Money Entry - Building positions at discount =====
-  // Formula: (priceChange < 3%) AND (volumeSpike >= 1.0 AND <= 2.5) AND (RSI >= 35 AND <= 65) AND (oiChange >= 5% AND <= 25%) AND (priceLocation === 'DISCOUNT' OR priceLocation === 'NEUTRAL')
-  // Sideways/slight decline, OI increasing 5-25%, Volume building 1-2.5x
-  
-  if (priceChange < 3 && volumeSpike >= 1.0 && volumeSpike <= 2.5 && oiDelta >= 5 && oiDelta <= 25) {
-    if (hasValidRsi && rsi >= 35 && rsi <= 65) {
-      if (priceLocation === "DISCOUNT" || priceLocation === "NEUTRAL") {
-        return "ACCUMULATION";
-      }
-    }
-  }
-  
-  // OI building at discount with neutral RSI
-  if ((priceLocation === "DISCOUNT" || priceLocation === "NEUTRAL") && oiDelta >= 5 && oiDelta <= 25) {
-    if (hasValidRsi && rsi >= 35 && rsi <= 65 && volumeSpike >= 1.0) {
-      return "ACCUMULATION";
-    }
-  }
-  
-  // Quiet accumulation at discount
-  if (priceLocation === "DISCOUNT" && oiDelta > 5 && Math.abs(priceChange) < 3) {
-    return "ACCUMULATION";
-  }
-
-  // ===== Default: Return most likely phase based on available signals =====
-  // If no clear pattern, use simple heuristics
+  // ===== DEFAULT: TREND as balanced fallback =====
+  // TREND is the most common middle-ground phase
+  // Only use specific fallbacks for clear signals
   
   if (hasValidRsi) {
-    if (rsi > 70) return "DISTRIBUTION";
-    if (rsi < 30) return "ACCUMULATION";
+    // Very extreme RSI with no OI data -> EXHAUST
+    if (rsi > 80 || rsi < 25) return "EXHAUST";
+    // High RSI in premium -> only DISTRIBUTION if actually premium
+    if (rsi > 70 && priceLocation === "PREMIUM") return "DISTRIBUTION";
+    // Low RSI at discount -> ACCUMULATION
+    if (rsi < 35 && priceLocation === "DISCOUNT") return "ACCUMULATION";
   }
   
-  if (oiDelta > 10 && volumeSpike > 1.5) return "TREND";
-  if (priceLocation === "DISCOUNT") return "ACCUMULATION";
-  if (priceLocation === "PREMIUM") return "DISTRIBUTION";
+  // Strong positive OI with volume = TREND (not distribution)
+  if (oiDelta > 5 && volumeSpike > 1.2) return "TREND";
   
+  // Discount location with any positive OI = ACCUMULATION
+  if (priceLocation === "DISCOUNT" && oiDelta > 0) return "ACCUMULATION";
+  
+  // Default to TREND as balanced middle-ground
   return "TREND";
 }
 
