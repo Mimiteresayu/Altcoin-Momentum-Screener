@@ -2569,22 +2569,24 @@ export async function registerRoutes(
         // Calculate price location
         const priceLocation = calculatePriceLocation(price, high24h, low24h);
         
-        // Calculate market phase (with estimated values)
+        // Calculate market phase using ICT/Smart Money logic with funding rate
         const marketPhase = calculateMarketPhase(
           volumeSpikeRatio,
           classicSignal.oiChange24h,
           rsi,
           priceChange24h,
-          undefined,
-          priceLocation
+          classicSignal.volAccel,
+          priceLocation,
+          classicSignal.fundingRate
         );
         
-        // Calculate alternative market phase using RSI-based method
+        // Calculate alternative market phase using OI + Price correlation
         const marketPhaseAlt = calculateMarketPhaseAlt(
           rsi,
           priceChange24h,
           volumeSpikeRatio,
-          priceLocation
+          priceLocation,
+          classicSignal.oiChange24h
         );
         
         // Use signalType from Classic View

@@ -94,35 +94,43 @@ export function calculateMarketPhase(
   priceChange: number,
   volAccel: number | undefined,
   priceLocation: PriceLocation = "NEUTRAL",
+  fundingRate: number | undefined = undefined,
 ): MarketPhase {
   const oiDelta = oiChange ?? 0;
   const acceleration = volAccel ?? 1;
   const hasValidRsi = rsi !== 0 && rsi !== undefined && !isNaN(rsi);
-  const absPrice = Math.abs(priceChange);
+  const fr = fundingRate ?? 0;
+  const frPct = fr * 100;
 
-  // ===== EXHAUST: Overextended moves (check first - highest priority for risk) =====
+  // ===== 1. EXHAUST: Reversal imminent (check first - highest priority for risk) =====
+  // Extreme funding rate (> 0.02% or < -0.01%)
+  // RSI > 80 (overbought) or < 20 (oversold)
+  // Price at extreme location
+  // OI decreasing (positions closing)
   
-  // Extreme RSI at extreme price location = exhaustion
   if (hasValidRsi) {
-    // Upside exhaustion: overbought RSI at premium
+    // Extreme overbought exhaustion
     if (rsi > 80 && priceLocation === "PREMIUM") {
       return "EXHAUST";
     }
-    // Downside exhaustion: oversold RSI at discount
+    // Extreme oversold exhaustion
     if (rsi < 20 && priceLocation === "DISCOUNT") {
-      return "EXHAUST";
-    }
-    // Strong move with extreme RSI
-    if (priceChange > 5 && rsi > 75) {
-      return "EXHAUST";
-    }
-    if (priceChange < -5 && rsi < 25) {
       return "EXHAUST";
     }
   }
   
-  // Volume declining at extreme locations (momentum fading)
-  if (volumeSpike < 0.8 && acceleration < 0.8) {
+  // Extreme funding with OI declining = exhaustion imminent
+  if ((frPct > 0.02 || frPct < -0.01) && oiDelta < 0) {
+    return "EXHAUST";
+  }
+  
+  // Extreme RSI with OI declining = positions closing
+  if (hasValidRsi && (rsi > 80 || rsi < 20) && oiDelta < -3) {
+    return "EXHAUST";
+  }
+  
+  // Volume declining at extreme price locations (momentum fading)
+  if (volumeSpike < 0.7 && acceleration < 0.7) {
     if (priceLocation === "PREMIUM" && priceChange > 3) {
       return "EXHAUST";
     }
@@ -131,69 +139,52 @@ export function calculateMarketPhase(
     }
   }
 
-  // ===== BREAKOUT: Strong momentum moves =====
+  // ===== 2. BREAKOUT: Momentum expansion =====
+  // OI increasing significantly (> 5%)
+  // Volume spike > 1.5x
+  // Price change > 5% positive
+  // RSI 50-70 (momentum zone)
+  // Breaking out of NEUTRAL towards PREMIUM
   
-  // Very strong price move = breakout regardless of other factors
-  if (absPrice > 5) {
+  // Strong OI increase with volume = clear breakout
+  if (oiDelta > 5 && volumeSpike >= 1.5 && priceChange > 5) {
     return "BREAKOUT";
   }
   
-  // Strong move with volume confirmation
-  if (absPrice > 3 && volumeSpike >= 1.5) {
+  // Strong price move with volume confirmation
+  if (priceChange > 5 && volumeSpike >= 1.5) {
+    return "BREAKOUT";
+  }
+  
+  // RSI in momentum zone with OI building and volume
+  if (hasValidRsi && rsi >= 50 && rsi <= 70 && oiDelta > 3 && volumeSpike >= 1.3) {
     return "BREAKOUT";
   }
   
   // Moderate move with strong volume and OI building
-  if (absPrice > 2 && volumeSpike >= 1.5 && oiDelta > 0) {
+  if (priceChange > 3 && volumeSpike >= 1.5 && oiDelta > 0) {
     return "BREAKOUT";
   }
   
-  // Moderate move with volume (more permissive)
-  if (absPrice > 3 && volumeSpike >= 1.0) {
+  // Breaking out from neutral with volume
+  if (priceLocation === "NEUTRAL" && priceChange > 5 && volumeSpike >= 1.0) {
     return "BREAKOUT";
   }
 
-  // ===== ACCUMULATION: Smart money buying at discount =====
+  // ===== 3. DISTRIBUTION: Smart money selling =====
+  // Funding rate > 0.01% (overleveraged longs)
+  // OI flat or decreasing while price still high
+  // Price at PREMIUM location
+  // RSI > 70 (overbought)
+  // Volume declining (smart money exiting quietly)
   
-  // Classic accumulation: price at discount with any volume
-  if (priceLocation === "DISCOUNT" && volumeSpike >= 0.5) {
-    return "ACCUMULATION";
-  }
-  
-  // Flat price consolidation with volume building = accumulation
-  if (absPrice < 3 && volumeSpike >= 0.5 && oiDelta >= 0) {
-    return "ACCUMULATION";
-  }
-  
-  // Volume acceleration with flat price = smart money activity
-  if (absPrice < 3 && volumeSpike >= 1.0 && acceleration >= 1.2) {
-    return "ACCUMULATION";
-  }
-  
-  // RSI oversold with stabilizing price = accumulation zone
-  if (hasValidRsi && rsi < 40 && absPrice < 3 && priceLocation !== "PREMIUM") {
-    return "ACCUMULATION";
-  }
-  
-  // Any volume with relatively flat price = accumulation (permissive)
-  if (absPrice < 3 && volumeSpike >= 0.5) {
-    return "ACCUMULATION";
-  }
-
-  // ===== DISTRIBUTION: Smart money selling at premium =====
-  
-  // Classic distribution: price at premium, OI declining
-  if (priceLocation === "PREMIUM" && oiDelta < -1) {
+  // Classic distribution: high funding + premium location + declining OI
+  if (frPct > 0.01 && priceLocation === "PREMIUM" && oiDelta <= 0) {
     return "DISTRIBUTION";
   }
   
-  // Price at premium with any declining indicators
-  if (priceLocation === "PREMIUM" && (oiDelta < 0 || volumeSpike < 0.8)) {
-    return "DISTRIBUTION";
-  }
-  
-  // Price rising but OI declining significantly = smart money exiting
-  if (priceChange > 2 && oiDelta < -2) {
+  // Price at premium with declining volume = quiet exit
+  if (priceLocation === "PREMIUM" && volumeSpike < 0.8 && priceChange > 0) {
     return "DISTRIBUTION";
   }
   
@@ -202,80 +193,163 @@ export function calculateMarketPhase(
     return "DISTRIBUTION";
   }
   
-  // High RSI with OI declining = distribution
+  // High RSI with OI declining = smart money exiting
   if (hasValidRsi && rsi > 65 && oiDelta < 0 && priceChange > 1) {
     return "DISTRIBUTION";
   }
   
-  // Volume declining at premium with positive price = distribution
-  if (priceLocation === "PREMIUM" && volumeSpike < 0.9 && priceChange > 0) {
+  // Price rising but OI declining significantly = weak hands only
+  if (priceChange > 2 && oiDelta < -3) {
     return "DISTRIBUTION";
   }
   
-  // At premium = distribution (fallback for premium location)
-  if (priceLocation === "PREMIUM") {
+  // High funding at premium regardless of OI = overleveraged
+  if (frPct > 0.015 && priceLocation === "PREMIUM") {
     return "DISTRIBUTION";
   }
 
-  // ===== NEUTRAL: Consolidation, no strong signals =====
-  // This is the fallback - NEVER return UNKNOWN
+  // ===== 4. ACCUMULATION: Smart money building positions =====
+  // Funding rate < 0.005% (bearish sentiment = buying opportunity)
+  // OI increasing (new positions opening)
+  // Price at DISCOUNT or NEUTRAL location
+  // RSI 30-50 (oversold or recovering)
+  // Price change slightly negative or flat (-5% to +3%)
+  
+  // Classic accumulation: negative/low funding at discount with OI building
+  if (frPct < 0.005 && oiDelta > 0 && (priceLocation === "DISCOUNT" || priceLocation === "NEUTRAL")) {
+    return "ACCUMULATION";
+  }
+  
+  // RSI in accumulation zone with volume activity
+  if (hasValidRsi && rsi >= 30 && rsi <= 50 && priceChange >= -5 && priceChange <= 3) {
+    if (volumeSpike >= 0.8 || oiDelta > 0) {
+      return "ACCUMULATION";
+    }
+  }
+  
+  // Price at discount with OI increasing = smart money entering
+  if (priceLocation === "DISCOUNT" && oiDelta > 0) {
+    return "ACCUMULATION";
+  }
+  
+  // Flat price consolidation with OI building = accumulation
+  if (priceChange >= -5 && priceChange <= 3 && oiDelta > 0 && volumeSpike >= 0.5) {
+    return "ACCUMULATION";
+  }
+  
+  // Low/negative funding with recovering RSI
+  if (frPct < 0 && hasValidRsi && rsi >= 30 && rsi <= 50) {
+    return "ACCUMULATION";
+  }
+  
+  // Discount zone with any reasonable activity
+  if (priceLocation === "DISCOUNT" && volumeSpike >= 0.5) {
+    return "ACCUMULATION";
+  }
+
+  // ===== 5. NEUTRAL: Consolidation =====
+  // Default when no clear pattern
+  // Funding 0.005-0.01%
+  // RSI 40-60
+  // Price at NEUTRAL location
   return "NEUTRAL";
 }
 
 /**
- * Alternative Market Phase Detection using RSI momentum analysis
- * Provides a secondary perspective on market phase
+ * Alternative Market Phase Detection using OI + Price Change correlation
+ * Provides a complementary perspective based on position dynamics:
+ * - OI up + Price up = BREAKOUT (long positions opening, bullish momentum)
+ * - OI up + Price down = ACCUMULATION (shorts opening, potential reversal setup)
+ * - OI down + Price up = DISTRIBUTION (shorts closing, weak rally)
+ * - OI down + Price down = EXHAUST (longs closing, capitulation)
  */
 export function calculateMarketPhaseAlt(
   rsi: number,
   priceChange: number,
   volumeSpike: number,
   priceLocation: PriceLocation = "NEUTRAL",
+  oiChange: number | undefined = undefined,
 ): MarketPhase {
+  const oiDelta = oiChange ?? 0;
+  const hasValidOI = oiChange !== undefined && oiChange !== null;
   const hasValidRsi = rsi !== 0 && rsi !== undefined && !isNaN(rsi);
-  const absPrice = Math.abs(priceChange);
   
-  if (!hasValidRsi) {
-    // Fallback to price/volume only
-    if (absPrice > 5) return "BREAKOUT";
-    if (absPrice < 2 && volumeSpike >= 1.3) return "ACCUMULATION";
-    return "NEUTRAL";
+  // If we have valid OI data, use the OI + Price correlation method
+  if (hasValidOI) {
+    const oiUp = oiDelta > 2;
+    const oiDown = oiDelta < -2;
+    const priceUp = priceChange > 2;
+    const priceDown = priceChange < -2;
+    
+    // OI up + Price up = BREAKOUT (long positions opening, bullish momentum)
+    if (oiUp && priceUp) {
+      // Strong confirmation: high volume adds conviction
+      if (volumeSpike >= 1.5) {
+        return "BREAKOUT";
+      }
+      return "BREAKOUT";
+    }
+    
+    // OI up + Price down = ACCUMULATION (shorts opening OR smart money accumulating)
+    // This creates a reversal setup - new positions opening during decline
+    if (oiUp && priceDown) {
+      return "ACCUMULATION";
+    }
+    
+    // OI down + Price up = DISTRIBUTION (shorts closing, weak rally)
+    // Price rising on position closures = unsustainable move
+    if (oiDown && priceUp) {
+      return "DISTRIBUTION";
+    }
+    
+    // OI down + Price down = EXHAUST (longs closing, capitulation)
+    // Positions being liquidated or closed = potential bottom
+    if (oiDown && priceDown) {
+      return "EXHAUST";
+    }
+    
+    // Moderate OI changes - use secondary indicators
+    if (Math.abs(oiDelta) <= 2 && Math.abs(priceChange) <= 2) {
+      // Consolidation with neutral OI/price = NEUTRAL
+      if (hasValidRsi && rsi >= 40 && rsi <= 60) {
+        return "NEUTRAL";
+      }
+      // Slight OI increase with flat price = quiet accumulation
+      if (oiDelta > 0 && volumeSpike >= 0.8) {
+        return "ACCUMULATION";
+      }
+    }
   }
-
-  // RSI zones: <30 oversold, 30-45 bearish, 45-55 neutral, 55-70 bullish, >70 overbought
   
-  // EXHAUST: Extreme RSI readings
-  if (rsi > 80 || rsi < 20) {
-    return "EXHAUST";
+  // Fallback: Use RSI + Volume when OI data unavailable
+  if (hasValidRsi) {
+    // Extreme RSI = exhaustion
+    if (rsi > 80 || rsi < 20) {
+      return "EXHAUST";
+    }
+    
+    // RSI momentum with price confirmation = breakout
+    if (rsi > 55 && rsi <= 75 && priceChange > 3 && volumeSpike >= 1.2) {
+      return "BREAKOUT";
+    }
+    
+    // RSI recovering from oversold with volume = accumulation
+    if (rsi >= 30 && rsi <= 50 && volumeSpike >= 1.0) {
+      return "ACCUMULATION";
+    }
+    
+    // RSI overbought at premium = distribution
+    if (rsi > 70 && priceLocation === "PREMIUM") {
+      return "DISTRIBUTION";
+    }
   }
   
-  // BREAKOUT: Strong RSI momentum with price confirmation
-  if (rsi > 60 && rsi <= 75 && priceChange > 3) {
-    return "BREAKOUT";
-  }
-  if (rsi < 40 && rsi >= 25 && priceChange < -3) {
-    return "BREAKOUT";
-  }
+  // Final fallback: price/volume only
+  if (priceChange > 5 && volumeSpike >= 1.5) return "BREAKOUT";
+  if (priceChange < -5 && volumeSpike < 0.8) return "EXHAUST";
+  if (priceLocation === "DISCOUNT" && volumeSpike >= 1.0) return "ACCUMULATION";
+  if (priceLocation === "PREMIUM" && volumeSpike < 0.9) return "DISTRIBUTION";
   
-  // ACCUMULATION: RSI recovering from oversold with volume
-  if (rsi >= 30 && rsi <= 45 && volumeSpike >= 1.2) {
-    return "ACCUMULATION";
-  }
-  // RSI neutral zone with volume building
-  if (rsi >= 45 && rsi <= 55 && volumeSpike >= 1.3 && absPrice < 2) {
-    return "ACCUMULATION";
-  }
-  
-  // DISTRIBUTION: RSI declining from overbought
-  if (rsi >= 65 && rsi <= 80 && priceChange < 1 && priceLocation === "PREMIUM") {
-    return "DISTRIBUTION";
-  }
-  // High RSI with minimal price movement = topping
-  if (rsi > 70 && absPrice < 2) {
-    return "DISTRIBUTION";
-  }
-  
-  // NEUTRAL: No clear momentum bias
   return "NEUTRAL";
 }
 
@@ -971,8 +1045,7 @@ export async function enrichSignalWithCoinglass(
     console.log(`[ENRICHMENT] ${symbol} - POC: $${volumeProfilePOC?.toFixed(4)}`);
   }
 
-  // Calculate market phase using ICT PO3 / AMD cycle logic
-  // Use the unified calculateMarketPhase function with priceLocation
+  // Calculate market phase using ICT PO3 / AMD cycle logic with funding rate
   const marketPhase = calculateMarketPhase(
     signal.volumeSpikeRatio || 1,
     signal.oiChange24h,
@@ -980,6 +1053,7 @@ export async function enrichSignalWithCoinglass(
     signal.priceChange24h || 0,
     signal.volAccel,
     priceLocation,
+    fundingRate,
   );
 
   // Detect FVG and Order Blocks from 1H klines FIRST (before using in preSpikeScore)
@@ -1048,12 +1122,13 @@ export async function enrichSignalWithCoinglass(
     lsrBias,
   );
 
-  // Calculate alternative phase detection using RSI-based method
+  // Calculate alternative phase detection using OI + Price correlation method
   const marketPhaseAlt = calculateMarketPhaseAlt(
     signal.rsi || 50,
     signal.priceChange24h || 0,
     signal.volumeSpikeRatio || 1,
     priceLocation,
+    signal.oiChange24h,
   );
 
   // Calculate HTF bias using Supertrend (4H) + Funding Rate
