@@ -2697,7 +2697,7 @@ export async function registerRoutes(
         totalSignals: filteredSignals.length,
         unfilteredCount: signals.length,
         filters,
-        enrichedCount: Math.min(enrichLimit, validCoins.length),
+        enrichedCount: Math.min(enrichLimit, validSignals.length),
       });
     } catch (error: any) {
       console.error("[ENHANCED-SCREENER] Error:", error.message);
