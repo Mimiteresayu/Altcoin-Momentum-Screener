@@ -580,7 +580,7 @@ export function EnhancedScreener() {
                                 ) : (
                                   <TrendingDown className="w-3 h-3 mr-0.5" />
                                 )}
-                                {signal.htfBias?.side ?? signal.side} (4H)
+                                1: {signal.htfBias?.side ?? signal.side} (4H)
                               </Badge>
                             </TooltipTrigger>
                             <TooltipContent>
