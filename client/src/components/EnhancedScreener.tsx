@@ -30,6 +30,9 @@ import {
   Info,
   ChevronDown,
   ChevronUp,
+  Flame,
+  Crown,
+  Timer,
 } from "lucide-react";
 import { clsx } from "clsx";
 
@@ -44,6 +47,7 @@ interface HtfBias {
 interface EnhancedSignal {
   symbol: string;
   side: "LONG" | "SHORT";
+  signalType?: "HOT" | "MAJOR" | "ACTIVE" | "PRE" | null;
   currentPrice: number;
   priceChange24h: number;
   volumeSpikeRatio: number;
@@ -365,11 +369,10 @@ export function EnhancedScreener() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="bg-muted/30 border-b border-white/5 text-left text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
-                    <th className="px-2 py-2">Symbol</th>
                     <th className="px-2 py-2 text-center">
                       <Tooltip>
                         <TooltipTrigger className="flex items-center gap-1 cursor-help">
-                          BIAS (4H) <Info className="w-3 h-3" />
+                          SIDE <Info className="w-3 h-3" />
                         </TooltipTrigger>
                         <TooltipContent className="max-w-[280px]">
                           <p className="text-xs">
@@ -377,7 +380,7 @@ export function EnhancedScreener() {
                             <br /><br />
                             <strong>1. Supertrend (Primary):</strong>
                             <br />
-                            ATR Period: 10, Multiplier: 3
+                            ATR Period: 14, Multiplier: 3.5
                             <br />
                             Price above Supertrend = LONG
                             <br />
@@ -400,6 +403,7 @@ export function EnhancedScreener() {
                         </TooltipContent>
                       </Tooltip>
                     </th>
+                    <th className="px-2 py-2">Symbol</th>
                     <th className="px-2 py-2 text-right">Price</th>
                     <th className="px-2 py-2 text-center">
                       <Tooltip>
@@ -534,9 +538,10 @@ export function EnhancedScreener() {
                         key={signal.symbol}
                         className={clsx(
                           "hover:bg-white/[0.02] transition-colors cursor-pointer",
-                          signal.marketPhase === "BREAKOUT" && "bg-cyan-500/5",
-                          signal.marketPhase === "ACCUMULATION" &&
-                            "bg-emerald-500/5",
+                          signal.signalType === "HOT" && "bg-rose-500/10 animate-pulse",
+                          signal.signalType === "MAJOR" && "bg-amber-500/5",
+                          signal.signalType === "ACTIVE" && "bg-emerald-500/5",
+                          signal.signalType === "PRE" && "bg-blue-500/5",
                           (signal.preSpikeScore ?? 0) >= 4 &&
                             "border-l-2 border-l-emerald-500",
                         )}
@@ -549,17 +554,12 @@ export function EnhancedScreener() {
                         }
                         data-testid={`row-enhanced-${signal.symbol}`}
                       >
-                        <td className="px-2 py-2 font-medium">
-                          <span className="font-mono">
-                            {signal.symbol.replace("USDT", "")}
-                          </span>
-                        </td>
                         <td className="px-2 py-2 text-center">
                           <Tooltip>
                             <TooltipTrigger>
                               <Badge
                                 className={clsx(
-                                  "text-[10px] px-1.5",
+                                  "font-bold text-[10px] px-2",
                                   (signal.htfBias?.side ?? signal.side) === "LONG"
                                     ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/30"
                                     : "bg-rose-500/20 text-rose-400 border-rose-500/30",
@@ -589,6 +589,37 @@ export function EnhancedScreener() {
                               </p>
                             </TooltipContent>
                           </Tooltip>
+                        </td>
+                        <td className="px-2 py-2 font-medium text-foreground">
+                          <div className="flex items-center gap-1.5">
+                            {signal.signalType === "HOT" && (
+                              <Badge className="bg-rose-500/30 text-rose-300 border-rose-500/50 text-[9px] px-1 py-0 animate-pulse font-bold">
+                                <Flame className="w-2.5 h-2.5 mr-0.5" />
+                                HOT
+                              </Badge>
+                            )}
+                            {signal.signalType === "MAJOR" && (
+                              <Badge className="bg-amber-500/20 text-amber-400 border-amber-500/30 text-[9px] px-1 py-0">
+                                <Crown className="w-2.5 h-2.5 mr-0.5" />
+                                MAJOR
+                              </Badge>
+                            )}
+                            {signal.signalType === "ACTIVE" && (
+                              <Badge className="bg-emerald-500/20 text-emerald-400 border-emerald-500/30 text-[9px] px-1 py-0 animate-pulse">
+                                <Zap className="w-2.5 h-2.5 mr-0.5" />
+                                ACTIVE
+                              </Badge>
+                            )}
+                            {signal.signalType === "PRE" && (
+                              <Badge className="bg-blue-500/20 text-blue-400 border-blue-500/30 text-[9px] px-1 py-0">
+                                <Timer className="w-2.5 h-2.5 mr-0.5" />
+                                PRE
+                              </Badge>
+                            )}
+                            <span className="font-mono tracking-tight">
+                              {signal.symbol.replace("USDT", "")}
+                            </span>
+                          </div>
                         </td>
                         <td className="px-2 py-2 text-right font-mono text-xs">
                           ${formatPrice(signal.currentPrice)}
