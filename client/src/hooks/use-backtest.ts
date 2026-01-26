@@ -81,3 +81,36 @@ export function useGenerateDailyReport() {
     },
   });
 }
+
+export function useRunAutoBacktest() {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  return useMutation({
+    mutationFn: async () => {
+      const res = await fetch("/api/backtest-engine/auto-start", {
+        method: "POST",
+      });
+      if (!res.ok) throw new Error("Failed to run backtest");
+      return res.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/backtest/stats"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/backtest/trades"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/backtest/equity"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/backtest-engine/metrics"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/backtest-engine/trades"] });
+      toast({
+        title: "Backtest Complete",
+        description: `Processed ${data.signalsProcessed || 0} signals. Sharpe: ${data.metrics?.sharpeRatio?.toFixed(2) || "N/A"}`,
+      });
+    },
+    onError: (error) => {
+      toast({
+        title: "Error",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+}

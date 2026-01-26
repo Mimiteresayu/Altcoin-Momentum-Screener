@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useBacktestStats, useBacktestTrades, useEquityCurve, useGenerateDailyReport } from "@/hooks/use-backtest";
+import { useBacktestStats, useBacktestTrades, useEquityCurve, useGenerateDailyReport, useRunAutoBacktest } from "@/hooks/use-backtest";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -19,7 +19,8 @@ import {
   RefreshCw,
   FileText,
   Wallet,
-  LineChart
+  LineChart,
+  Play
 } from "lucide-react";
 import { clsx } from "clsx";
 import { LineChart as RechartsLineChart, Line, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Tooltip as RechartsTooltip, Area, AreaChart } from "recharts";
@@ -362,6 +363,7 @@ export default function Backtest() {
   const { data: trades, isLoading: loadingTrades } = useBacktestTrades(50);
   const { data: equity, isLoading: loadingEquity } = useEquityCurve(100);
   const generateReport = useGenerateDailyReport();
+  const runBacktest = useRunAutoBacktest();
 
   return (
     <div className="min-h-screen bg-background text-foreground p-4 sm:p-6 space-y-6">
@@ -374,6 +376,16 @@ export default function Backtest() {
           <p className="text-sm text-muted-foreground mt-1">Automated trading simulation with $10,000 virtual capital</p>
         </div>
         <div className="flex gap-2">
+          <Button 
+            size="sm" 
+            onClick={() => runBacktest.mutate()}
+            disabled={runBacktest.isPending}
+            className="gap-1.5"
+            data-testid="button-run-backtest"
+          >
+            <Play className="w-4 h-4" />
+            {runBacktest.isPending ? "Running..." : "Run Backtest"}
+          </Button>
           <Button 
             variant="outline" 
             size="sm" 
