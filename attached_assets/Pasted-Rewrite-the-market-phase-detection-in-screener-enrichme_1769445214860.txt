@@ -1,0 +1,57 @@
+Rewrite the market phase detection in screener-enrichment.ts to match the Google Doc exactly. Change MarketPhase type to 6 phases: ACCUMULATION | BREAKOUT | DISTRIBUTION | TREND | EXHAUST | SMART_MONEY
+
+Here are the EXACT definitions for each phase:
+
+1. ACCUMULATION (Smart Money Entry - Building positions at discount)
+   Price Action: Sideways/slight decline, tight range, forming higher lows
+   Formula: (priceChange < 3%) AND (volumeSpike >= 1.0 AND <= 2.5) AND (RSI >= 35 AND <= 65) AND (oiChange >= 5% AND <= 25%) AND (priceLocation === 'DISCOUNT' OR priceLocation === 'NEUTRAL')
+   OI: Increasing 5-25% (institutions entering)
+   Volume: Building 1-2.5x (quiet accumulation)
+   RSI: 35-65 (neutral, not overbought)
+   Location: DISCOUNT or NEUTRAL
+   Recommended: LONG entry, scale in positions
+
+2. BREAKOUT (Explosive Momentum - Confirmed directional move)
+   Price Action: Strong impulsive candles, breaking key levels, volume confirmation
+   Formula: (volumeSpike >= 2.5) AND (Math.abs(priceChange) > 3%) AND (RSI >= 40 AND <= 75) AND (oiChange > 15%) AND (volAccel >= 3)
+   OI: Rising sharply >15% (new positions flooding in)
+   Volume: Massive spike >2.5x with acceleration >3x
+   RSI: 40-75 (momentum zone, not extreme)
+   Recommended: Enter on confirmation, ride momentum with trailing stop
+
+3. DISTRIBUTION (Smart Money Exit - Institutions selling into strength)
+   Price Action: Price still rising but momentum slowing, forming lower highs
+   Formula: (priceChange > 2%) AND (RSI > 60) AND (oiChange < 0 OR oiChange is flat -2% to 2%) AND (priceLocation === 'PREMIUM')
+   OI: Flat or declining (smart money closing positions)
+   Volume: May be high but OI dropping = distribution
+   RSI: >60 (elevated, overbought forming)
+   Location: PREMIUM
+   Recommended: Take profits, avoid new longs, consider shorts
+
+4. TREND (Sustained Directional Move - Multi-timeframe alignment)
+   Price Action: Consistent higher highs/higher lows (uptrend) or lower highs/lower lows (downtrend)
+   Formula: (volumeSpike >= 1.0 AND <= 2.0) AND (oiChange >= 5% AND <= 20%) AND (RSI >= 50 AND <= 75) AND (trend4H matches trend1D) AND (priceChange consistent direction over 3+ periods)
+   OI: Steadily increasing 5-20% (confirming trend)
+   Volume: Healthy 1-2x (not exhausting)
+   RSI: 50-75 (bullish) or 25-50 (bearish)
+   HTF Bias: Must align across 4H and 1D
+   Recommended: Trade with trend, add on pullbacks
+
+5. EXHAUST (Momentum Exhaustion - Reversal imminent)
+   Price Action: Sharp move but losing steam, wicks forming, divergences
+   Upside Exhaust: (priceChange > 5%) AND (volumeSpike < 2) AND (RSI > 75)
+   Downside Exhaust: (priceChange < -3%) AND (volumeSpike < 2) AND (RSI < 35)
+   OI: Negative or flat (positions closing)
+   Volume: High but declining from peak
+   RSI: Extreme >75 or <35
+   Recommended: AVOID new entries, expect reversal
+
+6. SMART_MONEY (Squeeze Setup - Absorption before explosive move)
+   Price Action: Price flat/consolidating but high volume = absorption
+   Formula: (Math.abs(priceChange) < 2%) AND (volumeSpike >= 2.0) AND (fundingRate < 0 OR fundingRate < 0.005%) AND (oiChange > 0)
+   OI: Building (new positions entering)
+   Volume: High despite flat price (absorption)
+   Funding: Negative or very low (shorts paying longs)
+   Recommended: Prepare for squeeze, potential explosive move coming
+
+Also add a function to detect trend continuity by comparing current values with previous periods. The TREND phase should require consistent direction over multiple periods (at least 3 candles trending same direction).
