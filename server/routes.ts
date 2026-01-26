@@ -2596,7 +2596,8 @@ export async function registerRoutes(
           undefined, // OI will be fetched if enriching
           clampedRsi,
           priceChange24h,
-          undefined
+          undefined,
+          priceLocation
         );
         
         // Build base signal
