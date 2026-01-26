@@ -548,11 +548,12 @@ export function EnhancedScreener() {
                         key={signal.symbol}
                         className={clsx(
                           "hover:bg-white/[0.02] transition-colors cursor-pointer",
-                          signal.signalType === "HOT" && "bg-rose-500/10 animate-pulse",
+                          signal.signalType === "HOT" && "hot-signal-row",
                           signal.signalType === "MAJOR" && "bg-amber-500/5",
                           signal.signalType === "ACTIVE" && "bg-emerald-500/5",
                           signal.signalType === "PRE" && "bg-blue-500/5",
                           (signal.preSpikeScore ?? 0) >= 4 &&
+                            signal.signalType !== "HOT" &&
                             "border-l-2 border-l-emerald-500",
                         )}
                         onClick={() =>

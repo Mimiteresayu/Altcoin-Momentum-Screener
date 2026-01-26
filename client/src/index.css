@@ -77,4 +77,20 @@
   .custom-scrollbar::-webkit-scrollbar-thumb {
     @apply bg-border rounded-full hover:bg-muted-foreground/50 transition-colors;
   }
+  
+  @keyframes hot-signal-pulse {
+    0%, 100% {
+      background-color: rgba(244, 63, 94, 0.15);
+      box-shadow: inset 0 0 20px rgba(244, 63, 94, 0.1), 0 0 8px rgba(244, 63, 94, 0.2);
+    }
+    50% {
+      background-color: rgba(244, 63, 94, 0.25);
+      box-shadow: inset 0 0 30px rgba(244, 63, 94, 0.2), 0 0 15px rgba(244, 63, 94, 0.3);
+    }
+  }
+  
+  .hot-signal-row {
+    animation: hot-signal-pulse 2s ease-in-out infinite;
+    border-left: 2px solid rgba(244, 63, 94, 0.6);
+  }
 }

@@ -582,8 +582,7 @@ export function SignalTable({ signals }: SignalTableProps) {
                       exit={{ opacity: 0 }}
                       className={clsx(
                         "group hover:bg-white/[0.02] transition-colors",
-                        signal.signalType === "HOT" &&
-                          "bg-rose-500/10 animate-pulse",
+                        signal.signalType === "HOT" && "hot-signal-row",
                         signal.signalType === "MAJOR" && "bg-amber-500/5",
                         signal.signalType === "ACTIVE" && "bg-emerald-500/5",
                         signal.signalType === "PRE" && "bg-blue-500/5",
