@@ -8,7 +8,7 @@ import { initializeWebSocket, getConnectedClientsCount } from "./websocket";
 import { backtestingService } from "./backtest";
 import { autotradeService } from "./autotrade";
 import { bitunixTradeService } from "./bitunix-trade";
-import { backtestEngine, BacktestSignal } from "./backtest-engine";
+import { backtestEngine, BacktestSignal, autoStartBacktestFromScreener, type ScreenerSignalForBacktest } from "./backtest-engine";
 import axios from "axios";
 import { RSI } from "technicalindicators";
 import {
@@ -2933,6 +2933,43 @@ export async function registerRoutes(
       await backtestEngine.saveResults();
       res.json({ success: true, message: "Results saved to database" });
     } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Auto-start backtest using BREAKOUT phase signals from screener
+  app.post("/api/backtest-engine/auto-start", async (req, res) => {
+    try {
+      // Use cached signals from the screener to find BREAKOUT phase candidates
+      const screenerSignals: ScreenerSignalForBacktest[] = cachedSignals
+        .filter((s: any) => s.marketPhase === "BREAKOUT")
+        .map((s: any) => ({
+          symbol: s.symbol,
+          price: s.price,
+          marketPhase: s.marketPhase || "BREAKOUT",
+          entryModel: s.entryModel || "BOS_ENTRY",
+          htfBias: s.htfBias,
+          rsi: s.rsi || 50,
+          volumeSpike: s.volumeSpike || 1,
+          signalStrength: s.signalStrength || 3,
+          previousHigh: s.previousHigh,
+          previousLow: s.previousLow,
+          ema21: s.ema21,
+        }));
+
+      console.log(`[AUTO-BACKTEST API] Found ${screenerSignals.length} BREAKOUT signals from screener`);
+
+      const result = await autoStartBacktestFromScreener(screenerSignals);
+      const metrics = backtestEngine.calculateMetrics();
+
+      res.json({
+        success: true,
+        ...result,
+        metrics,
+        sharpeTarget: metrics.sharpeRatio >= 2.5 ? "MET" : "BELOW TARGET",
+      });
+    } catch (error: any) {
+      console.error("[AUTO-BACKTEST API] Error:", error);
       res.status(500).json({ error: error.message });
     }
   });

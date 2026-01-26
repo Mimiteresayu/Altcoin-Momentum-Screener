@@ -10,6 +10,10 @@ import { eq, desc, and, gte, lte } from "drizzle-orm";
 import { getVolumeProfile, getLiquidityZonesFromVP } from "./binance";
 import type { VolumeProfileData } from "./binance";
 
+// Market phase types for entry model selection
+type MarketPhase = "ACCUMULATION" | "BREAKOUT" | "DISTRIBUTION" | "TREND" | "EXHAUST";
+type EntryModel = "BOS_ENTRY" | "SCALE_IN" | "PULLBACK" | "FVG_ENTRY" | "AVOID" | "TAKE_PROFIT";
+
 interface BacktestSignal {
   symbol: string;
   side: "LONG" | "SHORT";
@@ -24,6 +28,206 @@ interface BacktestSignal {
   oiChange?: number;
   volAccel?: number;
   timestamp: Date;
+  // New phase-based fields
+  marketPhase?: MarketPhase;
+  entryModel?: EntryModel;
+  supertrendValue?: number;
+  supertrendDirection?: "LONG" | "SHORT";
+  ema21?: number;
+  previousHigh?: number;
+  previousLow?: number;
+}
+
+// 4H Kline data for Supertrend and EMA calculations
+interface Kline4H {
+  openTime: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}
+
+// Calculate EMA 21 from klines
+function calculateEMA21(closes: number[]): number {
+  if (closes.length < 21) return closes[closes.length - 1];
+  const k = 2 / (21 + 1);
+  let ema = closes.slice(0, 21).reduce((a, b) => a + b, 0) / 21;
+  for (let i = 21; i < closes.length; i++) {
+    ema = closes[i] * k + ema * (1 - k);
+  }
+  return ema;
+}
+
+// Calculate Supertrend (ATR=14, Multiplier=3.5) for 4H timeframe
+function calculateSupertrendForBacktest(
+  klines: Kline4H[],
+  atrPeriod: number = 14,
+  multiplier: number = 3.5
+): { value: number; direction: "LONG" | "SHORT" } | null {
+  if (klines.length < atrPeriod + 2) return null;
+
+  const atrValues: number[] = [];
+  for (let i = atrPeriod; i < klines.length; i++) {
+    const trueRanges: number[] = [];
+    for (let j = i - atrPeriod + 1; j <= i; j++) {
+      const high = klines[j].high;
+      const low = klines[j].low;
+      const prevClose = klines[j - 1].close;
+      const tr = Math.max(high - low, Math.abs(high - prevClose), Math.abs(low - prevClose));
+      trueRanges.push(tr);
+    }
+    const atr = trueRanges.reduce((a, b) => a + b, 0) / atrPeriod;
+    atrValues.push(atr);
+  }
+
+  if (atrValues.length === 0) return null;
+
+  let prevFinalUpperBand = Infinity;
+  let prevFinalLowerBand = -Infinity;
+  let prevSupertrend = 0;
+  let direction: "LONG" | "SHORT" = "LONG";
+
+  for (let i = 0; i < atrValues.length; i++) {
+    const candleIdx = i + atrPeriod;
+    const high = klines[candleIdx].high;
+    const low = klines[candleIdx].low;
+    const close = klines[candleIdx].close;
+    const atr = atrValues[i];
+
+    const basicUpperBand = (high + low) / 2 + multiplier * atr;
+    const basicLowerBand = (high + low) / 2 - multiplier * atr;
+
+    const prevClose = klines[candleIdx - 1].close;
+    const finalUpperBand = basicUpperBand < prevFinalUpperBand || prevClose > prevFinalUpperBand
+      ? basicUpperBand : prevFinalUpperBand;
+    const finalLowerBand = basicLowerBand > prevFinalLowerBand || prevClose < prevFinalLowerBand
+      ? basicLowerBand : prevFinalLowerBand;
+
+    let supertrend: number;
+    if (prevSupertrend === prevFinalUpperBand) {
+      supertrend = close <= finalUpperBand ? finalUpperBand : finalLowerBand;
+    } else {
+      supertrend = close >= finalLowerBand ? finalLowerBand : finalUpperBand;
+    }
+
+    direction = supertrend === finalLowerBand ? "LONG" : "SHORT";
+    prevFinalUpperBand = finalUpperBand;
+    prevFinalLowerBand = finalLowerBand;
+    prevSupertrend = supertrend;
+  }
+
+  return { value: prevSupertrend, direction };
+}
+
+// Validate entry based on phase and entry model
+function validatePhaseBasedEntry(signal: BacktestSignal): { valid: boolean; reason: string } {
+  const { marketPhase, entryModel, supertrendDirection, side, entryPrice, ema21, previousHigh, previousLow } = signal;
+
+  // Skip if no phase data
+  if (!marketPhase) return { valid: true, reason: "No phase data, using default validation" };
+
+  // BREAKOUT + BOS_ENTRY: Enter on break of structure with Supertrend confirmation
+  if (marketPhase === "BREAKOUT" && entryModel === "BOS_ENTRY") {
+    if (side === "LONG") {
+      if (supertrendDirection !== "LONG") {
+        return { valid: false, reason: "BREAKOUT BOS: Supertrend not confirming LONG" };
+      }
+      if (previousHigh && entryPrice < previousHigh) {
+        return { valid: false, reason: "BREAKOUT BOS: Price has not broken previous high" };
+      }
+    } else {
+      if (supertrendDirection !== "SHORT") {
+        return { valid: false, reason: "BREAKOUT BOS: Supertrend not confirming SHORT" };
+      }
+      if (previousLow && entryPrice > previousLow) {
+        return { valid: false, reason: "BREAKOUT BOS: Price has not broken previous low" };
+      }
+    }
+    return { valid: true, reason: "BREAKOUT BOS: Entry confirmed" };
+  }
+
+  // ACCUMULATION + SCALE_IN: Enter on dip to EMA 21 support
+  if (marketPhase === "ACCUMULATION" && entryModel === "SCALE_IN") {
+    if (!ema21) return { valid: false, reason: "ACCUMULATION: No EMA 21 data" };
+    const distanceToEMA = Math.abs((entryPrice - ema21) / ema21) * 100;
+    if (side === "LONG" && entryPrice > ema21 * 1.02) {
+      return { valid: false, reason: `ACCUMULATION: Price too far above EMA 21 (${distanceToEMA.toFixed(1)}%)` };
+    }
+    if (side === "LONG" && distanceToEMA > 5) {
+      return { valid: false, reason: "ACCUMULATION: Wait for dip closer to EMA 21" };
+    }
+    return { valid: true, reason: "ACCUMULATION: Good entry near EMA 21 support" };
+  }
+
+  // TREND + PULLBACK: Enter on pullback to EMA 21 with trend confirmation
+  if (marketPhase === "TREND" && entryModel === "PULLBACK") {
+    if (!ema21) return { valid: false, reason: "TREND: No EMA 21 data" };
+    if (supertrendDirection !== side) {
+      return { valid: false, reason: `TREND: Supertrend (${supertrendDirection}) conflicts with ${side}` };
+    }
+    const distanceToEMA = ((entryPrice - ema21) / ema21) * 100;
+    if (side === "LONG" && distanceToEMA > 3) {
+      return { valid: false, reason: "TREND PULLBACK: Wait for pullback to EMA 21" };
+    }
+    if (side === "SHORT" && distanceToEMA < -3) {
+      return { valid: false, reason: "TREND PULLBACK: Wait for pullback to EMA 21" };
+    }
+    return { valid: true, reason: "TREND: Pullback entry confirmed" };
+  }
+
+  // DISTRIBUTION/EXHAUST phases - avoid or take profit
+  if (marketPhase === "DISTRIBUTION" || marketPhase === "EXHAUST") {
+    if (entryModel === "AVOID" || entryModel === "TAKE_PROFIT") {
+      return { valid: false, reason: `${marketPhase}: ${entryModel} - not entering new positions` };
+    }
+  }
+
+  return { valid: true, reason: "Phase validation passed" };
+}
+
+// Calculate stop loss at Supertrend level or 2% below entry (whichever is tighter)
+function calculatePhaseBasedStopLoss(
+  entryPrice: number,
+  side: "LONG" | "SHORT",
+  supertrendValue?: number
+): number {
+  const twoPercentStop = side === "LONG" 
+    ? entryPrice * 0.98 
+    : entryPrice * 1.02;
+
+  if (!supertrendValue) return twoPercentStop;
+
+  if (side === "LONG") {
+    // For longs, stop is below entry - use the higher (tighter) of the two
+    return Math.max(twoPercentStop, supertrendValue);
+  } else {
+    // For shorts, stop is above entry - use the lower (tighter) of the two
+    return Math.min(twoPercentStop, supertrendValue);
+  }
+}
+
+// Calculate take profit at 1:2 R:R ratio
+function calculatePhaseBasedTakeProfit(
+  entryPrice: number,
+  stopLoss: number,
+  side: "LONG" | "SHORT"
+): { tp1: number; tp2: number; tp3: number } {
+  const risk = Math.abs(entryPrice - stopLoss);
+  
+  if (side === "LONG") {
+    return {
+      tp1: entryPrice + risk * 2,    // 1:2 R:R
+      tp2: entryPrice + risk * 3,    // 1:3 R:R
+      tp3: entryPrice + risk * 4,    // 1:4 R:R
+    };
+  } else {
+    return {
+      tp1: entryPrice - risk * 2,
+      tp2: entryPrice - risk * 3,
+      tp3: entryPrice - risk * 4,
+    };
+  }
 }
 
 interface BacktestTrade {
@@ -208,6 +412,12 @@ class BacktestEngine {
         valid: false,
         reason: `R:R ${riskReward.toFixed(2)} < ${this.config.minRiskReward}`,
       };
+    }
+
+    // Phase-based entry validation (4H timeframe logic)
+    const phaseValidation = validatePhaseBasedEntry(signal);
+    if (!phaseValidation.valid) {
+      return { valid: false, reason: phaseValidation.reason };
     }
 
     return { valid: true };
@@ -895,3 +1105,136 @@ export async function validateSignalWithVP(
 }
 
 export { VolumeProfileData };
+
+// ============================================
+// AUTO-START BACKTEST FOR BREAKOUT PHASE SIGNALS
+// Uses 4H timeframe with Supertrend (14, 3.5) confirmation
+// ============================================
+
+export interface ScreenerSignalForBacktest {
+  symbol: string;
+  price: number;
+  marketPhase: MarketPhase;
+  entryModel: EntryModel;
+  htfBias?: { side: "LONG" | "SHORT"; confidence: string; supertrendValue?: number };
+  rsi: number;
+  volumeSpike: number;
+  signalStrength: number;
+  previousHigh?: number;
+  previousLow?: number;
+  ema21?: number;
+}
+
+// Convert screener signal to backtest signal with phase-based entry logic
+export function createBacktestSignalFromScreener(
+  screenerSignal: ScreenerSignalForBacktest
+): BacktestSignal | null {
+  const { symbol, price, marketPhase, entryModel, htfBias, rsi, volumeSpike, signalStrength, previousHigh, previousLow, ema21 } = screenerSignal;
+
+  // Only process BREAKOUT phase signals for auto-backtest
+  if (marketPhase !== "BREAKOUT") {
+    console.log(`[AUTO-BACKTEST] Skipping ${symbol}: Phase ${marketPhase} is not BREAKOUT`);
+    return null;
+  }
+
+  // Determine side from HTF bias
+  const side = htfBias?.side || "LONG";
+  const supertrendValue = htfBias?.supertrendValue;
+  const supertrendDirection = htfBias?.side;
+
+  // Calculate phase-based stop loss (Supertrend or 2% below entry)
+  const stopLoss = calculatePhaseBasedStopLoss(price, side, supertrendValue);
+
+  // Calculate take profits at 1:2 R:R
+  const tps = calculatePhaseBasedTakeProfit(price, stopLoss, side);
+
+  const backtestSignal: BacktestSignal = {
+    symbol,
+    side,
+    entryPrice: price,
+    stopLoss,
+    takeProfit1: tps.tp1,
+    takeProfit2: tps.tp2,
+    takeProfit3: tps.tp3,
+    signalStrength,
+    volumeSpike,
+    rsi,
+    timestamp: new Date(),
+    // Phase-based fields
+    marketPhase,
+    entryModel: entryModel || "BOS_ENTRY",
+    supertrendValue,
+    supertrendDirection,
+    ema21,
+    previousHigh,
+    previousLow,
+  };
+
+  console.log(`[AUTO-BACKTEST] Created signal for ${symbol}: Phase=${marketPhase}, Entry=${entryModel}, Side=${side}, SL=${stopLoss.toFixed(4)}, TP1=${tps.tp1.toFixed(4)}`);
+
+  return backtestSignal;
+}
+
+// Auto-start backtest for all BREAKOUT phase signals from screener
+export async function autoStartBacktestFromScreener(
+  screenerSignals: ScreenerSignalForBacktest[]
+): Promise<{ processed: number; accepted: number; rejected: number; results: any[] }> {
+  console.log(`[AUTO-BACKTEST] Starting backtest for ${screenerSignals.length} signals...`);
+
+  const breakoutSignals = screenerSignals.filter(s => s.marketPhase === "BREAKOUT");
+  console.log(`[AUTO-BACKTEST] Found ${breakoutSignals.length} BREAKOUT phase signals`);
+
+  const results: any[] = [];
+  let accepted = 0;
+  let rejected = 0;
+
+  // Reset backtest engine for fresh run
+  backtestEngine.reset();
+
+  for (const screenerSignal of breakoutSignals) {
+    const backtestSignal = createBacktestSignalFromScreener(screenerSignal);
+    if (!backtestSignal) {
+      rejected++;
+      continue;
+    }
+
+    const result = backtestEngine.processSignal(backtestSignal);
+    results.push({
+      symbol: screenerSignal.symbol,
+      accepted: result.accepted,
+      reason: result.reason,
+      trade: result.trade,
+    });
+
+    if (result.accepted) {
+      accepted++;
+      console.log(`[AUTO-BACKTEST] ACCEPTED: ${screenerSignal.symbol}`);
+    } else {
+      rejected++;
+      console.log(`[AUTO-BACKTEST] REJECTED: ${screenerSignal.symbol} - ${result.reason}`);
+    }
+  }
+
+  // Save results if any trades were accepted
+  if (accepted > 0) {
+    await backtestEngine.saveResults();
+  }
+
+  const metrics = backtestEngine.calculateMetrics();
+  console.log(`[AUTO-BACKTEST] Complete: ${accepted} accepted, ${rejected} rejected`);
+  console.log(`[AUTO-BACKTEST] Sharpe Ratio: ${metrics.sharpeRatio.toFixed(2)}`);
+
+  return { processed: breakoutSignals.length, accepted, rejected, results };
+}
+
+// Export helper functions for external use
+export {
+  calculateEMA21,
+  calculateSupertrendForBacktest,
+  validatePhaseBasedEntry,
+  calculatePhaseBasedStopLoss,
+  calculatePhaseBasedTakeProfit,
+  type MarketPhase,
+  type EntryModel,
+  type Kline4H,
+};

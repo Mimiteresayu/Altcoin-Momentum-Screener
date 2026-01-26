@@ -55,6 +55,20 @@ Preferred communication style: Simple, everyday language.
 - **Autotrade System**: Integration with Bitunix Futures for automated trading with configurable risk management, trade filters, and safety features.
 - **Backtest Engine**: Optimizes entry/exit strategies for Sharpe Ratio (target >= 2.5), using advanced filters and momentum-based take-profit strategies.
 
+### Timeframe Configuration
+- **BIAS**: 4H (Supertrend ATR=14, Multiplier=3.5 for trend direction)
+- **PHASE**: 4H (Market phase detection using volume, RSI, price structure)
+- **ENTRY**: 4H (Entry timing and candlestick analysis)
+- **POC (Point of Control)**: 24H Volume Profile for key support/resistance
+- **HTF (Higher Timeframe)**: 4H/1D/1W for multi-timeframe confirmation
+
+### Backtest Entry Models
+- **BREAKOUT + BOS ENTRY**: Enter long on break of structure (price > previous high), confirmed by Supertrend
+- **ACCUMULATION + SCALE IN**: Enter on dip to EMA 21 support zone
+- **TREND + PULLBACK**: Enter on pullback to EMA 21 with trend confirmation
+- **Stop Loss**: At Supertrend level or 2% below entry (whichever is tighter)
+- **Take Profit**: 1:2 Risk:Reward ratio
+
 ## External Dependencies
 
 ### Third-Party APIs
