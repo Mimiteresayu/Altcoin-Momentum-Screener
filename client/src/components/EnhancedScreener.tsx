@@ -655,7 +655,7 @@ export function EnhancedScreener() {
                           {getPhaseBadge(signal.marketPhase)}
                         </td>
                         <td className="px-2 py-2 text-center">
-                          {getPhaseBadge(signal.marketPhaseAlt || "UNKNOWN")}
+                          {getPhaseBadge(signal.marketPhaseAlt || "NEUTRAL")}
                         </td>
                         <td className="px-2 py-2 text-center">
                           {getPScoreBadge(signal.preSpikeScore)}

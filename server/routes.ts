@@ -24,6 +24,7 @@ import {
   applyScreenerFilters,
   calculatePriceLocation,
   calculateMarketPhase,
+  calculateMarketPhaseAlt,
   calculatePreSpikeScore,
   calculateHtfBias,
   type ScreenerFilters,
@@ -2600,6 +2601,14 @@ export async function registerRoutes(
           priceLocation
         );
         
+        // Calculate alternative market phase using RSI-based method
+        const marketPhaseAlt = calculateMarketPhaseAlt(
+          clampedRsi,
+          priceChange24h,
+          volumeSpikeRatio,
+          priceLocation
+        );
+        
         // Build base signal
         const signal: any = {
           symbol,
@@ -2647,6 +2656,7 @@ export async function registerRoutes(
           // Enhanced fields (defaults)
           priceLocation,
           marketPhase,
+          marketPhaseAlt,
           preSpikeScore: 0,
           fundingRate: undefined,
           fundingBias: undefined,
