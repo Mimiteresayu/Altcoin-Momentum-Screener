@@ -2569,7 +2569,7 @@ export async function registerRoutes(
         // Calculate price location
         const priceLocation = calculatePriceLocation(price, high24h, low24h);
         
-        // Calculate market phase using ICT/Smart Money logic with funding rate
+        // Calculate market phase using SMC + Order Flow logic with funding rate and L/S ratio
         const marketPhase = calculateMarketPhase(
           volumeSpikeRatio,
           classicSignal.oiChange24h,
@@ -2577,7 +2577,8 @@ export async function registerRoutes(
           priceChange24h,
           classicSignal.volAccel,
           priceLocation,
-          classicSignal.fundingRate
+          classicSignal.fundingRate,
+          classicSignal.longShortRatio
         );
         
         // Calculate alternative market phase using OI + Price correlation

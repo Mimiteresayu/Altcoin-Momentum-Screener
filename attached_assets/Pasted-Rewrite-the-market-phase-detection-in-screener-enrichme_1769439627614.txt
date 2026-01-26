@@ -1,0 +1,52 @@
+Rewrite the market phase detection in screener-enrichment.ts using Smart Money Concept (SMC) and Order Flow. Replace existing phases with clear ICT AMD (Accumulation, Manipulation, Distribution) framework.
+
+Change MarketPhase type to: "ACCUMULATION" | "MANIPULATION" | "DISTRIBUTION" | "EXPANSION" | "RANGING"
+
+Define each phase with these EXACT criteria:
+
+1. ACCUMULATION (Smart money building positions at discount):
+   - Price Location: DISCOUNT (lower third of range)
+   - OI Change: Increasing (> 2%) - new positions opening
+   - Volume: Low to moderate (volSpike 0.5-1.2x)
+   - Funding Rate: Low/Negative (< 0.005%) - bearish sentiment = buying opportunity
+   - RSI: 30-50 (oversold recovering)
+   - Price Change: Flat to slightly negative (-5% to +3%)
+   - L/S Ratio: < 1.0 (shorts dominant = contrarian bullish setup)
+
+2. MANIPULATION (Stop hunt / liquidity grab / false breakout):
+   - OI Change: Spike then drop (> 5% spike) - liquidations
+   - Volume: Sudden spike (volSpike > 2x)
+   - Price Change: Sharp move then reversal (> 8% with reversal signal)
+   - RSI: Extreme readings (< 25 or > 75)
+   - This is a transitional phase - detect when OI spikes with extreme price move
+
+3. DISTRIBUTION (Smart money unloading at premium):
+   - Price Location: PREMIUM (upper third of range)
+   - OI Change: Flat or decreasing while price high
+   - Volume: Declining on continuation (volSpike < 0.8x with positive price)
+   - Funding Rate: High (> 0.01%) - overleveraged longs
+   - RSI: 70-85 (overbought)
+   - Price Change: Positive but momentum slowing
+   - L/S Ratio: > 1.2 (longs dominant = contrarian bearish)
+
+4. EXPANSION (Breakout / Strong directional move):
+   - OI Change: Increasing significantly (> 5%)
+   - Volume: High spike (volSpike > 1.5x)
+   - Price Change: Strong directional (> 5%)
+   - RSI: 50-70 (momentum zone, not extreme)
+   - Volume Delta positive for bullish, negative for bearish expansion
+
+5. RANGING (Consolidation / No clear direction):
+   - Price Location: NEUTRAL
+   - OI Change: Flat (-2% to +2%)
+   - Volume: Low (volSpike < 0.8x)
+   - Funding Rate: Neutral (0.005-0.01%)
+   - RSI: 40-60
+   - Price Change: Small (-3% to +3%)
+
+Also add Kill Zone detection based on current hour (HKT/UTC+8):
+- Asia KZ: 8:00-11:00 HKT (accumulation likely)
+- London KZ: 15:00-18:00 HKT (manipulation/expansion likely)
+- NY KZ: 20:00-23:00 HKT (distribution/expansion likely)
+
+Update the enrichSignalData function to pass all required parameters including fundingRate and longShortRatio.

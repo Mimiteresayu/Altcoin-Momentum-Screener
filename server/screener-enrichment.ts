@@ -23,7 +23,7 @@ import { getBinanceFuturesData, getBinanceKlines } from "./binance";
 import { getOKXMarketData, getOKXFundingRate, getOKXKlines } from "./okx";
 
 type PriceLocation = "DISCOUNT" | "NEUTRAL" | "PREMIUM";
-type MarketPhase = "ACCUMULATION" | "DISTRIBUTION" | "BREAKOUT" | "EXHAUST" | "NEUTRAL" | "UNKNOWN";
+type MarketPhase = "ACCUMULATION" | "MANIPULATION" | "DISTRIBUTION" | "EXPANSION" | "RANGING";
 type Confidence = "high" | "medium" | "low";
 
 type HtfBias = {
@@ -77,15 +77,14 @@ export function calculatePriceLocation(
 }
 
 /**
- * ICT/Smart Money PO3 (Power of 3) / AMD Cycle Market Phase Detection
+ * SMC + Order Flow Market Phase Detection
+ * Uses Smart Money Concepts with Order Flow analysis:
  * 
- * ACCUMULATION: Smart money building positions at discount
- * BREAKOUT: Price breaking out with momentum
- * DISTRIBUTION: Smart money distributing at premium
- * EXHAUST: Move overextended, reversal likely
- * NEUTRAL: Consolidation, no clear phase
- * 
- * This function NEVER returns UNKNOWN - always determines a phase
+ * ACCUMULATION: Smart money quietly building long positions at discount
+ * MANIPULATION: Stop hunts, fake breakouts - extreme moves to trap traders
+ * DISTRIBUTION: Smart money selling into strength at premium
+ * EXPANSION: Clear directional momentum move with volume/OI confirmation
+ * RANGING: Sideways consolidation with no clear direction
  */
 export function calculateMarketPhase(
   volumeSpike: number,
@@ -95,164 +94,153 @@ export function calculateMarketPhase(
   volAccel: number | undefined,
   priceLocation: PriceLocation = "NEUTRAL",
   fundingRate: number | undefined = undefined,
+  longShortRatio: number | undefined = undefined,
 ): MarketPhase {
   const oiDelta = oiChange ?? 0;
-  const acceleration = volAccel ?? 1;
   const hasValidRsi = rsi !== 0 && rsi !== undefined && !isNaN(rsi);
   const fr = fundingRate ?? 0;
   const frPct = fr * 100;
+  const lsr = longShortRatio ?? 1.0;
 
-  // ===== 1. EXHAUST: Reversal imminent (check first - highest priority for risk) =====
-  // Extreme funding rate (> 0.02% or < -0.01%)
-  // RSI > 80 (overbought) or < 20 (oversold)
-  // Price at extreme location
-  // OI decreasing (positions closing)
+  // ===== 1. MANIPULATION: Stop hunts and fake breakouts (check first - highest priority) =====
+  // OI spike >5% + volume >2x + price >8% + RSI <25 or >75
+  // Extreme moves designed to trap traders before reversal
   
-  if (hasValidRsi) {
-    // Extreme overbought exhaustion
-    if (rsi > 80 && priceLocation === "PREMIUM") {
-      return "EXHAUST";
-    }
-    // Extreme oversold exhaustion
-    if (rsi < 20 && priceLocation === "DISCOUNT") {
-      return "EXHAUST";
+  if (oiDelta > 5 && volumeSpike > 2 && Math.abs(priceChange) > 8) {
+    if (hasValidRsi && (rsi < 25 || rsi > 75)) {
+      return "MANIPULATION";
     }
   }
   
-  // Extreme funding with OI declining = exhaustion imminent
-  if ((frPct > 0.02 || frPct < -0.01) && oiDelta < 0) {
-    return "EXHAUST";
+  // Strong spike characteristics even without extreme RSI
+  if (oiDelta > 5 && volumeSpike > 2.5 && Math.abs(priceChange) > 10) {
+    return "MANIPULATION";
   }
   
-  // Extreme RSI with OI declining = positions closing
-  if (hasValidRsi && (rsi > 80 || rsi < 20) && oiDelta < -3) {
-    return "EXHAUST";
-  }
-  
-  // Volume declining at extreme price locations (momentum fading)
-  if (volumeSpike < 0.7 && acceleration < 0.7) {
-    if (priceLocation === "PREMIUM" && priceChange > 3) {
-      return "EXHAUST";
-    }
-    if (priceLocation === "DISCOUNT" && priceChange < -3) {
-      return "EXHAUST";
-    }
+  // Extreme RSI with massive volume = likely manipulation
+  if (hasValidRsi && (rsi < 20 || rsi > 80) && volumeSpike > 2.5) {
+    return "MANIPULATION";
   }
 
-  // ===== 2. BREAKOUT: Momentum expansion =====
-  // OI increasing significantly (> 5%)
-  // Volume spike > 1.5x
-  // Price change > 5% positive
-  // RSI 50-70 (momentum zone)
-  // Breaking out of NEUTRAL towards PREMIUM
+  // ===== 2. EXPANSION: Clear directional momentum =====
+  // OI >5% + volume >1.5x + price >5% + RSI 50-70
+  // Real breakout with institutional participation
   
-  // Strong OI increase with volume = clear breakout
-  if (oiDelta > 5 && volumeSpike >= 1.5 && priceChange > 5) {
-    return "BREAKOUT";
-  }
-  
-  // Strong price move with volume confirmation
-  if (priceChange > 5 && volumeSpike >= 1.5) {
-    return "BREAKOUT";
-  }
-  
-  // RSI in momentum zone with OI building and volume
-  if (hasValidRsi && rsi >= 50 && rsi <= 70 && oiDelta > 3 && volumeSpike >= 1.3) {
-    return "BREAKOUT";
-  }
-  
-  // Moderate move with strong volume and OI building
-  if (priceChange > 3 && volumeSpike >= 1.5 && oiDelta > 0) {
-    return "BREAKOUT";
-  }
-  
-  // Breaking out from neutral with volume
-  if (priceLocation === "NEUTRAL" && priceChange > 5 && volumeSpike >= 1.0) {
-    return "BREAKOUT";
-  }
-
-  // ===== 3. DISTRIBUTION: Smart money selling =====
-  // Funding rate > 0.01% (overleveraged longs)
-  // OI flat or decreasing while price still high
-  // Price at PREMIUM location
-  // RSI > 70 (overbought)
-  // Volume declining (smart money exiting quietly)
-  
-  // Classic distribution: high funding + premium location + declining OI
-  if (frPct > 0.01 && priceLocation === "PREMIUM" && oiDelta <= 0) {
-    return "DISTRIBUTION";
-  }
-  
-  // Price at premium with declining volume = quiet exit
-  if (priceLocation === "PREMIUM" && volumeSpike < 0.8 && priceChange > 0) {
-    return "DISTRIBUTION";
-  }
-  
-  // RSI overbought at premium = distribution territory
-  if (hasValidRsi && rsi > 70 && priceLocation === "PREMIUM") {
-    return "DISTRIBUTION";
-  }
-  
-  // High RSI with OI declining = smart money exiting
-  if (hasValidRsi && rsi > 65 && oiDelta < 0 && priceChange > 1) {
-    return "DISTRIBUTION";
-  }
-  
-  // Price rising but OI declining significantly = weak hands only
-  if (priceChange > 2 && oiDelta < -3) {
-    return "DISTRIBUTION";
-  }
-  
-  // High funding at premium regardless of OI = overleveraged
-  if (frPct > 0.015 && priceLocation === "PREMIUM") {
-    return "DISTRIBUTION";
-  }
-
-  // ===== 4. ACCUMULATION: Smart money building positions =====
-  // Funding rate < 0.005% (bearish sentiment = buying opportunity)
-  // OI increasing (new positions opening)
-  // Price at DISCOUNT or NEUTRAL location
-  // RSI 30-50 (oversold or recovering)
-  // Price change slightly negative or flat (-5% to +3%)
-  
-  // Classic accumulation: negative/low funding at discount with OI building
-  if (frPct < 0.005 && oiDelta > 0 && (priceLocation === "DISCOUNT" || priceLocation === "NEUTRAL")) {
-    return "ACCUMULATION";
-  }
-  
-  // RSI in accumulation zone with volume activity
-  if (hasValidRsi && rsi >= 30 && rsi <= 50 && priceChange >= -5 && priceChange <= 3) {
-    if (volumeSpike >= 0.8 || oiDelta > 0) {
-      return "ACCUMULATION";
+  if (oiDelta > 5 && volumeSpike > 1.5 && Math.abs(priceChange) > 5) {
+    if (hasValidRsi && rsi >= 50 && rsi <= 70) {
+      return "EXPANSION";
     }
   }
   
-  // Price at discount with OI increasing = smart money entering
-  if (priceLocation === "DISCOUNT" && oiDelta > 0) {
+  // Strong OI + volume confirmation for expansion
+  if (oiDelta > 5 && volumeSpike > 1.5 && priceChange > 5) {
+    return "EXPANSION";
+  }
+  
+  // Moderate move with strong confirmation
+  if (oiDelta > 3 && volumeSpike > 1.5 && priceChange > 5 && hasValidRsi && rsi >= 45 && rsi <= 75) {
+    return "EXPANSION";
+  }
+
+  // ===== 3. DISTRIBUTION: Smart money selling into strength =====
+  // PREMIUM + OI flat/down + volume <0.8x declining + FR >0.01% + RSI 70-85 + L/S >1.2
+  
+  // Full criteria match
+  if (priceLocation === "PREMIUM" && 
+      oiDelta <= 0 && 
+      volumeSpike < 0.8 && 
+      frPct > 0.01 && 
+      hasValidRsi && rsi >= 70 && rsi <= 85 && 
+      lsr > 1.2) {
+    return "DISTRIBUTION";
+  }
+  
+  // Strong distribution signals (relaxed L/S requirement)
+  if (priceLocation === "PREMIUM" && oiDelta <= 0 && volumeSpike < 0.8 && frPct > 0.01) {
+    return "DISTRIBUTION";
+  }
+  
+  // Premium location with overbought RSI and declining OI
+  if (priceLocation === "PREMIUM" && hasValidRsi && rsi >= 70 && rsi <= 85 && oiDelta < 0) {
+    return "DISTRIBUTION";
+  }
+  
+  // Crowded long with declining volume at premium
+  if (priceLocation === "PREMIUM" && lsr > 1.2 && volumeSpike < 0.8 && frPct > 0.01) {
+    return "DISTRIBUTION";
+  }
+  
+  // High funding at premium = overleveraged longs distributing
+  if (priceLocation === "PREMIUM" && frPct > 0.015) {
+    return "DISTRIBUTION";
+  }
+
+  // ===== 4. ACCUMULATION: Smart money building positions at discount =====
+  // DISCOUNT + OI >2% + volume 0.5-1.2x + FR <0.005% + RSI 30-50 + price -5% to +3% + L/S <1.0
+  
+  // Full criteria match
+  if (priceLocation === "DISCOUNT" && 
+      oiDelta > 2 && 
+      volumeSpike >= 0.5 && volumeSpike <= 1.2 && 
+      frPct < 0.005 && 
+      hasValidRsi && rsi >= 30 && rsi <= 50 && 
+      priceChange >= -5 && priceChange <= 3 && 
+      lsr < 1.0) {
     return "ACCUMULATION";
   }
   
-  // Flat price consolidation with OI building = accumulation
-  if (priceChange >= -5 && priceChange <= 3 && oiDelta > 0 && volumeSpike >= 0.5) {
+  // Strong accumulation signals (relaxed criteria)
+  if (priceLocation === "DISCOUNT" && 
+      oiDelta > 2 && 
+      volumeSpike >= 0.5 && volumeSpike <= 1.2 && 
+      frPct < 0.005) {
     return "ACCUMULATION";
   }
   
-  // Low/negative funding with recovering RSI
-  if (frPct < 0 && hasValidRsi && rsi >= 30 && rsi <= 50) {
+  // Discount with OI building and low funding
+  if (priceLocation === "DISCOUNT" && oiDelta > 2 && frPct < 0.005) {
     return "ACCUMULATION";
   }
   
-  // Discount zone with any reasonable activity
-  if (priceLocation === "DISCOUNT" && volumeSpike >= 0.5) {
+  // RSI in accumulation zone at discount with shorts dominant
+  if (priceLocation === "DISCOUNT" && hasValidRsi && rsi >= 30 && rsi <= 50 && lsr < 1.0) {
+    return "ACCUMULATION";
+  }
+  
+  // Discount location with quiet OI building
+  if (priceLocation === "DISCOUNT" && oiDelta > 0 && volumeSpike >= 0.5 && volumeSpike <= 1.5) {
     return "ACCUMULATION";
   }
 
-  // ===== 5. NEUTRAL: Consolidation =====
-  // Default when no clear pattern
-  // Funding 0.005-0.01%
-  // RSI 40-60
-  // Price at NEUTRAL location
-  return "NEUTRAL";
+  // ===== 5. RANGING: Sideways consolidation =====
+  // NEUTRAL + OI -2% to +2% + volume <0.8x + FR 0.005-0.01% + RSI 40-60 + price -3% to +3%
+  
+  // Full criteria match
+  if (priceLocation === "NEUTRAL" && 
+      oiDelta >= -2 && oiDelta <= 2 && 
+      volumeSpike < 0.8 && 
+      frPct >= 0.005 && frPct <= 0.01 && 
+      hasValidRsi && rsi >= 40 && rsi <= 60 && 
+      priceChange >= -3 && priceChange <= 3) {
+    return "RANGING";
+  }
+  
+  // Neutral location with flat OI and low volume
+  if (priceLocation === "NEUTRAL" && 
+      oiDelta >= -2 && oiDelta <= 2 && 
+      volumeSpike < 0.8) {
+    return "RANGING";
+  }
+  
+  // Tight price range with balanced RSI
+  if (priceChange >= -3 && priceChange <= 3 && 
+      hasValidRsi && rsi >= 40 && rsi <= 60 && 
+      volumeSpike < 0.8) {
+    return "RANGING";
+  }
+  
+  // Default to RANGING when no clear pattern matches
+  return "RANGING";
 }
 
 /**
@@ -281,13 +269,13 @@ export function calculateMarketPhaseAlt(
     const priceUp = priceChange > 2;
     const priceDown = priceChange < -2;
     
-    // OI up + Price up = BREAKOUT (long positions opening, bullish momentum)
+    // OI up + Price up = EXPANSION (long positions opening, bullish momentum)
     if (oiUp && priceUp) {
       // Strong confirmation: high volume adds conviction
       if (volumeSpike >= 1.5) {
-        return "BREAKOUT";
+        return "EXPANSION";
       }
-      return "BREAKOUT";
+      return "EXPANSION";
     }
     
     // OI up + Price down = ACCUMULATION (shorts opening OR smart money accumulating)
@@ -302,17 +290,17 @@ export function calculateMarketPhaseAlt(
       return "DISTRIBUTION";
     }
     
-    // OI down + Price down = EXHAUST (longs closing, capitulation)
-    // Positions being liquidated or closed = potential bottom
+    // OI down + Price down = MANIPULATION (longs closing, potential stop hunt/capitulation)
+    // Positions being liquidated = potential manipulation before reversal
     if (oiDown && priceDown) {
-      return "EXHAUST";
+      return "MANIPULATION";
     }
     
     // Moderate OI changes - use secondary indicators
     if (Math.abs(oiDelta) <= 2 && Math.abs(priceChange) <= 2) {
-      // Consolidation with neutral OI/price = NEUTRAL
+      // Consolidation with neutral OI/price = RANGING
       if (hasValidRsi && rsi >= 40 && rsi <= 60) {
-        return "NEUTRAL";
+        return "RANGING";
       }
       // Slight OI increase with flat price = quiet accumulation
       if (oiDelta > 0 && volumeSpike >= 0.8) {
@@ -323,14 +311,14 @@ export function calculateMarketPhaseAlt(
   
   // Fallback: Use RSI + Volume when OI data unavailable
   if (hasValidRsi) {
-    // Extreme RSI = exhaustion
+    // Extreme RSI = manipulation (stop hunt zone)
     if (rsi > 80 || rsi < 20) {
-      return "EXHAUST";
+      return "MANIPULATION";
     }
     
-    // RSI momentum with price confirmation = breakout
+    // RSI momentum with price confirmation = expansion
     if (rsi > 55 && rsi <= 75 && priceChange > 3 && volumeSpike >= 1.2) {
-      return "BREAKOUT";
+      return "EXPANSION";
     }
     
     // RSI recovering from oversold with volume = accumulation
@@ -345,12 +333,12 @@ export function calculateMarketPhaseAlt(
   }
   
   // Final fallback: price/volume only
-  if (priceChange > 5 && volumeSpike >= 1.5) return "BREAKOUT";
-  if (priceChange < -5 && volumeSpike < 0.8) return "EXHAUST";
+  if (priceChange > 5 && volumeSpike >= 1.5) return "EXPANSION";
+  if (priceChange < -5 && volumeSpike < 0.8) return "MANIPULATION";
   if (priceLocation === "DISCOUNT" && volumeSpike >= 1.0) return "ACCUMULATION";
   if (priceLocation === "PREMIUM" && volumeSpike < 0.9) return "DISTRIBUTION";
   
-  return "NEUTRAL";
+  return "RANGING";
 }
 
 export function calculatePreSpikeScore(
@@ -701,11 +689,11 @@ function generateStorytelling(
       confidence = "medium";
       break;
 
-    case "BREAKOUT":
-      summary = `${signal.symbol} BREAKOUT with ${volumeDesc} and ${oiDesc}`;
-      interpretation = `Strong breakout pattern. ${volumeDesc} confirms move validity. ${fundingBias === "bearish" ? "Negative funding supports continuation." : ""}`;
+    case "EXPANSION":
+      summary = `${signal.symbol} EXPANSION with ${volumeDesc} and ${oiDesc}`;
+      interpretation = `Strong momentum expansion. ${volumeDesc} confirms institutional participation. ${fundingBias === "bearish" ? "Negative funding supports continuation." : ""}`;
       if (signal.side === "LONG" && preSpikeScore >= 4) {
-        actionSuggestion = `LONG on pullback to ${signal.entryPrice.toFixed(4)} or breakout continuation`;
+        actionSuggestion = `LONG on pullback to ${signal.entryPrice.toFixed(4)} or momentum continuation`;
         confidence = "high";
       } else {
         actionSuggestion = "Wait for pullback entry to reduce risk";
@@ -713,12 +701,19 @@ function generateStorytelling(
       }
       break;
 
-    case "EXHAUST":
-      summary = `${signal.symbol} showing exhaustion signals with fading ${volumeDesc}`;
-      interpretation = `Potential exhaustion detected. Volume declining while ${rsiDesc}. ${lsrBias === "long_dominant" ? "Crowded long positioning adds risk." : ""}`;
+    case "MANIPULATION":
+      summary = `${signal.symbol} showing MANIPULATION signals - potential stop hunt`;
+      interpretation = `Possible stop hunt or fake breakout detected. ${volumeDesc} with extreme ${rsiDesc}. ${lsrBias === "long_dominant" ? "Crowded positioning adds reversal risk." : ""}`;
       actionSuggestion =
-        "Avoid new entries. Tighten stops on existing positions.";
+        "Avoid chasing. Wait for reversal confirmation before counter-trend entry.";
       confidence = "medium";
+      break;
+
+    case "RANGING":
+      summary = `${signal.symbol} in RANGING phase at ${priceLocation}`;
+      interpretation = `Sideways consolidation. ${rsiDesc}, ${oiDesc}. Wait for breakout or range trade.`;
+      actionSuggestion = "Trade range boundaries or wait for directional move.";
+      confidence = "low";
       break;
 
     default:
@@ -732,7 +727,7 @@ function generateStorytelling(
   if (
     preSpikeScore >= 4 &&
     priceLocation === "DISCOUNT" &&
-    (marketPhase === "ACCUMULATION" || marketPhase === "BREAKOUT")
+    (marketPhase === "ACCUMULATION" || marketPhase === "EXPANSION")
   ) {
     confidence = "high";
   }
@@ -1045,7 +1040,7 @@ export async function enrichSignalWithCoinglass(
     console.log(`[ENRICHMENT] ${symbol} - POC: $${volumeProfilePOC?.toFixed(4)}`);
   }
 
-  // Calculate market phase using ICT PO3 / AMD cycle logic with funding rate
+  // Calculate market phase using SMC + Order Flow logic with funding rate and L/S ratio
   const marketPhase = calculateMarketPhase(
     signal.volumeSpikeRatio || 1,
     signal.oiChange24h,
@@ -1054,6 +1049,7 @@ export async function enrichSignalWithCoinglass(
     signal.volAccel,
     priceLocation,
     fundingRate,
+    longShortRatio,
   );
 
   // Detect FVG and Order Blocks from 1H klines FIRST (before using in preSpikeScore)
