@@ -84,6 +84,8 @@ export function calculatePriceLocation(
  * DISTRIBUTION: Smart money distributing at premium
  * EXHAUST: Move overextended, reversal likely
  * NEUTRAL: Consolidation, no clear phase
+ * 
+ * This function NEVER returns UNKNOWN - always determines a phase
  */
 export function calculateMarketPhase(
   volumeSpike: number,
@@ -145,26 +147,36 @@ export function calculateMarketPhase(
   if (absPrice > 2 && volumeSpike >= 1.5 && oiDelta > 0) {
     return "BREAKOUT";
   }
+  
+  // Moderate move with volume (more permissive)
+  if (absPrice > 3 && volumeSpike >= 1.0) {
+    return "BREAKOUT";
+  }
 
   // ===== ACCUMULATION: Smart money buying at discount =====
   
-  // Classic accumulation: price at discount, volume building, OI increasing
-  if (priceLocation === "DISCOUNT" && volumeSpike >= 1.2 && oiDelta > 0) {
+  // Classic accumulation: price at discount with any volume
+  if (priceLocation === "DISCOUNT" && volumeSpike >= 0.5) {
     return "ACCUMULATION";
   }
   
   // Flat price consolidation with volume building = accumulation
-  if (absPrice < 2 && volumeSpike >= 1.3 && oiDelta > 0) {
+  if (absPrice < 3 && volumeSpike >= 0.5 && oiDelta >= 0) {
     return "ACCUMULATION";
   }
   
   // Volume acceleration with flat price = smart money activity
-  if (absPrice < 3 && volumeSpike >= 1.5 && acceleration >= 1.5) {
+  if (absPrice < 3 && volumeSpike >= 1.0 && acceleration >= 1.2) {
     return "ACCUMULATION";
   }
   
   // RSI oversold with stabilizing price = accumulation zone
-  if (hasValidRsi && rsi < 35 && absPrice < 3 && priceLocation !== "PREMIUM") {
+  if (hasValidRsi && rsi < 40 && absPrice < 3 && priceLocation !== "PREMIUM") {
+    return "ACCUMULATION";
+  }
+  
+  // Any volume with relatively flat price = accumulation (permissive)
+  if (absPrice < 3 && volumeSpike >= 0.5) {
     return "ACCUMULATION";
   }
 
@@ -172,6 +184,11 @@ export function calculateMarketPhase(
   
   // Classic distribution: price at premium, OI declining
   if (priceLocation === "PREMIUM" && oiDelta < -1) {
+    return "DISTRIBUTION";
+  }
+  
+  // Price at premium with any declining indicators
+  if (priceLocation === "PREMIUM" && (oiDelta < 0 || volumeSpike < 0.8)) {
     return "DISTRIBUTION";
   }
   
@@ -194,8 +211,14 @@ export function calculateMarketPhase(
   if (priceLocation === "PREMIUM" && volumeSpike < 0.9 && priceChange > 0) {
     return "DISTRIBUTION";
   }
+  
+  // At premium = distribution (fallback for premium location)
+  if (priceLocation === "PREMIUM") {
+    return "DISTRIBUTION";
+  }
 
-  // ===== NEUTRAL: Consolidation, unclear market phase =====
+  // ===== NEUTRAL: Consolidation, no strong signals =====
+  // This is the fallback - NEVER return UNKNOWN
   return "NEUTRAL";
 }
 
@@ -874,11 +897,45 @@ export async function enrichSignalWithCoinglass(
     // Coinglass may fail due to rate limits or paid plan requirements
   }
 
-  // Calculate price location from 1H klines
+  // Calculate price location from 1H klines, with fallback estimation
   let priceLocation: PriceLocation = "NEUTRAL";
   if (klines1H.length > 0) {
     const ictResult = bitunixTradeService.getICTLocation(klines1H as any);
     priceLocation = ictResult.location.toUpperCase() as PriceLocation;
+  } else if (klines4H.length > 0) {
+    // Fallback: use 4H klines to estimate price location
+    const closes4H = klines4H.map(k => parseFloat(k.close));
+    const highs4H = klines4H.map(k => parseFloat(k.high));
+    const lows4H = klines4H.map(k => parseFloat(k.low));
+    const currentPrice = closes4H[closes4H.length - 1];
+    const high24h = Math.max(...highs4H.slice(-6)); // ~24h with 4H candles
+    const low24h = Math.min(...lows4H.slice(-6));
+    priceLocation = calculatePriceLocation(currentPrice, high24h, low24h);
+  } else {
+    // Final fallback: estimate from price change and RSI
+    const priceChange = signal.priceChange24h || 0;
+    const rsi = signal.rsi || 50;
+    
+    // Positive price change + high RSI = likely at premium
+    if (priceChange > 3 && rsi > 60) {
+      priceLocation = "PREMIUM";
+    }
+    // Negative price change + low RSI = likely at discount
+    else if (priceChange < -3 && rsi < 40) {
+      priceLocation = "DISCOUNT";
+    }
+    // Extreme positive = premium
+    else if (priceChange > 5) {
+      priceLocation = "PREMIUM";
+    }
+    // Extreme negative = discount
+    else if (priceChange < -5) {
+      priceLocation = "DISCOUNT";
+    }
+    // Default to neutral
+    else {
+      priceLocation = "NEUTRAL";
+    }
   }
     
   // Extract funding rate and L/S data - OKX IS PRIMARY (works from Replit)

@@ -160,20 +160,26 @@ export function EnhancedScreener() {
             PREMIUM
           </Badge>
         );
+      case "EQUILIBRIUM":
+        return (
+          <Badge className="bg-blue-500/20 text-blue-400 border-blue-500/30">
+            EQUILIB
+          </Badge>
+        );
       case "NEUTRAL":
+      default:
         return (
           <Badge className="bg-slate-500/20 text-slate-400 border-slate-500/30">
             NEUTRAL
           </Badge>
         );
-      default:
-        return <Badge className="bg-slate-500/20 text-slate-400">--</Badge>;
     }
   };
 
   const getPhaseBadge = (phase: string | undefined) => {
     switch (phase) {
       case "ACCUMULATION":
+      case "ACCUM":
         return (
           <Badge className="bg-emerald-500/20 text-emerald-400 border-emerald-500/30">
             ACCUM
@@ -197,9 +203,13 @@ export function EnhancedScreener() {
             EXHAUST
           </Badge>
         );
+      case "NEUTRAL":
+      case "UNKNOWN":
       default:
         return (
-          <Badge className="bg-slate-500/20 text-slate-400">UNKNOWN</Badge>
+          <Badge className="bg-slate-500/20 text-slate-400 border-slate-500/30">
+            NEUTRAL
+          </Badge>
         );
     }
   };
