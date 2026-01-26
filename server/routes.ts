@@ -2937,16 +2937,15 @@ export async function registerRoutes(
     }
   });
 
-  // Auto-start backtest using BREAKOUT phase signals from screener
+  // Auto-start backtest using signals with PSCORE >= 1.5 OR BREAKOUT phase
   app.post("/api/backtest-engine/auto-start", async (req, res) => {
     try {
-      // Use cached signals from the screener to find BREAKOUT phase candidates
+      // Use ALL cached signals and let the backtest engine filter by PSCORE/BREAKOUT
       const screenerSignals: ScreenerSignalForBacktest[] = cachedSignals
-        .filter((s: any) => s.marketPhase === "BREAKOUT")
         .map((s: any) => ({
           symbol: s.symbol,
           price: s.price,
-          marketPhase: s.marketPhase || "BREAKOUT",
+          marketPhase: s.marketPhase || "TREND",
           entryModel: s.entryModel || "BOS_ENTRY",
           htfBias: s.htfBias,
           rsi: s.rsi || 50,
@@ -2955,9 +2954,16 @@ export async function registerRoutes(
           previousHigh: s.previousHigh,
           previousLow: s.previousLow,
           ema21: s.ema21,
+          pscore: s.preSpikeScore || s.pscore || 0,
+          entry: s.entry,
+          stopLoss: s.stopLoss,
+          tp1: s.tp1,
+          tp2: s.tp2,
+          tp3: s.tp3,
+          riskReward: s.riskReward,
         }));
 
-      console.log(`[AUTO-BACKTEST API] Found ${screenerSignals.length} BREAKOUT signals from screener`);
+      console.log(`[AUTO-BACKTEST API] Processing ${screenerSignals.length} signals (PSCORE >= 1.5 OR BREAKOUT)`);
 
       const result = await autoStartBacktestFromScreener(screenerSignals);
       const metrics = backtestEngine.calculateMetrics();
