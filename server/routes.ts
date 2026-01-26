@@ -2609,9 +2609,29 @@ export async function registerRoutes(
           priceLocation
         );
         
+        // Determine signal type using same logic as Classic View
+        const isMajor = symbol === "BTCUSDT" || symbol === "ETHUSDT";
+        const isHotMomentum = priceChange24h >= 20 && volumeSpikeRatio >= 2.0;
+        const isActiveMomentum = !isHotMomentum && 
+          volumeSpikeRatio >= 1.0 && 
+          priceChange24h >= 5 && priceChange24h <= 60 && 
+          clampedRsi >= 50 && clampedRsi <= 85;
+        const isPreConsolidation = 
+          volumeSpikeRatio >= 0.5 && volumeSpikeRatio < 1.0 && 
+          priceChange24h >= -8 && priceChange24h <= 15 && 
+          clampedRsi >= 35 && clampedRsi <= 65;
+        
+        let signalType: "HOT" | "MAJOR" | "ACTIVE" | "PRE" | null = null;
+        if (isHotMomentum) signalType = "HOT";
+        else if (isMajor) signalType = "MAJOR";
+        else if (isActiveMomentum) signalType = "ACTIVE";
+        else if (isPreConsolidation) signalType = "PRE";
+        else signalType = "PRE"; // Default to PRE for all other signals
+        
         // Build base signal
         const signal: any = {
           symbol,
+          signalType,
           side: priceChange24h > 0 ? "LONG" : "SHORT",
           currentPrice: price,
           priceChange24h,
