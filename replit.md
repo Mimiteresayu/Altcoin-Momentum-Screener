@@ -54,16 +54,32 @@ Preferred communication style: Simple, everyday language.
 - **Real-Time Comments**: WebSocket-based live comments with persistence to PostgreSQL.
 - **Autotrade System**: Integration with Bitunix Futures for automated trading with configurable risk management, trade filters, and safety features.
 - **Backtest Engine**: Optimizes entry/exit strategies for Sharpe Ratio (target >= 2.5), using advanced filters and momentum-based take-profit strategies.
-- **Continuous Paper Trading**: Automated paper trading bot that runs every 5 minutes, monitoring screener signals for BREAKOUT phase or PSCORE >= 1.5, opening/closing virtual trades, and tracking performance in real-time.
+- **Continuous Paper Trading**: Automated paper trading bot that runs every 5 minutes, using 4H screener for symbol selection and 5-minute timeframe for precise entries.
 
 ### Timeframe Configuration
 - **BIAS**: 4H (Supertrend ATR=14, Multiplier=3.5 for trend direction)
 - **PHASE**: 4H (Market phase detection using volume, RSI, price structure)
-- **ENTRY**: 4H (Entry timing and candlestick analysis)
+- **SYMBOL SELECTION**: 4H screener (PSCORE >= 1.5 OR marketPhase === BREAKOUT OR marketPhase === ACCUMULATION)
+- **ENTRY**: 5m (EMA9, RSI14, Supertrend confirmation)
 - **POC (Point of Control)**: 24H Volume Profile for key support/resistance
 - **HTF (Higher Timeframe)**: 4H/1D/1W for multi-timeframe confirmation
 
-### Backtest Entry Models
+### 5-Minute Entry Logic (Continuous Paper Trading)
+- **Symbol Selection**: From 4H screener where PSCORE >= 1.5 OR phase is BREAKOUT/ACCUMULATION
+- **LONG Entry Criteria**:
+  - Price > 5min EMA(9) AND
+  - 5min RSI(14) between 50-70 AND
+  - Current price > previous 5min candle high (breakout confirmation)
+  - OR Supertrend on 5min is LONG with RSI in range
+- **SHORT Entry Criteria**:
+  - Price < 5min EMA(9) AND
+  - 5min RSI(14) between 30-50 AND
+  - Current price < previous 5min candle low (breakdown confirmation)
+  - OR Supertrend on 5min is SHORT with RSI in range
+- **Stop Loss**: Below recent 5min swing low (or 1% below entry for LONG)
+- **Take Profit**: TP1=1.5R, TP2=2.5R, TP3=4R
+
+### Backtest Entry Models (Historical Backtesting)
 - **BREAKOUT + BOS ENTRY**: Enter long on break of structure (price > previous high), confirmed by Supertrend
 - **ACCUMULATION + SCALE IN**: Enter on dip to EMA 21 support zone
 - **TREND + PULLBACK**: Enter on pullback to EMA 21 with trend confirmation

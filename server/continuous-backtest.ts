@@ -2,8 +2,171 @@ import { db } from "./db";
 import { backtestTrades, equityCurve } from "../shared/schema";
 import { eq, desc, and } from "drizzle-orm";
 import axios from "axios";
+import { getBinanceKlines, BinanceKline } from "./binance";
 
 type MarketPhase = "ACCUMULATION" | "BREAKOUT" | "DISTRIBUTION" | "TREND" | "EXHAUST";
+
+interface FiveMinEntry {
+  valid: boolean;
+  entryPrice: number;
+  stopLoss: number;
+  tp1: number;
+  tp2: number;
+  tp3: number;
+  ema9: number;
+  rsi14: number;
+  supertrendDir: "LONG" | "SHORT";
+  reason: string;
+}
+
+function calculateEMA(prices: number[], period: number): number[] {
+  const ema: number[] = [];
+  const multiplier = 2 / (period + 1);
+  
+  if (prices.length < period) return [];
+  
+  let sum = 0;
+  for (let i = 0; i < period; i++) {
+    sum += prices[i];
+  }
+  ema[period - 1] = sum / period;
+  
+  for (let i = period; i < prices.length; i++) {
+    ema[i] = (prices[i] - ema[i - 1]) * multiplier + ema[i - 1];
+  }
+  
+  return ema;
+}
+
+function calculateRSI(closes: number[], period: number = 14): number[] {
+  const rsi: number[] = [];
+  const gains: number[] = [];
+  const losses: number[] = [];
+  
+  if (closes.length < period + 1) return [];
+  
+  for (let i = 1; i < closes.length; i++) {
+    const change = closes[i] - closes[i - 1];
+    gains.push(change > 0 ? change : 0);
+    losses.push(change < 0 ? Math.abs(change) : 0);
+  }
+  
+  let avgGain = gains.slice(0, period).reduce((a, b) => a + b, 0) / period;
+  let avgLoss = losses.slice(0, period).reduce((a, b) => a + b, 0) / period;
+  
+  for (let i = 0; i < period; i++) {
+    rsi.push(0);
+  }
+  
+  for (let i = period; i < closes.length; i++) {
+    if (i === period) {
+      if (avgLoss === 0) {
+        rsi.push(100);
+      } else {
+        const rs = avgGain / avgLoss;
+        rsi.push(100 - (100 / (1 + rs)));
+      }
+    } else {
+      avgGain = (avgGain * (period - 1) + gains[i - 1]) / period;
+      avgLoss = (avgLoss * (period - 1) + losses[i - 1]) / period;
+      if (avgLoss === 0) {
+        rsi.push(100);
+      } else {
+        const rs = avgGain / avgLoss;
+        rsi.push(100 - (100 / (1 + rs)));
+      }
+    }
+  }
+  
+  return rsi;
+}
+
+function calculateATR(highs: number[], lows: number[], closes: number[], period: number = 10): number[] {
+  const atr: number[] = [];
+  const tr: number[] = [];
+  
+  for (let i = 0; i < highs.length; i++) {
+    if (i === 0) {
+      tr.push(highs[i] - lows[i]);
+    } else {
+      const hl = highs[i] - lows[i];
+      const hc = Math.abs(highs[i] - closes[i - 1]);
+      const lc = Math.abs(lows[i] - closes[i - 1]);
+      tr.push(Math.max(hl, hc, lc));
+    }
+  }
+  
+  for (let i = 0; i < highs.length; i++) {
+    if (i < period - 1) {
+      atr.push(0);
+    } else if (i === period - 1) {
+      atr.push(tr.slice(0, period).reduce((a, b) => a + b, 0) / period);
+    } else {
+      atr.push((atr[i - 1] * (period - 1) + tr[i]) / period);
+    }
+  }
+  
+  return atr;
+}
+
+function calculateSupertrend5m(
+  highs: number[], 
+  lows: number[], 
+  closes: number[], 
+  atrPeriod: number = 10, 
+  multiplier: number = 2
+): { direction: ("LONG" | "SHORT")[]; upperBand: number[]; lowerBand: number[] } {
+  const atr = calculateATR(highs, lows, closes, atrPeriod);
+  const direction: ("LONG" | "SHORT")[] = [];
+  const upperBand: number[] = [];
+  const lowerBand: number[] = [];
+  
+  for (let i = 0; i < closes.length; i++) {
+    const hl2 = (highs[i] + lows[i]) / 2;
+    const basicUpperBand = hl2 + (multiplier * atr[i]);
+    const basicLowerBand = hl2 - (multiplier * atr[i]);
+    
+    if (i === 0) {
+      upperBand.push(basicUpperBand);
+      lowerBand.push(basicLowerBand);
+      direction.push(closes[i] > basicLowerBand ? "LONG" : "SHORT");
+    } else {
+      const prevUpper = upperBand[i - 1];
+      const prevLower = lowerBand[i - 1];
+      
+      const finalUpperBand = (basicUpperBand < prevUpper || closes[i - 1] > prevUpper) 
+        ? basicUpperBand 
+        : prevUpper;
+      const finalLowerBand = (basicLowerBand > prevLower || closes[i - 1] < prevLower) 
+        ? basicLowerBand 
+        : prevLower;
+      
+      upperBand.push(finalUpperBand);
+      lowerBand.push(finalLowerBand);
+      
+      const prevDir = direction[i - 1];
+      if (prevDir === "SHORT" && closes[i] > finalUpperBand) {
+        direction.push("LONG");
+      } else if (prevDir === "LONG" && closes[i] < finalLowerBand) {
+        direction.push("SHORT");
+      } else {
+        direction.push(prevDir);
+      }
+    }
+  }
+  
+  return { direction, upperBand, lowerBand };
+}
+
+function findSwingLow(lows: number[], lookback: number = 5): number {
+  const recentLows = lows.slice(-lookback);
+  return Math.min(...recentLows);
+}
+
+function findSwingHigh(highs: number[], lookback: number = 5): number {
+  const recentHighs = highs.slice(-lookback);
+  return Math.max(...recentHighs);
+}
 
 interface PaperPosition {
   tradeId: string;
@@ -28,6 +191,10 @@ interface PaperPosition {
   exitReason?: string;
   marketPhase: MarketPhase;
   pscore: number;
+  entryTimeframe: string;
+  ema9?: number;
+  rsi14?: number;
+  supertrendDir?: "LONG" | "SHORT";
 }
 
 interface EnrichedSignal {
@@ -130,7 +297,8 @@ export class ContinuousBacktestEngine {
             capitalUsed: trade.capitalUsed,
             exitReason,
             marketPhase: "TREND",
-            pscore: 0
+            pscore: 0,
+            entryTimeframe: "4h"
           });
         }
       }
@@ -186,7 +354,7 @@ export class ContinuousBacktestEngine {
 
   private async scanForNewSignals() {
     try {
-      const response = await axios.get("http://localhost:5000/api/screen", { timeout: 30000 });
+      const response = await axios.get("http://localhost:5000/api/screen", { timeout: 120000 });
       const signals: EnrichedSignal[] = response.data || [];
 
       console.log(`[ContinuousBacktest] Received ${signals.length} signals from screener`);
@@ -194,22 +362,142 @@ export class ContinuousBacktestEngine {
       const qualifyingSignals = signals.filter((signal) => {
         const pscore = signal.preSpikeScore || 0;
         const phase = signal.marketPhase || "TREND";
-        const meetsEntry = pscore >= 1.5 || phase === "BREAKOUT";
+        const meetsEntry = pscore >= 1.5 || phase === "BREAKOUT" || phase === "ACCUMULATION";
         const notAlreadyOpen = !this.positions.has(signal.symbol);
         return meetsEntry && notAlreadyOpen;
       });
 
-      console.log(`[ContinuousBacktest] ${qualifyingSignals.length} signals meet entry criteria`);
+      console.log(`[ContinuousBacktest] ${qualifyingSignals.length} signals meet 4H screener criteria (PSCORE>=1.5 or BREAKOUT/ACCUMULATION)`);
 
       for (const signal of qualifyingSignals.slice(0, this.maxOpenPositions - this.positions.size)) {
-        await this.openPosition(signal);
+        const fiveMinEntry = await this.check5minEntry(signal);
+        if (fiveMinEntry.valid) {
+          await this.openPosition(signal, fiveMinEntry);
+        } else {
+          console.log(`[ContinuousBacktest] ${signal.symbol} 5min entry not valid: ${fiveMinEntry.reason}`);
+        }
       }
     } catch (error) {
       console.error("[ContinuousBacktest] Error scanning signals:", error);
     }
   }
 
-  private async openPosition(signal: EnrichedSignal) {
+  private async check5minEntry(signal: EnrichedSignal): Promise<FiveMinEntry> {
+    const invalidEntry: FiveMinEntry = {
+      valid: false,
+      entryPrice: 0,
+      stopLoss: 0,
+      tp1: 0,
+      tp2: 0,
+      tp3: 0,
+      ema9: 0,
+      rsi14: 0,
+      supertrendDir: "LONG",
+      reason: "No data"
+    };
+
+    try {
+      const symbolClean = signal.symbol.replace("USDT", "");
+      const klines = await getBinanceKlines(symbolClean, "5m", 100);
+      
+      if (klines.length < 30) {
+        return { ...invalidEntry, reason: `Insufficient 5min candles: ${klines.length}` };
+      }
+
+      const closes = klines.map(k => parseFloat(k.close));
+      const highs = klines.map(k => parseFloat(k.high));
+      const lows = klines.map(k => parseFloat(k.low));
+      
+      const ema9Values = calculateEMA(closes, 9);
+      const rsi14Values = calculateRSI(closes, 14);
+      const supertrend = calculateSupertrend5m(highs, lows, closes, 10, 2);
+      
+      const lastIndex = closes.length - 1;
+      const prevIndex = lastIndex - 1;
+      
+      const currentPrice = closes[lastIndex];
+      const prevHigh = highs[prevIndex];
+      const ema9 = ema9Values[lastIndex] || 0;
+      const rsi14 = rsi14Values[lastIndex] || 0;
+      const supertrendDir = supertrend.direction[lastIndex];
+      
+      const side = signal.htfBias?.side || "LONG";
+      
+      let valid = false;
+      let reason = "";
+      
+      if (side === "LONG") {
+        const priceAboveEMA = currentPrice > ema9;
+        const rsiInRange = rsi14 > 50 && rsi14 < 70;
+        const breakoutConfirm = currentPrice > prevHigh;
+        const supertrendLong = supertrendDir === "LONG";
+        
+        if (priceAboveEMA && rsiInRange && breakoutConfirm) {
+          valid = true;
+          reason = `LONG: Price>${ema9.toFixed(2)} EMA9, RSI=${rsi14.toFixed(1)}, breakout above ${prevHigh.toFixed(2)}`;
+        } else if (supertrendLong && rsiInRange) {
+          valid = true;
+          reason = `LONG: Supertrend LONG, RSI=${rsi14.toFixed(1)}`;
+        } else {
+          reason = `LONG rejected: EMA=${priceAboveEMA}, RSI(${rsi14.toFixed(1)})=${rsiInRange}, breakout=${breakoutConfirm}, ST=${supertrendLong}`;
+        }
+      } else {
+        const priceBelowEMA = currentPrice < ema9;
+        const rsiInRange = rsi14 < 50 && rsi14 > 30;
+        const breakdownConfirm = currentPrice < lows[prevIndex];
+        const supertrendShort = supertrendDir === "SHORT";
+        
+        if (priceBelowEMA && rsiInRange && breakdownConfirm) {
+          valid = true;
+          reason = `SHORT: Price<${ema9.toFixed(2)} EMA9, RSI=${rsi14.toFixed(1)}, breakdown below ${lows[prevIndex].toFixed(2)}`;
+        } else if (supertrendShort && rsiInRange) {
+          valid = true;
+          reason = `SHORT: Supertrend SHORT, RSI=${rsi14.toFixed(1)}`;
+        } else {
+          reason = `SHORT rejected: EMA=${priceBelowEMA}, RSI(${rsi14.toFixed(1)})=${rsiInRange}, breakdown=${breakdownConfirm}, ST=${supertrendShort}`;
+        }
+      }
+      
+      const swingLow = findSwingLow(lows, 5);
+      const swingHigh = findSwingHigh(highs, 5);
+      
+      let stopLoss: number;
+      let tp1: number, tp2: number, tp3: number;
+      
+      if (side === "LONG") {
+        stopLoss = Math.max(swingLow, currentPrice * 0.99);
+        const risk = currentPrice - stopLoss;
+        tp1 = currentPrice + (risk * 1.5);
+        tp2 = currentPrice + (risk * 2.5);
+        tp3 = currentPrice + (risk * 4);
+      } else {
+        stopLoss = Math.min(swingHigh, currentPrice * 1.01);
+        const risk = stopLoss - currentPrice;
+        tp1 = currentPrice - (risk * 1.5);
+        tp2 = currentPrice - (risk * 2.5);
+        tp3 = currentPrice - (risk * 4);
+      }
+      
+      return {
+        valid,
+        entryPrice: currentPrice,
+        stopLoss,
+        tp1,
+        tp2,
+        tp3,
+        ema9,
+        rsi14,
+        supertrendDir,
+        reason
+      };
+      
+    } catch (error) {
+      console.error(`[ContinuousBacktest] Error checking 5min entry for ${signal.symbol}:`, error);
+      return { ...invalidEntry, reason: `Error: ${error}` };
+    }
+  }
+
+  private async openPosition(signal: EnrichedSignal, fiveMinEntry: FiveMinEntry) {
     const tradeId = `CONT-${Date.now()}-${signal.symbol}`;
     const side: "LONG" | "SHORT" = signal.htfBias?.side || "LONG";
 
@@ -217,11 +505,11 @@ export class ContinuousBacktestEngine {
       tradeId,
       symbol: signal.symbol,
       side,
-      entryPrice: signal.lastPrice || signal.entryPrice,
-      stopLoss: signal.slPrice,
-      tp1: signal.tp1Price,
-      tp2: signal.tp2Price,
-      tp3: signal.tp3Price,
+      entryPrice: fiveMinEntry.entryPrice,
+      stopLoss: fiveMinEntry.stopLoss,
+      tp1: fiveMinEntry.tp1,
+      tp2: fiveMinEntry.tp2,
+      tp3: fiveMinEntry.tp3,
       entryTimestamp: new Date(),
       status: "open",
       tp1Hit: false,
@@ -230,7 +518,11 @@ export class ContinuousBacktestEngine {
       slHit: false,
       capitalUsed: this.capitalPerTrade,
       marketPhase: signal.marketPhase || "TREND",
-      pscore: signal.preSpikeScore || 0
+      pscore: signal.preSpikeScore || 0,
+      entryTimeframe: "5m",
+      ema9: fiveMinEntry.ema9,
+      rsi14: fiveMinEntry.rsi14,
+      supertrendDir: fiveMinEntry.supertrendDir
     };
 
     this.positions.set(signal.symbol, position);
@@ -260,7 +552,7 @@ export class ContinuousBacktestEngine {
       console.error(`[ContinuousBacktest] Error saving trade to DB:`, error);
     }
 
-    console.log(`[ContinuousBacktest] OPENED ${side} position: ${signal.symbol} @ ${position.entryPrice} | Phase: ${signal.marketPhase} | PSCORE: ${signal.preSpikeScore}`);
+    console.log(`[ContinuousBacktest] OPENED ${side} position: ${signal.symbol} @ ${position.entryPrice} | TF: 5m | Phase: ${signal.marketPhase} | PSCORE: ${signal.preSpikeScore} | ${fiveMinEntry.reason}`);
   }
 
   private async monitorOpenPositions() {
