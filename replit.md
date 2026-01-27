@@ -54,6 +54,7 @@ Preferred communication style: Simple, everyday language.
 - **Real-Time Comments**: WebSocket-based live comments with persistence to PostgreSQL.
 - **Autotrade System**: Integration with Bitunix Futures for automated trading with configurable risk management, trade filters, and safety features.
 - **Backtest Engine**: Optimizes entry/exit strategies for Sharpe Ratio (target >= 2.5), using advanced filters and momentum-based take-profit strategies.
+- **Continuous Paper Trading**: Automated paper trading bot that runs every 5 minutes, monitoring screener signals for BREAKOUT phase or PSCORE >= 1.5, opening/closing virtual trades, and tracking performance in real-time.
 
 ### Timeframe Configuration
 - **BIAS**: 4H (Supertrend ATR=14, Multiplier=3.5 for trend direction)
