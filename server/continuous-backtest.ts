@@ -355,19 +355,31 @@ export class ContinuousBacktestEngine {
   private async scanForNewSignals() {
     try {
       const response = await axios.get("http://localhost:5000/api/screen", { timeout: 120000 });
-      const signals: EnrichedSignal[] = response.data || [];
+      const responseData = response.data;
+      const signals: EnrichedSignal[] = Array.isArray(responseData) ? responseData : (responseData?.data || []);
 
       console.log(`[ContinuousBacktest] Received ${signals.length} signals from screener`);
 
-      const qualifyingSignals = signals.filter((signal) => {
+      const qualifyingSignals = signals.filter((signal: any) => {
         const pscore = signal.preSpikeScore || 0;
         const phase = signal.marketPhase || "TREND";
-        const meetsEntry = pscore >= 1.5 || phase === "BREAKOUT" || phase === "ACCUMULATION";
+        const signalType = signal.signalType || "";
+        const volSpike = signal.volumeSpikeRatio || signal.volumeSpike || 0;
+        
+        const meetsEntry = pscore >= 1.5 || 
+                           phase === "BREAKOUT" || 
+                           phase === "ACCUMULATION" ||
+                           signalType === "HOT" ||
+                           signalType === "ACTIVE" ||
+                           volSpike >= 2.0;
         const notAlreadyOpen = !this.positions.has(signal.symbol);
+        
+        console.log(`[ContinuousBacktest] Signal ${signal.symbol}: PSCORE=${pscore.toFixed(2)}, phase=${phase}, signalType=${signalType}, volSpike=${volSpike.toFixed(2)}, qualifies=${meetsEntry}, notOpen=${notAlreadyOpen}`);
+        
         return meetsEntry && notAlreadyOpen;
       });
 
-      console.log(`[ContinuousBacktest] ${qualifyingSignals.length} signals meet 4H screener criteria (PSCORE>=1.5 or BREAKOUT/ACCUMULATION)`);
+      console.log(`[ContinuousBacktest] ${qualifyingSignals.length} signals meet criteria (PSCORE>=1.5, BREAKOUT/ACCUMULATION, HOT/ACTIVE, or volSpike>=2)`);
 
       for (const signal of qualifyingSignals.slice(0, this.maxOpenPositions - this.positions.size)) {
         const fiveMinEntry = await this.check5minEntry(signal);
@@ -401,7 +413,29 @@ export class ContinuousBacktestEngine {
       const klines = await getBinanceKlines(symbolClean, "5m", 100);
       
       if (klines.length < 30) {
-        return { ...invalidEntry, reason: `Insufficient 5min candles: ${klines.length}` };
+        const currentPrice = (signal as any).price || signal.lastPrice || signal.entryPrice;
+        console.log(`[ContinuousBacktest] ${signal.symbol}: FALLBACK - insufficient 5min data (${klines.length} candles), using price ${currentPrice}`);
+        
+        if (!currentPrice || isNaN(currentPrice)) {
+          return { ...invalidEntry, reason: `FALLBACK failed: no valid price found` };
+        }
+        
+        const side = signal.htfBias?.side || "LONG";
+        const stopLoss = side === "LONG" ? currentPrice * 0.99 : currentPrice * 1.01;
+        const risk = Math.abs(currentPrice - stopLoss);
+        
+        return {
+          valid: true,
+          entryPrice: currentPrice,
+          stopLoss,
+          tp1: side === "LONG" ? currentPrice + (risk * 1.5) : currentPrice - (risk * 1.5),
+          tp2: side === "LONG" ? currentPrice + (risk * 2.5) : currentPrice - (risk * 2.5),
+          tp3: side === "LONG" ? currentPrice + (risk * 4) : currentPrice - (risk * 4),
+          ema9: 0,
+          rsi14: 0,
+          supertrendDir: side,
+          reason: `FALLBACK: 5min data unavailable, using screener price ${currentPrice.toFixed(6)}`
+        };
       }
 
       const closes = klines.map(k => parseFloat(k.close));
@@ -428,33 +462,39 @@ export class ContinuousBacktestEngine {
       
       if (side === "LONG") {
         const priceAboveEMA = currentPrice > ema9;
-        const rsiInRange = rsi14 > 50 && rsi14 < 70;
-        const breakoutConfirm = currentPrice > prevHigh;
+        const rsiInRange = rsi14 > 45 && rsi14 < 75;
         const supertrendLong = supertrendDir === "LONG";
         
-        if (priceAboveEMA && rsiInRange && breakoutConfirm) {
+        console.log(`[5minEntry] ${signal.symbol} LONG check: price=${currentPrice.toFixed(4)}, EMA9=${ema9.toFixed(4)}, RSI=${rsi14.toFixed(1)}, ST=${supertrendDir}`);
+        console.log(`[5minEntry] ${signal.symbol} LONG conditions: priceAboveEMA=${priceAboveEMA}, rsiInRange=${rsiInRange}, supertrendLong=${supertrendLong}`);
+        
+        if (priceAboveEMA || rsiInRange || supertrendLong) {
           valid = true;
-          reason = `LONG: Price>${ema9.toFixed(2)} EMA9, RSI=${rsi14.toFixed(1)}, breakout above ${prevHigh.toFixed(2)}`;
-        } else if (supertrendLong && rsiInRange) {
-          valid = true;
-          reason = `LONG: Supertrend LONG, RSI=${rsi14.toFixed(1)}`;
+          const conditions = [];
+          if (priceAboveEMA) conditions.push(`Price>${ema9.toFixed(4)} EMA9`);
+          if (rsiInRange) conditions.push(`RSI=${rsi14.toFixed(1)}`);
+          if (supertrendLong) conditions.push(`ST=LONG`);
+          reason = `LONG: ${conditions.join(', ')}`;
         } else {
-          reason = `LONG rejected: EMA=${priceAboveEMA}, RSI(${rsi14.toFixed(1)})=${rsiInRange}, breakout=${breakoutConfirm}, ST=${supertrendLong}`;
+          reason = `LONG rejected: priceAboveEMA=${priceAboveEMA}, rsiInRange(45-75)=${rsiInRange}, supertrendLong=${supertrendLong}`;
         }
       } else {
         const priceBelowEMA = currentPrice < ema9;
-        const rsiInRange = rsi14 < 50 && rsi14 > 30;
-        const breakdownConfirm = currentPrice < lows[prevIndex];
+        const rsiInRange = rsi14 < 55 && rsi14 > 25;
         const supertrendShort = supertrendDir === "SHORT";
         
-        if (priceBelowEMA && rsiInRange && breakdownConfirm) {
+        console.log(`[5minEntry] ${signal.symbol} SHORT check: price=${currentPrice.toFixed(4)}, EMA9=${ema9.toFixed(4)}, RSI=${rsi14.toFixed(1)}, ST=${supertrendDir}`);
+        console.log(`[5minEntry] ${signal.symbol} SHORT conditions: priceBelowEMA=${priceBelowEMA}, rsiInRange=${rsiInRange}, supertrendShort=${supertrendShort}`);
+        
+        if (priceBelowEMA || rsiInRange || supertrendShort) {
           valid = true;
-          reason = `SHORT: Price<${ema9.toFixed(2)} EMA9, RSI=${rsi14.toFixed(1)}, breakdown below ${lows[prevIndex].toFixed(2)}`;
-        } else if (supertrendShort && rsiInRange) {
-          valid = true;
-          reason = `SHORT: Supertrend SHORT, RSI=${rsi14.toFixed(1)}`;
+          const conditions = [];
+          if (priceBelowEMA) conditions.push(`Price<${ema9.toFixed(4)} EMA9`);
+          if (rsiInRange) conditions.push(`RSI=${rsi14.toFixed(1)}`);
+          if (supertrendShort) conditions.push(`ST=SHORT`);
+          reason = `SHORT: ${conditions.join(', ')}`;
         } else {
-          reason = `SHORT rejected: EMA=${priceBelowEMA}, RSI(${rsi14.toFixed(1)})=${rsiInRange}, breakdown=${breakdownConfirm}, ST=${supertrendShort}`;
+          reason = `SHORT rejected: priceBelowEMA=${priceBelowEMA}, rsiInRange(25-55)=${rsiInRange}, supertrendShort=${supertrendShort}`;
         }
       }
       
@@ -493,7 +533,30 @@ export class ContinuousBacktestEngine {
       
     } catch (error) {
       console.error(`[ContinuousBacktest] Error checking 5min entry for ${signal.symbol}:`, error);
-      return { ...invalidEntry, reason: `Error: ${error}` };
+      
+      const currentPrice = (signal as any).price || signal.lastPrice || signal.entryPrice;
+      console.log(`[ContinuousBacktest] ${signal.symbol}: FALLBACK (error) - using screener price ${currentPrice}`);
+      
+      if (!currentPrice || isNaN(currentPrice)) {
+        return { ...invalidEntry, reason: `FALLBACK failed: no valid price found after error` };
+      }
+      
+      const side = signal.htfBias?.side || "LONG";
+      const stopLoss = side === "LONG" ? currentPrice * 0.99 : currentPrice * 1.01;
+      const risk = Math.abs(currentPrice - stopLoss);
+      
+      return {
+        valid: true,
+        entryPrice: currentPrice,
+        stopLoss,
+        tp1: side === "LONG" ? currentPrice + (risk * 1.5) : currentPrice - (risk * 1.5),
+        tp2: side === "LONG" ? currentPrice + (risk * 2.5) : currentPrice - (risk * 2.5),
+        tp3: side === "LONG" ? currentPrice + (risk * 4) : currentPrice - (risk * 4),
+        ema9: 0,
+        rsi14: 0,
+        supertrendDir: side,
+        reason: `FALLBACK: error occurred, using screener price ${currentPrice.toFixed(6)}`
+      };
     }
   }
 
