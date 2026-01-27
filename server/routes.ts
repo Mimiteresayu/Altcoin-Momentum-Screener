@@ -9,6 +9,7 @@ import { backtestingService } from "./backtest";
 import { autotradeService } from "./autotrade";
 import { bitunixTradeService } from "./bitunix-trade";
 import { backtestEngine, BacktestSignal, autoStartBacktestFromScreener, type ScreenerSignalForBacktest } from "./backtest-engine";
+import { continuousBacktestEngine } from "./continuous-backtest";
 import axios from "axios";
 import { RSI } from "technicalindicators";
 import {
@@ -1468,6 +1469,49 @@ export async function registerRoutes(
     } catch (error) {
       console.error('[API] Watchlist delete error:', error);
       res.status(503).json({ message: "Storage temporarily unavailable" });
+    }
+  });
+
+  // ============================================
+  // CONTINUOUS PAPER TRADING API ENDPOINTS
+  // ============================================
+
+  app.get("/api/backtest/live", async (req, res) => {
+    try {
+      const stats = continuousBacktestEngine.getStats();
+      const openPositions = continuousBacktestEngine.getOpenPositions();
+      const closedTrades = continuousBacktestEngine.getClosedTrades();
+      const equityCurve = continuousBacktestEngine.getEquityCurve();
+
+      res.json({
+        stats,
+        openPositions,
+        closedTrades: closedTrades.slice(0, 50),
+        equityCurve: equityCurve.slice(-100)
+      });
+    } catch (error) {
+      console.error("Error fetching live backtest data:", error);
+      res.status(500).json({ message: "Failed to fetch live backtest data" });
+    }
+  });
+
+  app.post("/api/backtest/live/start", async (req, res) => {
+    try {
+      continuousBacktestEngine.start();
+      res.json({ success: true, message: "Continuous paper trading started" });
+    } catch (error) {
+      console.error("Error starting continuous backtest:", error);
+      res.status(500).json({ message: "Failed to start continuous backtest" });
+    }
+  });
+
+  app.post("/api/backtest/live/stop", async (req, res) => {
+    try {
+      continuousBacktestEngine.stop();
+      res.json({ success: true, message: "Continuous paper trading stopped" });
+    } catch (error) {
+      console.error("Error stopping continuous backtest:", error);
+      res.status(500).json({ message: "Failed to stop continuous backtest" });
     }
   });
 

@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { useBacktestStats, useBacktestTrades, useEquityCurve, useGenerateDailyReport, useRunAutoBacktest } from "@/hooks/use-backtest";
+import { useBacktestStats, useBacktestTrades, useEquityCurve, useGenerateDailyReport, useRunAutoBacktest, useLiveBacktest, useStartLiveBacktest, useStopLiveBacktest } from "@/hooks/use-backtest";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -20,7 +21,10 @@ import {
   FileText,
   Wallet,
   LineChart,
-  Play
+  Play,
+  Square,
+  Zap,
+  Eye
 } from "lucide-react";
 import { clsx } from "clsx";
 import { LineChart as RechartsLineChart, Line, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Tooltip as RechartsTooltip, Area, AreaChart } from "recharts";
@@ -358,7 +362,280 @@ function EquityChart({ data, loading }: { data: { equity: number; timestamp: str
   );
 }
 
-export default function Backtest() {
+function LivePaperTradingTab() {
+  const { data: liveData, isLoading } = useLiveBacktest();
+  const startLive = useStartLiveBacktest();
+  const stopLive = useStopLiveBacktest();
+
+  const formatPrice = (price: number) => {
+    if (price < 0.0001) return price.toFixed(8);
+    if (price < 1) return price.toFixed(6);
+    if (price < 10) return price.toFixed(4);
+    return price.toFixed(2);
+  };
+
+  const formatTime = (timestamp: string | undefined) => {
+    if (!timestamp) return "-";
+    const date = new Date(timestamp);
+    return date.toLocaleString('en-US', { 
+      month: 'short', 
+      day: 'numeric',
+      hour: '2-digit', 
+      minute: '2-digit',
+      hour12: false 
+    });
+  };
+
+  const stats = liveData?.stats;
+  const openPositions = liveData?.openPositions || [];
+  const closedTrades = liveData?.closedTrades || [];
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <Badge 
+            className={clsx(
+              "text-sm px-3 py-1",
+              stats?.isRunning 
+                ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/30" 
+                : "bg-slate-500/20 text-slate-400 border-slate-500/30"
+            )}
+          >
+            <Zap className="w-3 h-3 mr-1" />
+            {stats?.isRunning ? "RUNNING" : "STOPPED"}
+          </Badge>
+          {stats?.lastScanTime && (
+            <span className="text-xs text-muted-foreground">
+              Last scan: {formatTime(stats.lastScanTime)}
+            </span>
+          )}
+        </div>
+        <div className="flex gap-2">
+          {stats?.isRunning ? (
+            <Button 
+              size="sm" 
+              variant="destructive"
+              onClick={() => stopLive.mutate()}
+              disabled={stopLive.isPending}
+              className="gap-1.5"
+              data-testid="button-stop-live"
+            >
+              <Square className="w-4 h-4" />
+              Stop
+            </Button>
+          ) : (
+            <Button 
+              size="sm" 
+              onClick={() => startLive.mutate()}
+              disabled={startLive.isPending}
+              className="gap-1.5"
+              data-testid="button-start-live"
+            >
+              <Play className="w-4 h-4" />
+              Start Paper Trading
+            </Button>
+          )}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
+        <StatCard 
+          label="Capital" 
+          value={stats ? `$${stats.totalCapital.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : "$10,000"}
+          icon={<Wallet className="w-4 h-4" />}
+          loading={isLoading}
+        />
+        <StatCard 
+          label="Total PnL" 
+          value={stats ? `${stats.totalPnl >= 0 ? "+" : ""}$${stats.totalPnl.toFixed(2)}` : "$0.00"}
+          icon={<DollarSign className="w-4 h-4" />}
+          trend={stats && stats.totalPnl > 0 ? "up" : stats && stats.totalPnl < 0 ? "down" : "neutral"}
+          loading={isLoading}
+        />
+        <StatCard 
+          label="Open Positions" 
+          value={stats?.openPositions?.toString() || "0"}
+          icon={<Eye className="w-4 h-4" />}
+          loading={isLoading}
+        />
+        <StatCard 
+          label="Closed Trades" 
+          value={stats?.closedTrades?.toString() || "0"}
+          icon={<CheckCircle className="w-4 h-4" />}
+          loading={isLoading}
+        />
+        <StatCard 
+          label="Win Rate" 
+          value={stats ? `${stats.winRate.toFixed(1)}%` : "0%"}
+          icon={<Percent className="w-4 h-4" />}
+          trend={stats && stats.winRate >= 50 ? "up" : "down"}
+          loading={isLoading}
+        />
+        <StatCard 
+          label="Sharpe" 
+          value={stats ? stats.sharpeRatio.toFixed(2) : "0.00"}
+          icon={<BarChart3 className="w-4 h-4" />}
+          trend={stats && stats.sharpeRatio > 1 ? "up" : "neutral"}
+          loading={isLoading}
+        />
+      </div>
+
+      <Card className="bg-card/50 backdrop-blur-sm border-white/5">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm font-medium flex items-center gap-2">
+            <Activity className="w-4 h-4 text-blue-400" />
+            Open Positions
+            <Badge variant="outline" className="ml-2 text-xs">{openPositions.length}</Badge>
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {isLoading ? (
+            <div className="space-y-2">
+              {[1, 2, 3].map(i => (
+                <div key={i} className="h-12 bg-white/5 animate-pulse rounded-lg" />
+              ))}
+            </div>
+          ) : openPositions.length === 0 ? (
+            <div className="p-8 text-center text-muted-foreground">
+              No open positions. The system scans every 5 minutes for signals with PSCORE &gt;= 1.5 or BREAKOUT phase.
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="bg-muted/30 border-b border-white/5 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                    <th className="px-3 py-2">Symbol</th>
+                    <th className="px-3 py-2">Side</th>
+                    <th className="px-3 py-2">Entry</th>
+                    <th className="px-3 py-2">SL</th>
+                    <th className="px-3 py-2">TP1</th>
+                    <th className="px-3 py-2">Phase</th>
+                    <th className="px-3 py-2">PSCORE</th>
+                    <th className="px-3 py-2">Opened</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/5">
+                  {openPositions.map((pos) => (
+                    <tr key={pos.tradeId} className="hover:bg-white/5">
+                      <td className="px-3 py-2 font-mono font-medium">{pos.symbol}</td>
+                      <td className="px-3 py-2">
+                        <Badge className={clsx(
+                          "text-xs",
+                          pos.side === "LONG" 
+                            ? "bg-emerald-500/20 text-emerald-400" 
+                            : "bg-rose-500/20 text-rose-400"
+                        )}>
+                          {pos.side}
+                        </Badge>
+                      </td>
+                      <td className="px-3 py-2 font-mono">${formatPrice(pos.entryPrice)}</td>
+                      <td className="px-3 py-2 font-mono text-rose-400">${formatPrice(pos.stopLoss)}</td>
+                      <td className="px-3 py-2 font-mono text-emerald-400">${formatPrice(pos.tp1)}</td>
+                      <td className="px-3 py-2">
+                        <Badge variant="outline" className="text-xs">{pos.marketPhase}</Badge>
+                      </td>
+                      <td className="px-3 py-2 font-mono">{pos.pscore?.toFixed(1)}</td>
+                      <td className="px-3 py-2 text-muted-foreground">{formatTime(pos.entryTimestamp)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card className="bg-card/50 backdrop-blur-sm border-white/5">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm font-medium flex items-center gap-2">
+            <Clock className="w-4 h-4 text-primary" />
+            Closed Trades
+            <Badge variant="outline" className="ml-2 text-xs">{closedTrades.length}</Badge>
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {isLoading ? (
+            <div className="space-y-2">
+              {[1, 2, 3].map(i => (
+                <div key={i} className="h-12 bg-white/5 animate-pulse rounded-lg" />
+              ))}
+            </div>
+          ) : closedTrades.length === 0 ? (
+            <div className="p-8 text-center text-muted-foreground">
+              No closed trades yet. Trades will appear here when SL or TP is hit.
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="bg-muted/30 border-b border-white/5 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                    <th className="px-3 py-2">Symbol</th>
+                    <th className="px-3 py-2">Side</th>
+                    <th className="px-3 py-2">Entry</th>
+                    <th className="px-3 py-2">Exit</th>
+                    <th className="px-3 py-2">Reason</th>
+                    <th className="px-3 py-2">PnL</th>
+                    <th className="px-3 py-2">R</th>
+                    <th className="px-3 py-2">Closed</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/5">
+                  {closedTrades.map((trade) => (
+                    <tr key={trade.tradeId} className="hover:bg-white/5">
+                      <td className="px-3 py-2 font-mono font-medium">{trade.symbol}</td>
+                      <td className="px-3 py-2">
+                        <Badge className={clsx(
+                          "text-xs",
+                          trade.side === "LONG" 
+                            ? "bg-emerald-500/20 text-emerald-400" 
+                            : "bg-rose-500/20 text-rose-400"
+                        )}>
+                          {trade.side}
+                        </Badge>
+                      </td>
+                      <td className="px-3 py-2 font-mono">${formatPrice(trade.entryPrice)}</td>
+                      <td className="px-3 py-2 font-mono">${trade.exitPrice ? formatPrice(trade.exitPrice) : "-"}</td>
+                      <td className="px-3 py-2">
+                        <Badge className={clsx(
+                          "text-xs",
+                          trade.exitReason?.includes("TP") 
+                            ? "bg-emerald-500/20 text-emerald-400" 
+                            : "bg-rose-500/20 text-rose-400"
+                        )}>
+                          {trade.exitReason || "-"}
+                        </Badge>
+                      </td>
+                      <td className={clsx(
+                        "px-3 py-2 font-mono font-medium",
+                        (trade.finalPnl || 0) >= 0 ? "text-emerald-400" : "text-rose-400"
+                      )}>
+                        {trade.finalPnl !== undefined 
+                          ? `${trade.finalPnl >= 0 ? "+" : ""}$${trade.finalPnl.toFixed(2)}` 
+                          : "-"}
+                      </td>
+                      <td className={clsx(
+                        "px-3 py-2 font-mono",
+                        (trade.rMultiple || 0) >= 0 ? "text-emerald-400" : "text-rose-400"
+                      )}>
+                        {trade.rMultiple !== undefined 
+                          ? `${trade.rMultiple >= 0 ? "+" : ""}${trade.rMultiple.toFixed(2)}R` 
+                          : "-"}
+                      </td>
+                      <td className="px-3 py-2 text-muted-foreground">{formatTime(trade.exitTimestamp)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function HistoricalBacktestTab() {
   const { data: stats, isLoading: loadingStats } = useBacktestStats();
   const { data: trades, isLoading: loadingTrades } = useBacktestTrades(50);
   const { data: equity, isLoading: loadingEquity } = useEquityCurve(100);
@@ -366,38 +643,29 @@ export default function Backtest() {
   const runBacktest = useRunAutoBacktest();
 
   return (
-    <div className="min-h-screen bg-background text-foreground p-4 sm:p-6 space-y-6">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2" data-testid="text-backtest-title">
-            <LineChart className="w-6 h-6 text-primary" />
-            Backtesting Dashboard
-          </h1>
-          <p className="text-sm text-muted-foreground mt-1">Automated trading simulation with $10,000 virtual capital</p>
-        </div>
-        <div className="flex gap-2">
-          <Button 
-            size="sm" 
-            onClick={() => runBacktest.mutate()}
-            disabled={runBacktest.isPending}
-            className="gap-1.5"
-            data-testid="button-run-backtest"
-          >
-            <Play className="w-4 h-4" />
-            {runBacktest.isPending ? "Running..." : "Run Backtest"}
-          </Button>
-          <Button 
-            variant="outline" 
-            size="sm" 
-            onClick={() => generateReport.mutate()}
-            disabled={generateReport.isPending}
-            className="gap-1.5"
-            data-testid="button-generate-report"
-          >
-            <FileText className="w-4 h-4" />
-            Generate Report
-          </Button>
-        </div>
+    <div className="space-y-6">
+      <div className="flex justify-end gap-2">
+        <Button 
+          size="sm" 
+          onClick={() => runBacktest.mutate()}
+          disabled={runBacktest.isPending}
+          className="gap-1.5"
+          data-testid="button-run-backtest"
+        >
+          <Play className="w-4 h-4" />
+          {runBacktest.isPending ? "Running..." : "Run Backtest"}
+        </Button>
+        <Button 
+          variant="outline" 
+          size="sm" 
+          onClick={() => generateReport.mutate()}
+          disabled={generateReport.isPending}
+          className="gap-1.5"
+          data-testid="button-generate-report"
+        >
+          <FileText className="w-4 h-4" />
+          Generate Report
+        </Button>
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
@@ -507,7 +775,7 @@ export default function Backtest() {
       </div>
 
       <Card className="bg-card/50 backdrop-blur-sm border-white/5">
-        <CardHeader className="pb-2 flex flex-row items-center justify-between">
+        <CardHeader className="pb-2 flex flex-row items-center justify-between gap-2">
           <CardTitle className="text-sm font-medium flex items-center gap-2">
             <Clock className="w-4 h-4 text-primary" />
             Trade History
@@ -520,6 +788,43 @@ export default function Backtest() {
           <TradesTable trades={trades || []} loading={loadingTrades} />
         </CardContent>
       </Card>
+    </div>
+  );
+}
+
+export default function Backtest() {
+  const [activeTab, setActiveTab] = useState("live");
+
+  return (
+    <div className="min-h-screen bg-background text-foreground p-4 sm:p-6 space-y-6">
+      <div>
+        <h1 className="text-2xl font-bold flex items-center gap-2" data-testid="text-backtest-title">
+          <LineChart className="w-6 h-6 text-primary" />
+          Backtesting Dashboard
+        </h1>
+        <p className="text-sm text-muted-foreground mt-1">Continuous paper trading with $10,000 virtual capital</p>
+      </div>
+
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+        <TabsList className="grid w-full max-w-md grid-cols-2">
+          <TabsTrigger value="live" className="gap-2" data-testid="tab-live">
+            <Zap className="w-4 h-4" />
+            Live Paper Trading
+          </TabsTrigger>
+          <TabsTrigger value="historical" className="gap-2" data-testid="tab-historical">
+            <Clock className="w-4 h-4" />
+            Historical
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="live" className="mt-6">
+          <LivePaperTradingTab />
+        </TabsContent>
+
+        <TabsContent value="historical" className="mt-6">
+          <HistoricalBacktestTab />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

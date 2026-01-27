@@ -114,3 +114,103 @@ export function useRunAutoBacktest() {
     },
   });
 }
+
+interface LiveBacktestData {
+  stats: {
+    totalCapital: number;
+    totalPnl: number;
+    openPositions: number;
+    closedTrades: number;
+    winRate: number;
+    sharpeRatio: number;
+    maxDrawdown: number;
+    lastScanTime: string | null;
+    isRunning: boolean;
+  };
+  openPositions: Array<{
+    tradeId: string;
+    symbol: string;
+    side: "LONG" | "SHORT";
+    entryPrice: number;
+    stopLoss: number;
+    tp1: number;
+    tp2: number;
+    tp3: number;
+    entryTimestamp: string;
+    capitalUsed: number;
+    marketPhase: string;
+    pscore: number;
+  }>;
+  closedTrades: Array<{
+    tradeId: string;
+    symbol: string;
+    side: "LONG" | "SHORT";
+    entryPrice: number;
+    exitPrice?: number;
+    stopLoss: number;
+    tp1: number;
+    entryTimestamp: string;
+    exitTimestamp?: string;
+    finalPnl?: number;
+    rMultiple?: number;
+    exitReason?: string;
+    capitalUsed: number;
+  }>;
+  equityCurve: Array<{
+    timestamp: string;
+    equity: number;
+    drawdown: number;
+  }>;
+}
+
+export function useLiveBacktest() {
+  return useQuery<LiveBacktestData>({
+    queryKey: ["/api/backtest/live"],
+    queryFn: async () => {
+      const res = await fetch("/api/backtest/live");
+      if (!res.ok) throw new Error("Failed to fetch live backtest data");
+      return res.json();
+    },
+    refetchInterval: 10000,
+  });
+}
+
+export function useStartLiveBacktest() {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  return useMutation({
+    mutationFn: async () => {
+      const res = await fetch("/api/backtest/live/start", { method: "POST" });
+      if (!res.ok) throw new Error("Failed to start live backtest");
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/backtest/live"] });
+      toast({ title: "Paper Trading Started", description: "Continuous paper trading is now running." });
+    },
+    onError: (error) => {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    },
+  });
+}
+
+export function useStopLiveBacktest() {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  return useMutation({
+    mutationFn: async () => {
+      const res = await fetch("/api/backtest/live/stop", { method: "POST" });
+      if (!res.ok) throw new Error("Failed to stop live backtest");
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/backtest/live"] });
+      toast({ title: "Paper Trading Stopped", description: "Continuous paper trading has been stopped." });
+    },
+    onError: (error) => {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    },
+  });
+}
