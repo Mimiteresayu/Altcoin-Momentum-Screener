@@ -421,7 +421,8 @@ export class ContinuousBacktestEngine {
         }
         
         const side = signal.htfBias?.side || "LONG";
-        const stopLoss = side === "LONG" ? currentPrice * 0.99 : currentPrice * 1.01;
+        // Use 2% SL for fallback (wider to account for crypto volatility)
+        const stopLoss = side === "LONG" ? currentPrice * 0.98 : currentPrice * 1.02;
         const risk = Math.abs(currentPrice - stopLoss);
         
         return {
@@ -434,7 +435,7 @@ export class ContinuousBacktestEngine {
           ema9: 0,
           rsi14: 0,
           supertrendDir: side,
-          reason: `FALLBACK: 5min data unavailable, using screener price ${currentPrice.toFixed(6)}`
+          reason: `FALLBACK: 5min data unavailable, using 2% SL at ${stopLoss.toFixed(6)}`
         };
       }
 
@@ -504,14 +505,19 @@ export class ContinuousBacktestEngine {
       let stopLoss: number;
       let tp1: number, tp2: number, tp3: number;
       
+      // Use swing low/high but with minimum 2% SL to avoid getting stopped out by noise
       if (side === "LONG") {
-        stopLoss = Math.max(swingLow, currentPrice * 0.99);
+        const minSL = currentPrice * 0.98; // 2% minimum
+        stopLoss = Math.min(swingLow, minSL); // Take the wider of swing low or 2%
+        if (stopLoss >= currentPrice) stopLoss = minSL; // Ensure SL is below entry
         const risk = currentPrice - stopLoss;
         tp1 = currentPrice + (risk * 1.5);
         tp2 = currentPrice + (risk * 2.5);
         tp3 = currentPrice + (risk * 4);
       } else {
-        stopLoss = Math.min(swingHigh, currentPrice * 1.01);
+        const minSL = currentPrice * 1.02; // 2% minimum
+        stopLoss = Math.max(swingHigh, minSL); // Take the wider of swing high or 2%
+        if (stopLoss <= currentPrice) stopLoss = minSL; // Ensure SL is above entry
         const risk = stopLoss - currentPrice;
         tp1 = currentPrice - (risk * 1.5);
         tp2 = currentPrice - (risk * 2.5);
@@ -542,7 +548,8 @@ export class ContinuousBacktestEngine {
       }
       
       const side = signal.htfBias?.side || "LONG";
-      const stopLoss = side === "LONG" ? currentPrice * 0.99 : currentPrice * 1.01;
+      // Use 2% SL for fallback (wider to account for crypto volatility)
+      const stopLoss = side === "LONG" ? currentPrice * 0.98 : currentPrice * 1.02;
       const risk = Math.abs(currentPrice - stopLoss);
       
       return {
@@ -555,7 +562,7 @@ export class ContinuousBacktestEngine {
         ema9: 0,
         rsi14: 0,
         supertrendDir: side,
-        reason: `FALLBACK: error occurred, using screener price ${currentPrice.toFixed(6)}`
+        reason: `FALLBACK: error occurred, using 2% SL at ${stopLoss.toFixed(6)}`
       };
     }
   }
