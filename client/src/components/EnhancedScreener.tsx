@@ -35,6 +35,7 @@ import {
   Timer,
 } from "lucide-react";
 import { clsx } from "clsx";
+import { formatAge } from "@/lib/utils";
 
 interface HtfBias {
   side: "LONG" | "SHORT";
@@ -871,7 +872,7 @@ export function EnhancedScreener() {
                                   : "bg-emerald-500/20 text-emerald-400 border-emerald-500/30"
                               )}
                             >
-                              {signal.ageDays}d
+                              {formatAge(signal.ageDays)}
                             </Badge>
                           ) : (
                             <span className="text-muted-foreground text-xs">-</span>

@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { clsx } from "clsx";
+import { formatAge } from "@/lib/utils";
 import {
   useWatchlist,
   useAddToWatchlist,
@@ -1029,7 +1030,7 @@ export function SignalTable({ signals }: SignalTableProps) {
                                 : "bg-emerald-500/20 text-emerald-400 border-emerald-500/30"
                             )}
                           >
-                            {signal.ageDays}d
+                            {formatAge(signal.ageDays)}
                           </Badge>
                         ) : (
                           <span className="text-muted-foreground">-</span>
