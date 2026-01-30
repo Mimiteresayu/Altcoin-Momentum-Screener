@@ -1214,9 +1214,10 @@ export async function enrichSignalWithCoinglass(
     const listingTimestamp = await getSymbolListingDate(signal.symbol);
     if (listingTimestamp) {
       ageDays = calculateAgeDays(listingTimestamp);
+      console.log(`[ENRICHMENT] ${signal.symbol}: ageDays=${ageDays}`);
     }
   } catch (error) {
-    // Silently fail - ageDays will be undefined
+    console.log(`[ENRICHMENT] ${signal.symbol}: ageDays error -`, (error as Error).message);
   }
 
   return {

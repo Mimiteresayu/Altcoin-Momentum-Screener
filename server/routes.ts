@@ -31,6 +31,7 @@ import {
   type ScreenerFilters,
 } from "./screener-enrichment";
 import { getOKXKlines, getOKXFundingRate } from "./okx";
+import { getSymbolListingDate, calculateAgeDays } from "./binance";
 
 interface Kline {
   openTime: number;
@@ -2677,6 +2678,16 @@ export async function registerRoutes(
           // Skip htfBias if OKX data unavailable
         }
 
+        // Fetch listing age (ageDays)
+        try {
+          const listingTimestamp = await getSymbolListingDate(symbol);
+          if (listingTimestamp) {
+            coinData.ageDays = calculateAgeDays(listingTimestamp);
+          }
+        } catch {
+          // Skip age if unavailable
+        }
+
         // Fetch Coinglass data for first 10 coins only (rate limit protection)
         if (includeCoinglass && process.env.COINGLASS_API_KEY && i < coinglassLimit) {
           try {
@@ -2875,7 +2886,18 @@ export async function registerRoutes(
             confidence: "low" as const,
             actionSuggestion: "Wait for Coinglass data",
           },
+          ageDays: undefined as number | undefined,
         };
+        
+        // Fetch listing age (ageDays)
+        try {
+          const listingTimestamp = await getSymbolListingDate(symbol);
+          if (listingTimestamp) {
+            signal.ageDays = calculateAgeDays(listingTimestamp);
+          }
+        } catch {
+          // Skip age if unavailable
+        }
         
         // Enrich with Coinglass data for first N signals
         if (enrichCoinglass && process.env.COINGLASS_API_KEY && i < enrichLimit) {
