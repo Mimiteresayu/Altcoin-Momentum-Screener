@@ -91,6 +91,7 @@ interface EnhancedSignal {
   entryPrice: number;
   slPrice: number;
   tpLevels: { label: string; price: number; pct: number }[];
+  ageDays?: number;
 }
 
 interface ScreenerResponse {
@@ -655,6 +656,22 @@ export function EnhancedScreener() {
                       </Tooltip>
                     </th>
                     <th className="px-2 py-2 text-center">Conf</th>
+                    <th className="px-2 py-2 text-center" data-testid="header-enhanced-age">
+                      <Tooltip>
+                        <TooltipTrigger className="flex items-center gap-1 cursor-help" data-testid="trigger-enhanced-age-tooltip">
+                          AGE <Info className="w-3 h-3" />
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p className="text-xs max-w-[200px]">
+                            <strong>Listing Age:</strong>
+                            <br />
+                            Days since first listed on exchange
+                            <br />
+                            &lt;30d = New (higher volatility)
+                          </p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </th>
                     <th className="px-2 py-2 w-8"></th>
                   </tr>
                 </thead>
@@ -841,6 +858,25 @@ export function EnhancedScreener() {
                         <td className="px-2 py-2 text-center">
                           {getConfidenceBadge(signal.storytelling?.confidence)}
                         </td>
+                        <td className="px-2 py-2 text-center" data-testid={`cell-age-${signal.symbol}`}>
+                          {signal.ageDays !== undefined ? (
+                            <Badge
+                              data-testid={`badge-age-${signal.symbol}`}
+                              className={clsx(
+                                "text-[10px] px-1.5",
+                                signal.ageDays < 30
+                                  ? "bg-amber-500/20 text-amber-400 border-amber-500/30"
+                                  : signal.ageDays < 365
+                                  ? "bg-slate-500/20 text-slate-400 border-slate-500/30"
+                                  : "bg-emerald-500/20 text-emerald-400 border-emerald-500/30"
+                              )}
+                            >
+                              {signal.ageDays}d
+                            </Badge>
+                          ) : (
+                            <span className="text-muted-foreground text-xs">-</span>
+                          )}
+                        </td>
                         <td className="px-2 py-2 text-center">
                           {expandedRow === signal.symbol ? (
                             <ChevronUp className="w-4 h-4 text-muted-foreground" />
@@ -851,7 +887,7 @@ export function EnhancedScreener() {
                       </tr>
                       {expandedRow === signal.symbol && (
                         <tr className="bg-muted/20">
-                          <td colSpan={12} className="px-4 py-3">
+                          <td colSpan={13} className="px-4 py-3">
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
                               <div className="space-y-2">
                                 <h4 className="font-semibold text-primary flex items-center gap-1">

@@ -19,7 +19,7 @@ interface SimpleKline {
   openTime: number;
   closeTime: number;
 }
-import { getBinanceFuturesData, getBinanceKlines } from "./binance";
+import { getBinanceFuturesData, getBinanceKlines, getSymbolListingDate, calculateAgeDays } from "./binance";
 import { getOKXMarketData, getOKXFundingRate, getOKXKlines } from "./okx";
 
 type PriceLocation = "DISCOUNT" | "NEUTRAL" | "PREMIUM";
@@ -70,6 +70,7 @@ interface EnrichedSignalData {
     confidence: Confidence;
     actionSuggestion: string;
   };
+  ageDays: number | undefined; // Days since first listed on exchange
 }
 
 export function calculatePriceLocation(
@@ -1207,6 +1208,17 @@ export async function enrichSignalWithCoinglass(
   // Calculate HTF bias using Supertrend (4H) + Funding Rate
   const htfBias = calculateHtfBias(klines4H as any, fundingRate, signal.symbol);
 
+  // Get symbol listing age
+  let ageDays: number | undefined = undefined;
+  try {
+    const listingTimestamp = await getSymbolListingDate(signal.symbol);
+    if (listingTimestamp) {
+      ageDays = calculateAgeDays(listingTimestamp);
+    }
+  } catch (error) {
+    // Silently fail - ageDays will be undefined
+  }
+
   return {
     priceLocation,
     marketPhase,
@@ -1222,6 +1234,7 @@ export async function enrichSignalWithCoinglass(
     liquidationZones,
     volumeProfilePOC,
     storytelling,
+    ageDays,
   };
 }
 

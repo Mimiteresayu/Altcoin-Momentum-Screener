@@ -48,6 +48,7 @@ export const signalSnapshots = pgTable("signal_snapshots", {
   preSpikeScore: integer("pre_spike_score"), // 0-5 score
   oiTrend: text("oi_trend"), // RISING, FLAT, FALLING
   marketPhase: text("market_phase"), // ACCUMULATION, TREND, DISTRIBUTION, EXHAUST, NEUTRAL
+  ageDays: integer("age_days"), // Days since first listed
 });
 
 export const insertSignalSnapshotSchema = createInsertSchema(
@@ -283,6 +284,9 @@ export const signalSchema = z.object({
     fundingConfirms: z.boolean(),
     confidence: z.enum(["high", "medium", "low"]),
   }).optional(),
+  
+  // Listing Age
+  ageDays: z.number().optional(), // Days since first listed on exchange
 });
 
 export type Signal = z.infer<typeof signalSchema>;

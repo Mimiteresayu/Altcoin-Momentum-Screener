@@ -45,7 +45,8 @@ Preferred communication style: Simple, everyday language.
 - **Unified Symbol Universe**: Intelligent selection of symbols based on major pairs, watchlist, top volume, and high movers.
 - **Signal Type Filters**: Categorization of signals into HOT, ACTIVE, and PRE based on price and volume criteria.
 - **HTF Bias**: Utilizes Supertrend and Funding Rate for determining LONG/SHORT bias and confidence levels.
-- **Enhanced Screener**: Incorporates fields like priceLocation, marketPhase, preSpikeScore, fundingRate, longShortRatio, FVG/OB levels, liquidation zones, and AI-generated storytelling.
+- **Enhanced Screener**: Incorporates fields like priceLocation, marketPhase, preSpikeScore, fundingRate, longShortRatio, FVG/OB levels, liquidation zones, ageDays (listing age), and AI-generated storytelling.
+- **Listing Age (ageDays)**: Shows how long each altcoin has been listed on the exchange. Fetches earliest kline data from Binance API and caches results. New coins (<30d) are highlighted in amber as they tend to be more volatile.
 - **PSCORE Calculation**: A composite score (0-5) based on volume spike, acceleration, OI change, RSI, risk/reward, and signal strength.
 - **Market Phase Detection**: 5-phase system (ACCUMULATION, BREAKOUT, DISTRIBUTION, TREND, EXHAUST) based on SMC + Order Flow analysis.
 - **Entry Model Recommendations**: Actionable entry suggestions based on phase and candlestick patterns (BUY DIP, BOS ENTRY, FVG ENTRY, PULLBACK, TAKE PROFIT, etc.).

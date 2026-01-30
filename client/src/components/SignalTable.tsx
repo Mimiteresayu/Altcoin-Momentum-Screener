@@ -47,7 +47,8 @@ type SortKey =
   | "rsi"
   | "riskReward"
   | "signalStrength"
-  | "timeOnListMinutes";
+  | "timeOnListMinutes"
+  | "ageDays";
 type SortDirection = "asc" | "desc";
 
 export function SignalTable({ signals }: SignalTableProps) {
@@ -96,8 +97,12 @@ export function SignalTable({ signals }: SignalTableProps) {
       if (aPriority !== bPriority) return aPriority - bPriority;
 
       // Within same type, sort by selected column
-      const aVal = a[sortConfig.key];
-      const bVal = b[sortConfig.key];
+      let aVal = a[sortConfig.key];
+      let bVal = b[sortConfig.key];
+
+      // Handle undefined values for numeric sorts (put undefined at end)
+      if (aVal === undefined || aVal === null) aVal = sortConfig.direction === "asc" ? Infinity : -Infinity;
+      if (bVal === undefined || bVal === null) bVal = sortConfig.direction === "asc" ? Infinity : -Infinity;
 
       if (typeof aVal === "number" && typeof bVal === "number") {
         return sortConfig.direction === "asc" ? aVal - bVal : bVal - aVal;
@@ -564,6 +569,31 @@ export function SignalTable({ signals }: SignalTableProps) {
                     <SortIcon column="timeOnListMinutes" />
                   </div>
                 </th>
+                <th
+                  className="px-2 py-3 text-center cursor-pointer hover:text-primary transition-colors"
+                  onClick={() => handleSort("ageDays")}
+                  data-testid="header-age-days"
+                >
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <div className="flex items-center justify-center gap-1 cursor-help" data-testid="trigger-age-tooltip">
+                        <Clock className="w-3 h-3" /> Age{" "}
+                        <SortIcon column="ageDays" />
+                      </div>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <div className="text-xs max-w-[200px]">
+                        <div className="font-semibold">Listing Age</div>
+                        <div className="text-muted-foreground">
+                          Days since first listed on exchange
+                        </div>
+                        <div className="mt-1">
+                          Newer coins (&lt;30d) may be more volatile
+                        </div>
+                      </div>
+                    </TooltipContent>
+                  </Tooltip>
+                </th>
               </tr>
             </thead>
             <tbody className="divide-y divide-white/5">
@@ -981,6 +1011,28 @@ export function SignalTable({ signals }: SignalTableProps) {
                         {getSpikeReadinessBadge(
                           signal.spikeReadiness,
                           signal.timeOnListMinutes,
+                        )}
+                      </td>
+                      <td
+                        className="px-2 py-2 text-center text-xs"
+                        data-testid={`cell-age-${signal.symbol}`}
+                      >
+                        {signal.ageDays !== undefined ? (
+                          <Badge
+                            data-testid={`badge-age-${signal.symbol}`}
+                            className={clsx(
+                              "text-[10px] px-1.5",
+                              signal.ageDays < 30
+                                ? "bg-amber-500/20 text-amber-400 border-amber-500/30"
+                                : signal.ageDays < 365
+                                ? "bg-slate-500/20 text-slate-400 border-slate-500/30"
+                                : "bg-emerald-500/20 text-emerald-400 border-emerald-500/30"
+                            )}
+                          >
+                            {signal.ageDays}d
+                          </Badge>
+                        ) : (
+                          <span className="text-muted-foreground">-</span>
                         )}
                       </td>
                     </motion.tr>

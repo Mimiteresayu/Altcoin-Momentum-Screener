@@ -2,6 +2,68 @@ import * as crypto from "crypto";
 
 const FUTURES_BASE_URL = "https://fapi.binance.com";
 
+// Cache for symbol listing dates (symbol -> timestamp in ms)
+const listingDateCache: Map<string, number> = new Map();
+
+/**
+ * Get the first listing date for a symbol by fetching earliest available kline
+ * Uses Binance /api/v3/klines with startTime=0 to get the first candle ever
+ * Results are cached to avoid repeated API calls
+ */
+export async function getSymbolListingDate(symbol: string): Promise<number | null> {
+  // Check cache first
+  const cachedDate = listingDateCache.get(symbol);
+  if (cachedDate !== undefined) {
+    return cachedDate;
+  }
+
+  try {
+    // Use spot API for earliest data (futures may have started later)
+    const response = await fetch(
+      `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=1d&limit=1&startTime=0`
+    );
+    
+    if (!response.ok) {
+      // Try futures API as fallback
+      const futuresResponse = await fetch(
+        `${FUTURES_BASE_URL}/fapi/v1/klines?symbol=${symbol}&interval=1d&limit=1&startTime=0`
+      );
+      
+      if (!futuresResponse.ok) {
+        console.log(`[BINANCE] Unable to get listing date for ${symbol}`);
+        return null;
+      }
+      
+      const futuresData = await futuresResponse.json();
+      if (futuresData && futuresData.length > 0) {
+        const timestamp = futuresData[0][0]; // openTime
+        listingDateCache.set(symbol, timestamp);
+        return timestamp;
+      }
+      return null;
+    }
+    
+    const data = await response.json();
+    if (data && data.length > 0) {
+      const timestamp = data[0][0]; // openTime is the first element
+      listingDateCache.set(symbol, timestamp);
+      return timestamp;
+    }
+    
+    return null;
+  } catch (error) {
+    console.log(`[BINANCE] Error getting listing date for ${symbol}:`, error);
+    return null;
+  }
+}
+
+/**
+ * Calculate the age in days since listing
+ */
+export function calculateAgeDays(listingTimestamp: number): number {
+  return Math.floor((Date.now() - listingTimestamp) / (1000 * 60 * 60 * 24));
+}
+
 interface BinanceConfig {
   apiKey: string;
   apiSecret: string;
