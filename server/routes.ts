@@ -1239,6 +1239,17 @@ export async function registerRoutes(
 
           const side = determineSide();
 
+          // Get listing age for this symbol
+          let ageDays: number | undefined;
+          try {
+            const listingTimestamp = await getSymbolListingDate(item.symbol);
+            if (listingTimestamp) {
+              ageDays = calculateAgeDays(listingTimestamp);
+            }
+          } catch {
+            // Ignore errors, ageDays will be undefined
+          }
+
           signals.push({
             symbol: item.symbol,
             side, // Trade direction: LONG or SHORT (based on HTF Supertrend)
@@ -1251,6 +1262,7 @@ export async function registerRoutes(
             hasVolAlert, // True if volume > 2.0x
             signalType, // "HOT" | "ACTIVE" | "PRE" | "MAJOR"
             rsi,
+            ageDays, // Listing age in days
             entryPrice: currentPrice,
             slPrice: sl,
             slDistancePct,
