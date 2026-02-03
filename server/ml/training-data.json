@@ -1,0 +1,170 @@
+{
+  "listings": [
+    {
+      "symbol": "SENT",
+      "listingDate": "2026-01-29",
+      "exchange": "Upbit",
+      "peakReturn": 892,
+      "minutesToPeak": 135,
+      "features": {
+        "ageDays": 180,
+        "volumeSpike": 4.5,
+        "rsi": 65,
+        "priceChange24h": 25,
+        "narrativeCategory": "AI_AGENT",
+        "hourOfDay": 10,
+        "dayOfWeek": 4,
+        "kimchiPremiumProxy": 0.03,
+        "btcCorrelation": 0.4,
+        "marketCap": 50000000
+      }
+    },
+    {
+      "symbol": "ELSA",
+      "listingDate": "2026-01-29",
+      "exchange": "Upbit",
+      "peakReturn": 450,
+      "minutesToPeak": 90,
+      "features": {
+        "ageDays": 120,
+        "volumeSpike": 3.8,
+        "rsi": 62,
+        "priceChange24h": 18,
+        "narrativeCategory": "AI_AGENT",
+        "hourOfDay": 10,
+        "dayOfWeek": 4,
+        "kimchiPremiumProxy": 0.025,
+        "btcCorrelation": 0.35,
+        "marketCap": 30000000
+      }
+    },
+    {
+      "symbol": "SKR",
+      "listingDate": "2026-01-22",
+      "exchange": "Upbit",
+      "peakReturn": 380,
+      "minutesToPeak": 120,
+      "features": {
+        "ageDays": 90,
+        "volumeSpike": 3.2,
+        "rsi": 58,
+        "priceChange24h": 15,
+        "narrativeCategory": "GAMING",
+        "hourOfDay": 11,
+        "dayOfWeek": 3,
+        "kimchiPremiumProxy": 0.02,
+        "btcCorrelation": 0.45,
+        "marketCap": 25000000
+      }
+    },
+    {
+      "symbol": "ELIZAOS",
+      "listingDate": "2026-01-14",
+      "exchange": "Upbit",
+      "peakReturn": 520,
+      "minutesToPeak": 100,
+      "features": {
+        "ageDays": 60,
+        "volumeSpike": 4.0,
+        "rsi": 68,
+        "priceChange24h": 22,
+        "narrativeCategory": "AI_AGENT",
+        "hourOfDay": 10,
+        "dayOfWeek": 2,
+        "kimchiPremiumProxy": 0.028,
+        "btcCorrelation": 0.38,
+        "marketCap": 45000000
+      }
+    },
+    {
+      "symbol": "ASTER",
+      "listingDate": "2025-10-10",
+      "exchange": "Bithumb",
+      "peakReturn": 280,
+      "minutesToPeak": 180,
+      "features": {
+        "ageDays": 200,
+        "volumeSpike": 2.8,
+        "rsi": 55,
+        "priceChange24h": 12,
+        "narrativeCategory": "LAYER2",
+        "hourOfDay": 14,
+        "dayOfWeek": 5,
+        "kimchiPremiumProxy": 0.015,
+        "btcCorrelation": 0.5,
+        "marketCap": 80000000
+      }
+    },
+    {
+      "symbol": "SOMI",
+      "listingDate": "2025-10-01",
+      "exchange": "Bithumb",
+      "peakReturn": 320,
+      "minutesToPeak": 150,
+      "features": {
+        "ageDays": 150,
+        "volumeSpike": 3.0,
+        "rsi": 60,
+        "priceChange24h": 14,
+        "narrativeCategory": "MEME",
+        "hourOfDay": 15,
+        "dayOfWeek": 3,
+        "kimchiPremiumProxy": 0.018,
+        "btcCorrelation": 0.42,
+        "marketCap": 20000000
+      }
+    }
+  ],
+  "nonListings": [
+    {
+      "symbol": "RANDOM1",
+      "features": {
+        "ageDays": 500,
+        "volumeSpike": 0.8,
+        "rsi": 45,
+        "priceChange24h": 2,
+        "narrativeCategory": "OTHER",
+        "hourOfDay": 8,
+        "dayOfWeek": 1,
+        "kimchiPremiumProxy": 0.005,
+        "btcCorrelation": 0.7,
+        "marketCap": 500000000
+      }
+    },
+    {
+      "symbol": "RANDOM2",
+      "features": {
+        "ageDays": 800,
+        "volumeSpike": 0.5,
+        "rsi": 40,
+        "priceChange24h": -1,
+        "narrativeCategory": "OTHER",
+        "hourOfDay": 12,
+        "dayOfWeek": 4,
+        "kimchiPremiumProxy": 0.003,
+        "btcCorrelation": 0.8,
+        "marketCap": 1000000000
+      }
+    },
+    {
+      "symbol": "RANDOM3",
+      "features": {
+        "ageDays": 1000,
+        "volumeSpike": 0.6,
+        "rsi": 35,
+        "priceChange24h": -3,
+        "narrativeCategory": "OTHER",
+        "hourOfDay": 20,
+        "dayOfWeek": 6,
+        "kimchiPremiumProxy": 0.002,
+        "btcCorrelation": 0.85,
+        "marketCap": 2000000000
+      }
+    }
+  ],
+  "metadata": {
+    "createdAt": "2026-02-03",
+    "version": "1.0",
+    "description": "Real Korean exchange listing data for ML training"
+  }
+}

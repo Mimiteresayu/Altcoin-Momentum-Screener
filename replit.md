@@ -60,7 +60,13 @@ Preferred communication style: Simple, everyday language.
 
 ### ML Listing Alpha System
 - **Model Architecture**: Lightweight gradient boosting (LightGBM-style) with no TensorFlow dependencies
-- **Training Data**: 40 known Upbit listings (SENT, ACT, PNUT, SUI, etc.) with historical features
+- **Training Data**: Real Korean exchange listings from `server/ml/training-data.json`:
+  - SENT (Jan 29, 2026): +892% peak, 135min to peak, Upbit
+  - ELSA (Jan 29, 2026): +450% peak, Upbit
+  - SKR (Jan 22, 2026): +380% peak, Upbit
+  - ELIZAOS (Jan 14, 2026): +520% peak, Upbit
+  - ASTER (Oct 10, 2025): +280% peak, Bithumb
+  - SOMI (Oct 1, 2025): +320% peak, Bithumb
 - **Prediction Outputs**:
   - Listing probability (0-100%)
   - Expected return magnitude (%)
