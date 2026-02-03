@@ -1,4 +1,4 @@
-  interface RateLimiter {
+interface RateLimiter {
   tokens: number;
   lastRefill: number;
   maxTokens: number;

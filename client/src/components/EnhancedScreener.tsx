@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { clsx } from "clsx";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -34,7 +35,6 @@ import {
   Crown,
   Timer,
 } from "lucide-react";
-import { clsx } from "clsx";
 import { formatAge } from "@/lib/utils";
 
 interface HtfBias {
@@ -93,6 +93,12 @@ interface EnhancedSignal {
   slPrice: number;
   tpLevels: { label: string; price: number; pct: number }[];
   ageDays?: number;
+  mlScore?: {
+    listingProbability: number;
+    expectedReturn: number;
+    confidence: number;
+    positionSize: number;
+  };
 }
 
 interface ScreenerResponse {
@@ -350,6 +356,64 @@ export function EnhancedScreener() {
     }
   };
 
+  const getMLScoreBadge = (mlScore: EnhancedSignal['mlScore']) => {
+    if (!mlScore) {
+      return <span className="text-xs text-muted-foreground">-</span>;
+    }
+    const prob = mlScore.listingProbability;
+    const ret = mlScore.expectedReturn;
+    
+    if (prob >= 70 && ret >= 30) {
+      return (
+        <Tooltip>
+          <TooltipTrigger>
+            <Badge className="bg-emerald-500/30 text-emerald-300 border-emerald-500/50 font-bold animate-pulse">
+              {prob}%|+{ret}%
+            </Badge>
+          </TooltipTrigger>
+          <TooltipContent>
+            <p className="text-xs">
+              Prob: {prob}% | Exp. Return: +{ret}%<br/>
+              Confidence: {mlScore.confidence}%<br/>
+              Kelly Size: {mlScore.positionSize}%
+            </p>
+          </TooltipContent>
+        </Tooltip>
+      );
+    }
+    if (prob >= 50 && ret >= 20) {
+      return (
+        <Tooltip>
+          <TooltipTrigger>
+            <Badge className="bg-teal-500/20 text-teal-400 border-teal-500/30">
+              {prob}%|+{ret}%
+            </Badge>
+          </TooltipTrigger>
+          <TooltipContent>
+            <p className="text-xs">
+              Prob: {prob}% | Exp. Return: +{ret}%<br/>
+              Confidence: {mlScore.confidence}%
+            </p>
+          </TooltipContent>
+        </Tooltip>
+      );
+    }
+    return (
+      <Tooltip>
+        <TooltipTrigger>
+          <Badge className="bg-slate-500/20 text-slate-400">
+            {prob}%|{ret > 0 ? '+' : ''}{ret}%
+          </Badge>
+        </TooltipTrigger>
+        <TooltipContent>
+          <p className="text-xs">
+            Prob: {prob}% | Exp. Return: {ret}%
+          </p>
+        </TooltipContent>
+      </Tooltip>
+    );
+  };
+
   if (isError) {
     return (
       <Card className="border-destructive/50">
@@ -589,6 +653,22 @@ export function EnhancedScreener() {
                     <th className="px-2 py-2 text-center">
                       <Tooltip>
                         <TooltipTrigger className="flex items-center gap-1 cursor-help">
+                          ML <Info className="w-3 h-3" />
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p className="text-xs max-w-[200px]">
+                            <strong>ML Listing Alpha Score:</strong>
+                            <br />
+                            Probability % | Expected Return %
+                            <br />
+                            Based on Korean exchange listing patterns
+                          </p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </th>
+                    <th className="px-2 py-2 text-center">
+                      <Tooltip>
+                        <TooltipTrigger className="flex items-center gap-1 cursor-help">
                           <DollarSign className="w-3 h-3" /> FR
                         </TooltipTrigger>
                         <TooltipContent>
@@ -795,6 +875,9 @@ export function EnhancedScreener() {
                         </td>
                         <td className="px-2 py-2 text-center">
                           {getPScoreBadge(signal.preSpikeScore)}
+                        </td>
+                        <td className="px-2 py-2 text-center">
+                          {getMLScoreBadge(signal.mlScore)}
                         </td>
                         <td className="px-2 py-2 text-center">
                           <span

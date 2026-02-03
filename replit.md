@@ -56,6 +56,23 @@ Preferred communication style: Simple, everyday language.
 - **Autotrade System**: Integration with Bitunix Futures for automated trading with configurable risk management, trade filters, and safety features.
 - **Backtest Engine**: Optimizes entry/exit strategies for Sharpe Ratio (target >= 2.5), using advanced filters and momentum-based take-profit strategies.
 - **Continuous Paper Trading**: Automated paper trading bot that runs every 5 minutes, using 4H screener for symbol selection and 5-minute timeframe for precise entries.
+- **ML Listing Alpha Predictor**: Machine learning model to predict Korean exchange (Upbit) listing probabilities based on volume patterns, RSI, and narrative categories.
+
+### ML Listing Alpha System
+- **Model Architecture**: Lightweight gradient boosting (LightGBM-style) with no TensorFlow dependencies
+- **Training Data**: 40 known Upbit listings (SENT, ACT, PNUT, SUI, etc.) with historical features
+- **Prediction Outputs**:
+  - Listing probability (0-100%)
+  - Expected return magnitude (%)
+  - Confidence score (0-1)
+  - Kelly position size recommendation
+  - Days to potential listing
+- **Features Used**: 34 input features including volume spike, RSI, hour of day, kimchi premium proxy, narrative category
+- **Model Files**: Stored in `./server/ml/trained-models/` as JSON
+- **API Endpoints**: 
+  - `GET /api/ml/predict?symbol=XXXX`: Get ML prediction for single symbol
+  - `GET /api/ml/status`: Check model training status
+  - ML scores auto-integrated into `/api/screen` endpoint
 
 ### Timeframe Configuration
 - **BIAS**: 4H (Supertrend ATR=14, Multiplier=3.5 for trend direction)

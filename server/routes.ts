@@ -32,6 +32,7 @@ import {
 } from "./screener-enrichment";
 import { getOKXKlines, getOKXFundingRate } from "./okx";
 import { getSymbolListingDate, calculateAgeDays } from "./binance";
+import { listingAlphaModel, ListingFeatures, ListingPrediction } from "./ml/listing-alpha-model";
 
 interface Kline {
   openTime: number;
@@ -890,6 +891,18 @@ export async function registerRoutes(
   let isCalculating = false;
   let lastUpdated: Date = new Date();
 
+  // Initialize ML model
+  const ML_MODEL_PATH = './server/ml/trained-models';
+  listingAlphaModel.load(ML_MODEL_PATH).then(loaded => {
+    if (loaded) {
+      console.log('[ML] Listing alpha model loaded successfully');
+    } else {
+      console.log('[ML] Using heuristic predictions (no trained model found)');
+    }
+  }).catch(err => {
+    console.log('[ML] Model load error, using heuristics:', err.message);
+  });
+
   // Health check endpoint with database status
   app.get("/api/health", async (req, res) => {
     const dbStatus = isDatabaseAvailable();
@@ -905,6 +918,71 @@ export async function registerRoutes(
         cached: cachedSignals.length,
         lastUpdated: lastUpdated.toISOString()
       }
+    });
+  });
+
+  // ML Prediction endpoint
+  app.post("/api/ml/predict", async (req, res) => {
+    try {
+      const { symbol, features } = req.body;
+      
+      // Build features from request or use defaults
+      const now = new Date();
+      const mlFeatures: ListingFeatures = {
+        marketCap: features?.marketCap || 100000000,
+        marketCapRank: features?.marketCapRank || 200,
+        daysSinceBinanceListing: features?.daysSinceBinanceListing || 10,
+        numExchangesListed: features?.numExchangesListed || 5,
+        circulatingSupplyRatio: features?.circulatingSupplyRatio || 0.5,
+        narrativeCategory: features?.narrativeCategory || 'Other',
+        twitterMentions24h: features?.twitterMentions24h || 1000,
+        sentimentScore: features?.sentimentScore || 0.5,
+        koreanSocialMentions: features?.koreanSocialMentions || 500,
+        return24h: features?.return24h || 0.1,
+        return7d: features?.return7d || 0.15,
+        volumeSpike: features?.volumeSpike || 2.0,
+        volatility24h: features?.volatility24h || 0.15,
+        rsi14: features?.rsi14 || 55,
+        exchangeNetflow: features?.exchangeNetflow || 0.1,
+        whaleTransactions24h: features?.whaleTransactions24h || 20,
+        hourOfDay: now.getUTCHours() + 8, // HKT
+        dayOfWeek: now.getDay(),
+        isKoreaTradingHours: now.getUTCHours() >= 0 && now.getUTCHours() < 9, // 9-18 KST = 0-9 UTC
+        kimchiPremium: features?.kimchiPremium || 0.02,
+        targetExchange: features?.targetExchange || 'upbit'
+      };
+      
+      const prediction = await listingAlphaModel.predict(mlFeatures);
+      const status = listingAlphaModel.getTrainingStatus();
+      
+      res.json({
+        symbol,
+        prediction: {
+          listingProbability: Math.round(prediction.listingProbability * 100),
+          expectedReturn: Math.round(prediction.expectedReturn * 100),
+          confidence: Math.round(prediction.confidence * 100),
+          positionSize: Math.round(prediction.recommendedPositionSize * 100),
+          entryWindow: prediction.optimalEntryWindow,
+          confidenceInterval: [
+            Math.round(prediction.returnConfidenceInterval[0] * 100),
+            Math.round(prediction.returnConfidenceInterval[1] * 100)
+          ]
+        },
+        modelStatus: status
+      });
+    } catch (error: any) {
+      console.error('[ML] Prediction error:', error.message);
+      res.status(500).json({ error: 'ML prediction failed', message: error.message });
+    }
+  });
+
+  // Get ML model status
+  app.get("/api/ml/status", (req, res) => {
+    const status = listingAlphaModel.getTrainingStatus();
+    res.json({
+      modelLoaded: status.isTrained,
+      modelPath: ML_MODEL_PATH,
+      timestamp: new Date().toISOString()
     });
   });
 
@@ -2932,6 +3010,44 @@ export async function registerRoutes(
           signal.fundingRate,
           signal.longShortRatio
         );
+        
+        // Calculate ML listing alpha prediction
+        try {
+          const now = new Date();
+          const mlFeatures: ListingFeatures = {
+            marketCap: 100000000,
+            marketCapRank: 200,
+            daysSinceBinanceListing: signal.ageDays ?? 30,
+            numExchangesListed: 5,
+            circulatingSupplyRatio: 0.5,
+            narrativeCategory: 'Other',
+            twitterMentions24h: 1000,
+            sentimentScore: 0.5,
+            koreanSocialMentions: signal.volumeSpikeRatio > 3 ? 2000 : 500,
+            return24h: signal.priceChange24h / 100,
+            return7d: signal.priceChange24h / 50,
+            volumeSpike: signal.volumeSpikeRatio,
+            volatility24h: 0.15,
+            rsi14: signal.rsi,
+            exchangeNetflow: 0.1,
+            whaleTransactions24h: 20,
+            hourOfDay: now.getUTCHours() + 8,
+            dayOfWeek: now.getDay(),
+            isKoreaTradingHours: now.getUTCHours() >= 0 && now.getUTCHours() < 9,
+            kimchiPremium: 0.02,
+            targetExchange: 'upbit'
+          };
+          
+          const mlPrediction = await listingAlphaModel.predict(mlFeatures);
+          signal.mlScore = {
+            listingProbability: Math.round(mlPrediction.listingProbability * 100),
+            expectedReturn: Math.round(mlPrediction.expectedReturn * 100),
+            confidence: Math.round(mlPrediction.confidence * 100),
+            positionSize: Math.round(mlPrediction.recommendedPositionSize * 100)
+          };
+        } catch (err) {
+          // ML prediction failed, continue without it
+        }
         
         signals.push(signal);
       }
