@@ -429,7 +429,7 @@ export function calculatePreSpikeScore(
   else if (accel >= 2) score += 0.25;
 
   // OI change (0-1 points)
-  marketPhase  if (oi >= 15) score += 1;
+  const oi = oiChange ?? 0; if (oi >= 15) score += 1;
   else if (oi >= 10) score += 0.5;
   else if (oi >= 5) score += 0.25;
 
