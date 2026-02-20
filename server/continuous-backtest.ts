@@ -227,7 +227,7 @@ interface LiveStats {
   isRunning: boolean;
 }
 
-export function htfBiasEngine {
+export class htfBiasEngine {
   private positions: Map<string, PaperPosition> = new Map();
   private closedTrades: PaperPosition[] = [];
   private intervalId: NodeJS.Timeout | null = null;
