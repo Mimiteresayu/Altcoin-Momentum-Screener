@@ -576,6 +576,44 @@ function calculateVolumeAcceleration(volumes: number[]): number {
 
 
 // ==============================================
+// AUR HISTORY STORE - Persists AUR readings across refresh cycles
+const aurHistoryMap = new Map<string, Array<{ts: number, aur: number, z: number}>>();
+const AUR_HISTORY_MAX = 12;
+
+function pushAurHistory(symbol: string, aur: number, z: number): void {
+  if (!aurHistoryMap.has(symbol)) aurHistoryMap.set(symbol, []);
+  const h = aurHistoryMap.get(symbol)!;
+  const now = Date.now();
+  if (h.length > 0 && now - h[h.length - 1].ts < 120000) {
+    h[h.length - 1] = { ts: now, aur, z };
+  } else {
+    h.push({ ts: now, aur, z });
+  }
+  while (h.length > AUR_HISTORY_MAX) h.shift();
+}
+
+function detectAurTrendFromHistory(symbol: string, currentAur: number, currentZ: number): {
+  aurRising: boolean; aurSlope: number; aurTrendValues: number[]; risingStreak: number;
+} {
+  pushAurHistory(symbol, currentAur, currentZ);
+  const values = (aurHistoryMap.get(symbol) || []).map(h => h.aur);
+  if (values.length < 3) return { aurRising: false, aurSlope: 0, aurTrendValues: values, risingStreak: 0 };
+  let risingStreak = 0;
+  for (let i = values.length - 1; i > 0; i--) {
+    if (values[i] > values[i - 1] + 0.01) risingStreak++;
+    else break;
+  }
+  const recent = values.slice(-4);
+  const slope = recent.length >= 2 ? (recent[recent.length - 1] - recent[0]) / (recent.length - 1) : 0;
+  const aurRising = risingStreak >= 2 && currentAur > 0.40 && currentZ < 2.0;
+  return {
+    aurRising,
+    aurSlope: Math.round(slope * 1000) / 1000,
+    aurTrendValues: values.slice(-6).map(v => Math.round(v * 1000) / 1000),
+    risingStreak,
+  };
+}
+
 // ABSOLUTE UP RATIO (AUR) - Fine-timeframe alpha
 // ==============================================
 interface AURResult {
