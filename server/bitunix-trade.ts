@@ -76,6 +76,10 @@ export class BitunixTradeService {
     return true;
   }
 
+    isConfigured(): boolean {
+    return this.initialized;
+  }
+
   private generateSignature(params: string, timestamp: string): string {
     const message = `${timestamp}${params}`;
     return crypto
@@ -341,6 +345,35 @@ export class BitunixTradeService {
       return data.data || null;
     } catch (error) {
       console.error("[BITUNIX] Error placing order:", error);
+      return null;
+    }
+  }
+
+    async getOpenPositions(): Promise<Position[]> {
+    return this.getPositions();
+  }
+
+  async getAccountInfo(): Promise<{ balance: number; equity: number; margin: number } | null> {
+    if (!this.initialized) {
+      console.log("[BITUNIX] Service not initialized");
+      return null;
+    }
+    try {
+      const endpoint = "/api/v1/private/account";
+      const timestamp = Date.now().toString();
+      const signature = this.generateSignature("", timestamp);
+      const response = await fetch(`${this.baseUrl}${endpoint}`, {
+        headers: {
+          "X-BX-APIKEY": this.apiKey,
+          "X-BX-TIMESTAMP": timestamp,
+          "X-BX-SIGNATURE": signature,
+        },
+      });
+      if (!response.ok) return null;
+      const data = await response.json();
+      return data.data || null;
+    } catch (error) {
+      console.error("[BITUNIX] Error getting account info:", error);
       return null;
     }
   }

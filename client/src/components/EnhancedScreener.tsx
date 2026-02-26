@@ -480,7 +480,7 @@ export function EnhancedScreener() {
               </Label>
               <Select
                 value={minPScore.toString()}
-                onValueChange={(v) => setMinPScore(parseInt(v))}
+                onValueChange={(v: string) => setMinPScore(parseInt(v))}
               >
                 <SelectTrigger
                   className="w-20 h-8"
@@ -842,7 +842,7 @@ export function EnhancedScreener() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-white/5">
-                  {data?.signals.map((signal) => (
+                  {data?.signals.map((signal: any) => (
                     <>
                       <tr
                         key={signal.symbol}
@@ -1227,7 +1227,7 @@ export function EnhancedScreener() {
                                       ${formatPrice(signal.slPrice)}
                                     </span>
                                   </div>
-                                  {signal.tpLevels.map((tp) => (
+                                  {signal.tpLevels.map((tp: any) => (
                                     <div key={tp.label}>
                                       <span className="text-muted-foreground">
                                         {tp.label}:
@@ -1244,7 +1244,7 @@ export function EnhancedScreener() {
                                       FVG Zones:
                                     </span>
                                     <div className="flex gap-2 mt-1">
-                                      {signal.fvgLevels?.map((fvg, i) => (
+                                      {signal.fvgLevels?.map((fvg: any, i: number) => (
                                         <Badge
                                           key={i}
                                           className={clsx(
@@ -1266,7 +1266,7 @@ export function EnhancedScreener() {
                                       Order Blocks:
                                     </span>
                                     <div className="flex gap-2 mt-1">
-                                      {signal.obLevels?.map((ob, i) => (
+                                      {signal.obLevels?.map((ob: any, i: number) => (
                                         <Badge
                                           key={i}
                                           className={clsx(
