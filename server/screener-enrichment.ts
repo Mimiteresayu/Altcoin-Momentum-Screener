@@ -1132,6 +1132,47 @@ export async function enrichSignalWithCoinglass(
     console.log(`[ENRICHMENT] OKX API failed for ${symbol}:`, error);
   }
 
+
+    // FALLBACK: If OKX returned no klines, try Bitunix as kline source
+  if (klines4H.length === 0) {
+    try {
+      console.log(`[ENRICHMENT] ${symbol} - OKX klines empty, trying Bitunix fallback...`);
+      const bitunixKlines4H = await getBitunixKlines(symbol, '4h', 100);
+      if (bitunixKlines4H && bitunixKlines4H.length > 0) {
+        klines4H = bitunixKlines4H.map((k: any) => ({
+          open: String(k.open ?? k.o ?? '0'),
+          high: String(k.high ?? k.h ?? '0'),
+          low: String(k.low ?? k.l ?? '0'),
+          close: String(k.close ?? k.c ?? '0'),
+          volume: String(k.volume ?? k.v ?? '0'),
+          openTime: k.openTime ?? k.ts ?? Date.now(),
+          closeTime: k.closeTime ?? (k.openTime ?? k.ts ?? Date.now()) + 14400000
+        }));
+        console.log(`[ENRICHMENT] ${symbol} - Bitunix 4H klines: ${klines4H.length}`);
+      }
+    } catch (err) {
+      console.log(`[ENRICHMENT] ${symbol} - Bitunix 4H fallback failed:`, err);
+    }
+  }
+  if (klines1H.length === 0) {
+    try {
+      const bitunixKlines1H = await getBitunixKlines(symbol, '1h', 100);
+      if (bitunixKlines1H && bitunixKlines1H.length > 0) {
+        klines1H = bitunixKlines1H.map((k: any) => ({
+          open: String(k.open ?? k.o ?? '0'),
+          high: String(k.high ?? k.h ?? '0'),
+          low: String(k.low ?? k.l ?? '0'),
+          close: String(k.close ?? k.c ?? '0'),
+          volume: String(k.volume ?? k.v ?? '0'),
+          openTime: k.openTime ?? k.ts ?? Date.now(),
+          closeTime: k.closeTime ?? (k.openTime ?? k.ts ?? Date.now()) + 3600000
+        }));
+        console.log(`[ENRICHMENT] ${symbol} - Bitunix 1H klines: ${klines1H.length}`);
+      }
+    } catch (err) {
+      console.log(`[ENRICHMENT] ${symbol} - Bitunix 1H fallback failed:`, err);
+    }
+  }
   // PRIORITY 2: Use Coinglass as fallback (paid plan - may fail)
   let enhancedData: EnhancedMarketData | null = null;
   let liquidationMap: LiquidationMapData[] = [];
