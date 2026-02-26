@@ -106,6 +106,17 @@ interface EnhancedSignal {
   efficiencyRatio?: number;
   volatilitySpread?: number;
   channelRange?: number;
+    permutationEntropy?: number;
+  erZScore?: number;
+  vsZScore?: number;
+  peZScore?: number;
+  preSpikeCombo?: {
+    comboScore: number;
+    aurCondition: boolean;
+    erCondition: boolean;
+    vsCondition: boolean;
+    peCondition: boolean;
+  };
 }
 
 interface ScreenerResponse {
@@ -794,6 +805,39 @@ export function EnhancedScreener() {
                         </TooltipContent>
                       </Tooltip>
                     </th>
+                                  <th className="px-2 py-2 text-center">
+                <Tooltip>
+                  <TooltipTrigger className="flex items-center gap-1 cursor-help">
+                    PE <Info className="w-3 h-3" />
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p className="text-xs max-w-[200px]">
+                      <strong>Permutation Entropy</strong>
+                      <br />
+                      Measures price randomness from 4H klines.
+                      <br />
+                      Higher = more random, Lower = more structured/trending.
+                    </p>
+                  </TooltipContent>
+                </Tooltip>
+              </th>
+              <th className="px-2 py-2 text-center">
+                <Tooltip>
+                  <TooltipTrigger className="flex items-center gap-1 cursor-help">
+                    COMBO <Info className="w-3 h-3" />
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p className="text-xs max-w-[200px]">
+                      <strong>Pre-Spike Combo</strong>
+                      <br />
+                      HKPTRC Alpha score (0-4). Counts conditions:
+                      AUR Z{'>'}2, ER{'>'} mean, VS Z{'<'}-2, PE{'>'} mean.
+                      <br />
+                      Score of 3+ = strong pre-spike signal.
+                    </p>
+                  </TooltipContent>
+                </Tooltip>
+              </th>
                     <th className="px-2 py-2 w-8"></th>
                   </tr>
                 </thead>
@@ -1097,6 +1141,42 @@ export function EnhancedScreener() {
                             </span>
                           )}
                         </td>
+                                            {/* PE Column */}
+                    <td className="px-2 py-2 text-center">
+                      {signal.permutationEntropy != null ? (
+                        <span className={clsx(
+                          "text-[10px] font-mono",
+                          signal.permutationEntropy < 0.6 ? "text-emerald-400 font-bold" : "text-muted-foreground"
+                        )}>
+                          {signal.permutationEntropy.toFixed(2)}
+                        </span>
+                      ) : (
+                        <span className="text-muted-foreground text-xs">-</span>
+                      )}
+                    </td>
+                    {/* COMBO Column */}
+                    <td className="px-2 py-2 text-center">
+                      {signal.preSpikeCombo ? (
+                        <div className="flex flex-col items-center gap-0.5">
+                          <span className={clsx(
+                            "text-[10px] font-mono font-bold",
+                            signal.preSpikeCombo.comboScore >= 3 ? "text-amber-400" :
+                            signal.preSpikeCombo.comboScore >= 2 ? "text-emerald-400" :
+                            "text-muted-foreground"
+                          )}>
+                            {signal.preSpikeCombo.comboScore}/4
+                          </span>
+                          <div className="flex gap-px">
+                            <span className={clsx("w-1.5 h-1.5 rounded-full", signal.preSpikeCombo.aurCondition ? "bg-emerald-400" : "bg-muted/40")} title="AUR" />
+                            <span className={clsx("w-1.5 h-1.5 rounded-full", signal.preSpikeCombo.erCondition ? "bg-emerald-400" : "bg-muted/40")} title="ER" />
+                            <span className={clsx("w-1.5 h-1.5 rounded-full", signal.preSpikeCombo.vsCondition ? "bg-emerald-400" : "bg-muted/40")} title="VS" />
+                            <span className={clsx("w-1.5 h-1.5 rounded-full", signal.preSpikeCombo.peCondition ? "bg-emerald-400" : "bg-muted/40")} title="PE" />
+                          </div>
+                        </div>
+                      ) : (
+                        <span className="text-muted-foreground text-xs">-</span>
+                      )}
+                    </td>
                         <td className="px-2 py-2 text-center">
                           {expandedRow === signal.symbol ? (
                             <ChevronUp className="w-4 h-4 text-muted-foreground" />
@@ -1107,7 +1187,7 @@ export function EnhancedScreener() {
                       </tr>
                       {expandedRow === signal.symbol && (
                         <tr className="bg-muted/20">
-                          <td colSpan={15} className="px-4 py-3">
+                          <td colSpan={17} className="px-4 py-3">
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
                               <div className="space-y-2">
                                 <h4 className="font-semibold text-primary flex items-center gap-1">
