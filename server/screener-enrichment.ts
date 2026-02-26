@@ -74,6 +74,17 @@ interface EnrichedSignalData {
     efficiencyRatio: number | undefined; // ER: net price change / sum of absolute changes (0-1, higher = trending)
   volatilitySpread: number | undefined; // VSpread: normalized ATR-SD spread (volatility clustering detector)
   channelRange: number | undefined; // CRange: normalized position in price channel (-1 to 1, >0.8 = breakout zone)
+    permutationEntropy: number | undefined; // PE: permutation entropy from 4H klines
+  erZScore: number | undefined; // Z-score of Efficiency Ratio
+  vsZScore: number | undefined; // Z-score of Volatility Spread
+  peZScore: number | undefined; // Z-score of Permutation Entropy
+  preSpikeCombo: {
+    comboScore: number;
+    aurCondition: boolean;
+    erCondition: boolean;
+    vsCondition: boolean;
+    peCondition: boolean;
+  };
 }
 
 export function calculatePriceLocation(
@@ -981,21 +992,33 @@ async function getBitunixKlines(
   symbol: string,
   interval: string,
   limit: number = 100,
-) {
+): Promise<SimpleKline[]> {
   try {
-    const bitunixService = new BitunixTradeService();
-    const klines = await bitunixService.getKlines(
-      symbol + "USDT",
-      interval,
-      limit,
-    );
-    return klines;
+    // Use PUBLIC Bitunix futures market kline API (no auth required)
+    const url = `https://fapi.bitunix.com/api/v1/futures/market/kline?symbol=${symbol}USDT&interval=${interval}&limit=${limit}`;
+    const resp = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    if (!resp.ok) {
+      console.log(`[ENRICHMENT] Bitunix public kline failed for ${symbol}: ${resp.status}`);
+      return [];
+    }
+    const data = await resp.json();
+    if (data?.data && Array.isArray(data.data) && data.data.length > 0) {
+      return data.data.map((k: any) => ({
+        open: String(k[1] ?? k.open ?? '0'),
+        high: String(k[2] ?? k.high ?? '0'),
+        low: String(k[3] ?? k.low ?? '0'),
+        close: String(k[4] ?? k.close ?? '0'),
+        volume: String(k[5] ?? k.volume ?? '0'),
+        openTime: parseInt(k[0] ?? k.time ?? '0'),
+        closeTime: parseInt(k[6] ?? k[0] ?? '0') + (interval === '4h' ? 14400000 : interval === '1h' ? 3600000 : 86400000),
+      }));
+    }
+    return [];
   } catch (error) {
     console.log(`[ENRICHMENT] Bitunix kline fetch failed for ${symbol}`);
     return [];
   }
 }
-
 // ============================================
 // HKPTRC Alpha Indicators
 // ============================================
@@ -1082,6 +1105,119 @@ export function calculateChannelRange(
   // Normalize to -1 to 1 range
   return (currentClose - midline) / (channelRange / 2);
 }
+
+/**
+ * Permutation Entropy (PE) - Measures complexity/randomness of price series
+ * Higher PE = more random/chaotic. Lower PE = more ordered/predictable.
+ * Pre-spike: PE rising above mean signals transition from order to chaos (breakout imminent).
+ * Uses embedding dimension m=3, delay=1.
+ */
+export function calculatePermutationEntropy(
+  klines: { close: string }[],
+  period: number = 20,
+  m: number = 3
+): number | undefined {
+  if (klines.length < period + m) return undefined;
+  const recent = klines.slice(-period - m + 1);
+  const closes = recent.map(k => parseFloat(k.close));
+  // Count permutation patterns
+  const patternCounts: Map<string, number> = new Map();
+  let totalPatterns = 0;
+  for (let i = 0; i <= closes.length - m; i++) {
+    const window = closes.slice(i, i + m);
+    // Get rank order (permutation pattern)
+    const indexed = window.map((v, idx) => ({ v, idx }));
+    indexed.sort((a, b) => a.v - b.v || a.idx - b.idx);
+    const pattern = indexed.map(x => x.idx).join(',');
+    patternCounts.set(pattern, (patternCounts.get(pattern) || 0) + 1);
+    totalPatterns++;
+  }
+  if (totalPatterns === 0) return 0;
+  // Calculate Shannon entropy of permutation distribution
+  let entropy = 0;
+    for (const count of Array.from(patternCounts.values())) {
+    const p = count / totalPatterns;
+    if (p > 0) entropy -= p * Math.log2(p);
+  }
+  // Normalize by max possible entropy (log2(m!))
+  const factorial = (n: number): number => n <= 1 ? 1 : n * factorial(n - 1);
+  const maxEntropy = Math.log2(factorial(m));
+  return maxEntropy > 0 ? entropy / maxEntropy : 0;
+}
+
+// ============================================
+// Rolling History Store for Z-Score Computation
+// ============================================
+const HISTORY_MAX_LENGTH = 50; // Keep last 50 readings per symbol
+const indicatorHistory: Map<string, {
+  er: number[];
+  vs: number[];
+  pe: number[];
+}> = new Map();
+
+function pushIndicatorHistory(symbol: string, er: number | undefined, vs: number | undefined, pe: number | undefined) {
+  if (!indicatorHistory.has(symbol)) {
+    indicatorHistory.set(symbol, { er: [], vs: [], pe: [] });
+  }
+  const h = indicatorHistory.get(symbol)!;
+  if (er !== undefined) { h.er.push(er); if (h.er.length > HISTORY_MAX_LENGTH) h.er.shift(); }
+  if (vs !== undefined) { h.vs.push(vs); if (h.vs.length > HISTORY_MAX_LENGTH) h.vs.shift(); }
+  if (pe !== undefined) { h.pe.push(pe); if (h.pe.length > HISTORY_MAX_LENGTH) h.pe.shift(); }
+}
+
+function calcZScore(values: number[], current: number): number | undefined {
+  if (values.length < 5) return undefined; // Need minimum history
+  const mean = values.reduce((a, b) => a + b, 0) / values.length;
+  const variance = values.reduce((a, v) => a + Math.pow(v - mean, 2), 0) / values.length;
+  const std = Math.sqrt(variance);
+  if (std === 0) return 0;
+  return (current - mean) / std;
+}
+
+function calcMean(values: number[]): number | undefined {
+  if (values.length < 3) return undefined;
+  return values.reduce((a, b) => a + b, 0) / values.length;
+}
+
+/**
+ * Evaluate Pre-Spike Combo Conditions (HKPTRC Alpha)
+ * Returns count of conditions met (0-4) and which ones are true.
+ * 
+ * Conditions:
+ * 1. AUR Z-score > 2 (buying concentration rising, trend confirming)
+ * 2. ER > rolling mean (price movement becoming efficient/trending)
+ * 3. VSpread Z < -2 (volatility compressed to extreme, explosion imminent)
+ * 4. PE > rolling mean (market disorder rising, about to resolve into momentum)
+ */
+export function evaluatePreSpikeCombo(
+  aurZScore: number | undefined,
+  er: number | undefined,
+  vs: number | undefined,
+  pe: number | undefined,
+  symbol: string
+): {
+  comboScore: number;
+  aurCondition: boolean;
+  erCondition: boolean;
+  vsCondition: boolean;
+  peCondition: boolean;
+} {
+  const hist = indicatorHistory.get(symbol);
+  const erMean = hist ? calcMean(hist.er) : undefined;
+  const vsMean = hist ? calcMean(hist.vs) : undefined;
+  const vsZScore = hist && vs !== undefined ? calcZScore(hist.vs, vs) : undefined;
+  const peMean = hist ? calcMean(hist.pe) : undefined;
+
+  const aurCondition = aurZScore !== undefined && aurZScore > 2;
+  const erCondition = er !== undefined && erMean !== undefined && er > erMean;
+  const vsCondition = vsZScore !== undefined && vsZScore < -2;
+  const peCondition = pe !== undefined && peMean !== undefined && pe > peMean;
+
+  const comboScore = (aurCondition ? 1 : 0) + (erCondition ? 1 : 0) + (vsCondition ? 1 : 0) + (peCondition ? 1 : 0);
+
+  return { comboScore, aurCondition, erCondition, vsCondition, peCondition };
+}
+
 
 export async function enrichSignalWithCoinglass(
   signal: Signal,
@@ -1375,6 +1511,25 @@ export async function enrichSignalWithCoinglass(
   const volatilitySpread = klines4H.length >= 21 ? calculateVolatilitySpread(klines4H, 20) : undefined;
   const channelRange = klines4H.length >= 20 ? calculateChannelRange(klines4H, 20) : undefined;
 
+    // Calculate Permutation Entropy from 4H klines
+  const permutationEntropy = klines4H.length >= 23 ? calculatePermutationEntropy(klines4H, 20, 3) : undefined;
+
+  // Push to rolling history store for Z-score computation
+  pushIndicatorHistory(symbol, efficiencyRatio, volatilitySpread, permutationEntropy);
+
+  // Compute Z-scores for ER and VSpread from rolling history
+  const hist = indicatorHistory.get(symbol);
+  const erZScore = hist && efficiencyRatio !== undefined ? calcZScore(hist.er, efficiencyRatio) : undefined;
+  const vsZScore = hist && volatilitySpread !== undefined ? calcZScore(hist.vs, volatilitySpread) : undefined;
+  const peZScore = hist && permutationEntropy !== undefined ? calcZScore(hist.pe, permutationEntropy) : undefined;
+
+  // Evaluate Pre-Spike Combo (HKPTRC Alpha)
+      const aurZScoreForCombo = (signal as any).aur !== undefined ? (signal as any).aurZScore : undefined;
+  const combo = evaluatePreSpikeCombo(aurZScoreForCombo, efficiencyRatio, volatilitySpread, permutationEntropy, symbol);
+  if (combo.comboScore >= 3) {
+    console.log(`[COMBO] ${signal.symbol}: ${combo.comboScore}/4 conditions met! AUR=${combo.aurCondition} ER=${combo.erCondition} VS=${combo.vsCondition} PE=${combo.peCondition}`);
+  }
+
   return {
     priceLocation,
     marketPhase,
@@ -1394,6 +1549,11 @@ export async function enrichSignalWithCoinglass(
         efficiencyRatio,
     volatilitySpread,
     channelRange,
+      permutationEntropy,
+      erZScore,
+      vsZScore,
+      peZScore,
+      preSpikeCombo: combo,
   };
 }
 
