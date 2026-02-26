@@ -1024,6 +1024,50 @@ export function EnhancedScreener() {
                               >
                                 {(signal as any).aur.toFixed(2)}
                               </span>
+                  {/* AUR Sparkline - shows last 6 readings across refresh cycles */}
+                  {(signal as any).aurTrend && (signal as any).aurTrend.length > 1 && (
+                    <div className="flex items-center gap-0.5 mt-0.5">
+                      <svg width="36" height="12" className="opacity-80">
+                        {(signal as any).aurTrend.map((v: number, i: number, arr: number[]) => {
+                          const min = Math.min(...arr);
+                          const max = Math.max(...arr);
+                          const range = max - min || 0.1;
+                          const x = (i / Math.max(arr.length - 1, 1)) * 32 + 2;
+                          const y = 10 - ((v - min) / range) * 8;
+                          const isLast = i === arr.length - 1;
+                          return (
+                            <circle
+                              key={i}
+                              cx={x}
+                              cy={y}
+                              r={isLast ? 1.8 : 1}
+                              fill={isLast ? (v > (arr[i-1] || v) ? "#22c55e" : "#ef4444") : "#64748b"}
+                            />
+                          );
+                        })}
+                        {(signal as any).aurTrend.length > 1 && (
+                          <polyline
+                            points={(signal as any).aurTrend.map((v: number, i: number, arr: number[]) => {
+                              const min = Math.min(...arr);
+                              const max = Math.max(...arr);
+                              const range = max - min || 0.1;
+                              const x = (i / Math.max(arr.length - 1, 1)) * 32 + 2;
+                              const y = 10 - ((v - min) / range) * 8;
+                              return `${x},${y}`;
+                            }).join(" ")}
+                            fill="none"
+                            stroke={(signal as any).aurRising ? "#a855f7" : "#64748b"}
+                            strokeWidth="0.8"
+                          />
+                        )}
+                      </svg>
+                      {(signal as any).risingStreak > 0 && (
+                        <span className={`text-[7px] font-bold ${(signal as any).risingStreak >= 2 ? "text-purple-400" : "text-slate-500"}`}>
+                          {"\u2191"}{(signal as any).risingStreak}
+                        </span>
+                      )}
+                    </div>
+                  )}
                               <Badge
                                 className={clsx(
                                   "text-[9px] px-1",
