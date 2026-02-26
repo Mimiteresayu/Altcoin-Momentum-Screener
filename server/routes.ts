@@ -589,6 +589,14 @@ interface AURResult {
 }
 
 async function calculateAUR(symbol: string): Promise<AURResult | null> {
+  // Cache to avoid redundant API calls within same refresh cycle
+  const cacheKey = `${symbol}_${Math.floor(Date.now() / 60000)}`; // 1-min granularity
+  if ((calculateAUR as any)._cache?.has(cacheKey)) {
+    return (calculateAUR as any)._cache.get(cacheKey);
+  }
+  if (!(calculateAUR as any)._cache) {
+    (calculateAUR as any)._cache = new Map();
+  }
   try {
     const url = `https://fapi.bitunix.com/api/v1/futures/market/kline?symbol=${symbol}&interval=1m&limit=1200`;
     const response = await axios.get(url, { timeout: 10000 });
@@ -618,7 +626,7 @@ async function calculateAUR(symbol: string): Promise<AURResult | null> {
     const z = sd > 0.001 ? (cur - mean) / sd : 0;
     // Use cross-cycle history for trend detection (persists across 5-min refresh cycles)
     const trendData = detectAurTrendFromHistory(symbol, cur, z);
-    return {
+    const result = {
       aur: Math.round(cur * 1000) / 1000,
       aurZScore: Math.round(z * 100) / 100,
       isBuyConcentrated: z >= 2,
@@ -627,7 +635,15 @@ async function calculateAUR(symbol: string): Promise<AURResult | null> {
       aurSlope: trendData.aurSlope,
       risingStreak: trendData.risingStreak,
     };
-  } catch { return null; }
+    (calculateAUR as any)._cache.set(cacheKey, result);
+    // Clean old cache entries
+    if ((calculateAUR as any)._cache.size > 200) {
+      const keys = [...(calculateAUR as any)._cache.keys()];
+      keys.slice(0, 100).forEach((k: string) => (calculateAUR as any)._cache.delete(k));
+    }
+    console.log(`[AUR] ${symbol}: aur=${result.aur}, z=${result.aurZScore}, rising=${result.aurRising}, streak=${result.risingStreak}`);
+    return result;
+  } catch (err: any) { console.error(`[AUR] Error calculating for ${symbol}:`, err?.message || err); return null; }
 }
 
 function findSwingLows(klines: Kline[], count: number = 3): number[] {
