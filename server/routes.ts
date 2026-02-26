@@ -582,6 +582,9 @@ interface AURResult {
   aur: number;
   aurZScore: number;
   isBuyConcentrated: boolean;
+  aurTrend: number[];  // last 4 hourly AUR values (oldest first)
+  aurRising: boolean;  // true if 3+ consecutive rising AURs and current > 0.45
+  aurSlope: number;    // rate of AUR increase per hour
 }
 
 async function calculateAUR(symbol: string): Promise<AURResult | null> {
@@ -612,7 +615,24 @@ async function calculateAUR(symbol: string): Promise<AURResult | null> {
     const vari = lb.reduce((s,v) => s + (v-mean)**2, 0) / lb.length;
     const sd = Math.sqrt(vari);
     const z = sd > 0.001 ? (cur - mean) / sd : 0;
-    return { aur: Math.round(cur*1000)/1000, aurZScore: Math.round(z*100)/100, isBuyConcentrated: z >= 2 };
+    // Calculate AUR trend from last 4 hourly buckets
+    const recentAURs = hourlyAURs.slice(-4);
+    let risingCount = 0;
+    for (let t = 1; t < recentAURs.length; t++) {
+      if (recentAURs[t] > recentAURs[t - 1]) risingCount++;
+    }
+    const aurRising = risingCount >= 2 && cur > 0.45 && z < 2;
+    const aurSlope = recentAURs.length >= 2
+      ? (recentAURs[recentAURs.length - 1] - recentAURs[0]) / recentAURs.length
+      : 0;
+    return {
+      aur: Math.round(cur * 1000) / 1000,
+      aurZScore: Math.round(z * 100) / 100,
+      isBuyConcentrated: z >= 2,
+      aurTrend: recentAURs.map(v => Math.round(v * 1000) / 1000),
+      aurRising,
+      aurSlope: Math.round(aurSlope * 1000) / 1000,
+    };
   } catch { return null; }
 }
 
@@ -1384,6 +1404,9 @@ export async function registerRoutes(
             volAccel, // Volume acceleration: current1H / avg4H
             aur: aurData?.aur ?? null, // Absolute Up Ratio (0-1)
             aurZScore: aurData?.aurZScore ?? null, // AUR Z-Score
+              aurRising: aurData?.aurRising ?? false,
+              aurSlope: aurData?.aurSlope ?? 0,
+              aurTrend: aurData?.aurTrend ?? [],
             isBuyConcentrated: aurData?.isBuyConcentrated ?? false, // True when Z >= 2
             isAccelerating, // True if volAccel >= 2.0x
             oiChange24h, // Open Interest 24H change %

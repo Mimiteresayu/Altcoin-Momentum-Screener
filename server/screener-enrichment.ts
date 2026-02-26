@@ -415,6 +415,7 @@ export function calculatePreSpikeScore(
   signalStrength: number,
   fundingRate: number | undefined,
   longShortRatio: number | undefined,
+  aurData?: { aur: number; aurZScore: number; isBuyConcentrated: boolean; aurTrend: number[]; aurRising: boolean; aurSlope: number },
 ): number {
   let score = 0;
 
@@ -451,6 +452,25 @@ export function calculatePreSpikeScore(
   // Long/Short ratio (0-0.25 points)
   // Low ratio = fewer longs = contrarian bullish
   if (longShortRatio !== undefined && longShortRatio < 0.9) score += 0.25;
+
+  // AUR Pre-Spike Detection (0-1.5 points) - the key alpha from fine-timeframe analysis
+  // Detects stealth accumulation: buying concentration rising but not yet extreme
+  if (aurData) {
+    // Rising AUR trend = smart money accumulating (strongest signal: +1.0)
+    if (aurData.aurRising && aurData.aur > 0.5) {
+      score += 1.0;
+    } else if (aurData.aurRising) {
+      score += 0.5;
+    }
+    // Positive slope bonus - buying concentration accelerating
+    if (aurData.aurSlope > 0.05) {
+      score += 0.25;
+    }
+    // Moderate Z-score (0.5-1.5) = building but not yet spiked
+    if (aurData.aurZScore > 0.5 && aurData.aurZScore < 2.0) {
+      score += 0.25;
+    }
+  }
 
   return Math.min(5, Math.round(score * 10) / 10);
 }

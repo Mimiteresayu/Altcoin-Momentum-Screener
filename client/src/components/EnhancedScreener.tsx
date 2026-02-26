@@ -1036,6 +1036,11 @@ export function EnhancedScreener() {
                               >
                                 Z:{((signal as any).aurZScore ?? 0).toFixed(1)}
                               </Badge>
+                    {(signal as any).aurRising && (
+                      <Badge className="text-[8px] px-1 bg-purple-500/20 text-purple-400 border-purple-500/30 animate-pulse">
+                        ACCUMULATING
+                      </Badge>
+                    )}
                             </div>
                           ) : (
                             <span className="text-muted-foreground text-xs">

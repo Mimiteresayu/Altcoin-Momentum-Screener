@@ -205,10 +205,17 @@ export async function getSymbolListingDate(symbol: string): Promise<number | nul
 
   // For unknown symbols, try fetching earliest kline from Bitunix
   try {
-    const resp = await axios.get(
-      `https://fapi.bitunix.com/api/v1/futures/market/kline?symbol=${symbol}&interval=1d&limit=1000`,
+    let resp = await axios.get(
+      `https://fapi.bitunix.com/api/v1/futures/market/kline?symbol=${symbol}&interval=1w&limit=1000`,
       { timeout: 8000 }
     );
+      // If weekly klines empty, fallback to daily for newer coins
+      if (!resp.data?.data || !Array.isArray(resp.data.data) || resp.data.data.length === 0) {
+        resp = await axios.get(
+          `https://fapi.bitunix.com/api/v1/futures/market/kline?symbol=${symbol}&interval=1d&limit=1000`,
+          { timeout: 8000 }
+        );
+      }
     if (resp.data?.data && Array.isArray(resp.data.data) && resp.data.data.length > 0) {
       const klines = resp.data.data;
       const oldestKline = klines[klines.length - 1];
