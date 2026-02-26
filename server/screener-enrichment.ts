@@ -71,6 +71,9 @@ interface EnrichedSignalData {
     actionSuggestion: string;
   };
   ageDays: number | undefined; // Days since first listed on exchange
+    efficiencyRatio: number | undefined; // ER: net price change / sum of absolute changes (0-1, higher = trending)
+  volatilitySpread: number | undefined; // VSpread: normalized ATR-SD spread (volatility clustering detector)
+  channelRange: number | undefined; // CRange: normalized position in price channel (-1 to 1, >0.8 = breakout zone)
 }
 
 export function calculatePriceLocation(
@@ -993,6 +996,93 @@ async function getBitunixKlines(
   }
 }
 
+// ============================================
+// HKPTRC Alpha Indicators
+// ============================================
+
+/**
+ * Efficiency Ratio (ER) - Perry Kaufman
+ * Measures trending strength: net price change / sum of absolute per-bar changes
+ * Range: 0 to 1. Higher = stronger trend. Low ER = mean-reverting/choppy.
+ * Pre-spike: ER rising from low values indicates trend forming.
+ */
+export function calculateEfficiencyRatio(
+  klines: { close: string }[],
+  period: number = 20
+): number | undefined {
+  if (klines.length < period + 1) return undefined;
+  const recent = klines.slice(-period - 1);
+  const closes = recent.map(k => parseFloat(k.close));
+  const netChange = Math.abs(closes[closes.length - 1] - closes[0]);
+  let sumAbsChanges = 0;
+  for (let i = 1; i < closes.length; i++) {
+    sumAbsChanges += Math.abs(closes[i] - closes[i - 1]);
+  }
+  if (sumAbsChanges === 0) return 0;
+  return netChange / sumAbsChanges;
+}
+
+/**
+ * Volatility Spread (VSpread) - SD vs ATR spread
+ * Measures volatility clustering. When SD >> ATR, price is making directional moves.
+ * When SD << ATR, price is choppy. Normalized to 0-1 range.
+ * Pre-spike: VSpread rising = volatility expanding directionally.
+ */
+export function calculateVolatilitySpread(
+  klines: { high: string; low: string; close: string }[],
+  period: number = 20
+): number | undefined {
+  if (klines.length < period + 1) return undefined;
+  const recent = klines.slice(-period - 1);
+  const closes = recent.map(k => parseFloat(k.close));
+  // Calculate SD of returns
+  const returns: number[] = [];
+  for (let i = 1; i < closes.length; i++) {
+    returns.push((closes[i] - closes[i - 1]) / closes[i - 1]);
+  }
+  const meanReturn = returns.reduce((a, b) => a + b, 0) / returns.length;
+  const variance = returns.reduce((a, r) => a + Math.pow(r - meanReturn, 2), 0) / returns.length;
+  const sd = Math.sqrt(variance);
+  // Calculate ATR normalized by price
+  let atrSum = 0;
+  for (let i = 1; i < recent.length; i++) {
+    const high = parseFloat(recent[i].high);
+    const low = parseFloat(recent[i].low);
+    const prevClose = parseFloat(recent[i - 1].close);
+    const tr = Math.max(high - low, Math.abs(high - prevClose), Math.abs(low - prevClose));
+    atrSum += tr / prevClose; // Normalize by price
+  }
+  const atrNorm = atrSum / (recent.length - 1);
+  if (atrNorm === 0) return 0;
+  // VSpread = SD / ATR ratio, clamped to 0-1
+  const spread = sd / atrNorm;
+  return Math.min(1, Math.max(0, spread));
+}
+
+/**
+ * Channel Range (CRange) - Normalized position in Donchian channel
+ * Measures where price is relative to its N-period high-low channel.
+ * Range: -1 to 1. Above 0.8 = breakout zone. Below -0.8 = breakdown zone.
+ * Pre-spike: CRange moving toward extremes with rising ER = imminent breakout.
+ */
+export function calculateChannelRange(
+  klines: { high: string; low: string; close: string }[],
+  period: number = 20
+): number | undefined {
+  if (klines.length < period) return undefined;
+  const recent = klines.slice(-period);
+  const highs = recent.map(k => parseFloat(k.high));
+  const lows = recent.map(k => parseFloat(k.low));
+  const channelHigh = Math.max(...highs);
+  const channelLow = Math.min(...lows);
+  const channelRange = channelHigh - channelLow;
+  if (channelRange === 0) return 0;
+  const currentClose = parseFloat(klines[klines.length - 1].close);
+  const midline = (channelHigh + channelLow) / 2;
+  // Normalize to -1 to 1 range
+  return (currentClose - midline) / (channelRange / 2);
+}
+
 export async function enrichSignalWithCoinglass(
   signal: Signal,
   high24h: number,
@@ -1239,6 +1329,11 @@ export async function enrichSignalWithCoinglass(
     console.log(`[ENRICHMENT] ${signal.symbol}: ageDays error -`, (error as Error).message);
   }
 
+  // Calculate HKPTRC Alpha Indicators from 4H klines
+  const efficiencyRatio = klines4H.length >= 21 ? calculateEfficiencyRatio(klines4H, 20) : undefined;
+  const volatilitySpread = klines4H.length >= 21 ? calculateVolatilitySpread(klines4H, 20) : undefined;
+  const channelRange = klines4H.length >= 20 ? calculateChannelRange(klines4H, 20) : undefined;
+
   return {
     priceLocation,
     marketPhase,
@@ -1255,6 +1350,9 @@ export async function enrichSignalWithCoinglass(
     volumeProfilePOC,
     storytelling,
     ageDays,
+        efficiencyRatio,
+    volatilitySpread,
+    channelRange,
   };
 }
 

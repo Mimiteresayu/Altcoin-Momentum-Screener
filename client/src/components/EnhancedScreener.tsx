@@ -102,6 +102,10 @@ interface EnhancedSignal {
     confidence: number;
     positionSize: number;
   };
+    // HKPTRC Alpha Indicators
+  efficiencyRatio?: number;
+  volatilitySpread?: number;
+  channelRange?: number;
 }
 
 interface ScreenerResponse {
@@ -662,22 +666,22 @@ export function EnhancedScreener() {
                         </TooltipContent>
                       </Tooltip>
                     </th>
-                    <th className="px-2 py-2 text-center">
-                      <Tooltip>
-                        <TooltipTrigger className="flex items-center gap-1 cursor-help">
-                          ML <Info className="w-3 h-3" />
-                        </TooltipTrigger>
-                        <TooltipContent>
-                          <p className="text-xs max-w-[200px]">
-                            <strong>ML Listing Alpha Score:</strong>
-                            <br />
-                            Probability % | Expected Return %
-                            <br />
-                            Based on Korean exchange listing patterns
-                          </p>
-                        </TooltipContent>
-                      </Tooltip>
-                    </th>
+                                  <th className="px-2 py-2 text-center">
+                <Tooltip>
+                  <TooltipTrigger className="flex items-center gap-1 cursor-help">
+                    ER <Info className="w-3 h-3" />
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p className="text-xs max-w-[200px]">
+                      <strong>Efficiency Ratio (0-1):</strong>
+                      <br />
+                      Net price change / sum of bar changes.
+                      <br />
+                      High ER = strong trend. Low = choppy.
+                    </p>
+                  </TooltipContent>
+                </Tooltip>
+              </th>
                     <th className="px-2 py-2 text-center">
                       <Tooltip>
                         <TooltipTrigger className="flex items-center gap-1 cursor-help">
@@ -720,38 +724,38 @@ export function EnhancedScreener() {
                         </TooltipContent>
                       </Tooltip>
                     </th>
-                    <th className="px-2 py-2 text-center">
-                      <Tooltip>
-                        <TooltipTrigger className="flex items-center gap-1 cursor-help">
-                          <Waves className="w-3 h-3" /> POC
-                        </TooltipTrigger>
-                        <TooltipContent>
-                          <p className="text-xs max-w-[200px]">
-                            <strong>Volume Profile POC:</strong>
-                            <br />
-                            Point of Control - price level with highest traded
-                            volume (4H)
-                            <br />
-                            Acts as strong support/resistance
-                          </p>
-                        </TooltipContent>
-                      </Tooltip>
-                    </th>
-                    <th className="px-2 py-2 text-center">
-                      <Tooltip>
-                        <TooltipTrigger className="flex items-center gap-1 cursor-help">
-                          <Target className="w-3 h-3" /> Levels
-                        </TooltipTrigger>
-                        <TooltipContent>
-                          <p className="text-xs max-w-[200px]">
-                            <strong>Key Price Levels:</strong>
-                            <br />
-                            FVG/OB zones for entries
-                          </p>
-                        </TooltipContent>
-                      </Tooltip>
-                    </th>
-                    <th className="px-2 py-2 text-center">Conf</th>
+              <th className="px-2 py-2 text-center">
+                <Tooltip>
+                  <TooltipTrigger className="flex items-center gap-1 cursor-help">
+                    VS <Info className="w-3 h-3" />
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p className="text-xs max-w-[200px]">
+                      <strong>Volatility Spread (0-1):</strong>
+                      <br />
+                      SD/ATR ratio. High = directional volatility.
+                      <br />
+                      Rising VS + Rising ER = breakout setup.
+                    </p>
+                  </TooltipContent>
+                </Tooltip>
+              </th>
+              <th className="px-2 py-2 text-center">
+                <Tooltip>
+                  <TooltipTrigger className="flex items-center gap-1 cursor-help">
+                    CR <Info className="w-3 h-3" />
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p className="text-xs max-w-[200px]">
+                      <strong>Channel Range (-1 to 1):</strong>
+                      <br />
+                      Position in Donchian channel.
+                      <br />
+                      Above 0.8 = breakout zone. Below -0.8 = breakdown.
+                    </p>
+                  </TooltipContent>
+                </Tooltip>
+              </th>
                     <th
                       className="px-2 py-2 text-center"
                       data-testid="header-enhanced-age"
@@ -920,9 +924,16 @@ export function EnhancedScreener() {
                         <td className="px-2 py-2 text-center">
                           {getPScoreBadge(signal.preSpikeScore)}
                         </td>
-                        <td className="px-2 py-2 text-center">
-                          {getMLScoreBadge(signal.mlScore)}
-                        </td>
+              <td className="px-2 py-2 text-center">
+                <span className={clsx(
+                  "text-xs font-mono",
+                  (signal.efficiencyRatio ?? 0) >= 0.6 ? "text-emerald-400 font-bold" :
+                  (signal.efficiencyRatio ?? 0) >= 0.4 ? "text-amber-400" :
+                  "text-muted-foreground"
+                )}>
+                  {signal.efficiencyRatio !== undefined ? signal.efficiencyRatio.toFixed(2) : "N/A"}
+                </span>
+              </td>
                         <td className="px-2 py-2 text-center">
                           <span
                             className={clsx(
@@ -957,35 +968,29 @@ export function EnhancedScreener() {
                               : "N/A"}
                           </span>
                         </td>
-                        <td className="px-2 py-2 text-center">
-                          {signal.volumeProfilePOC !== undefined ? (
-                            <span className="text-xs font-mono text-cyan-400">
-                              ${formatPrice(signal.volumeProfilePOC)}
-                            </span>
-                          ) : (
-                            <span className="text-muted-foreground text-xs">
-                              N/A
-                            </span>
-                          )}
-                        </td>
-                        <td className="px-2 py-2 text-center">
-                          {(signal.fvgLevels?.length ?? 0) +
-                            (signal.obLevels?.length ?? 0) >
-                          0 ? (
-                            <Badge variant="outline" className="text-[10px]">
-                              {(signal.fvgLevels?.length ?? 0) +
-                                (signal.obLevels?.length ?? 0)}{" "}
-                              lvl
-                            </Badge>
-                          ) : (
-                            <span className="text-muted-foreground text-xs">
-                              -
-                            </span>
-                          )}
-                        </td>
-                        <td className="px-2 py-2 text-center">
-                          {getConfidenceBadge(signal.storytelling?.confidence)}
-                        </td>
+              {/* VSpread Cell */}
+              <td className="px-2 py-2 text-center">
+                <span className={clsx(
+                  "text-xs font-mono",
+                  (signal.volatilitySpread ?? 0) >= 0.6 ? "text-emerald-400 font-bold" :
+                  (signal.volatilitySpread ?? 0) >= 0.4 ? "text-amber-400" :
+                  "text-muted-foreground"
+                )}>
+                  {signal.volatilitySpread !== undefined ? signal.volatilitySpread.toFixed(2) : "N/A"}
+                </span>
+              </td>
+              {/* CRange Cell */}
+              <td className="px-2 py-2 text-center">
+                <span className={clsx(
+                  "text-xs font-mono",
+                  (signal.channelRange ?? 0) >= 0.8 ? "text-emerald-400 font-bold" :
+                  (signal.channelRange ?? 0) <= -0.8 ? "text-rose-400 font-bold" :
+                  Math.abs(signal.channelRange ?? 0) >= 0.5 ? "text-amber-400" :
+                  "text-muted-foreground"
+                )}>
+                  {signal.channelRange !== undefined ? signal.channelRange.toFixed(2) : "N/A"}
+                </span>
+              </td>
                         <td
                           className="px-2 py-2 text-center"
                           data-testid={`cell-age-${signal.symbol}`}
@@ -1102,7 +1107,7 @@ export function EnhancedScreener() {
                       </tr>
                       {expandedRow === signal.symbol && (
                         <tr className="bg-muted/20">
-                          <td colSpan={14} className="px-4 py-3">
+                          <td colSpan={15} className="px-4 py-3">
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
                               <div className="space-y-2">
                                 <h4 className="font-semibold text-primary flex items-center gap-1">

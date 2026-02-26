@@ -287,6 +287,11 @@ export const signalSchema = z.object({
   
   // Listing Age
   ageDays: z.number().optional(), // Days since first listed on exchange
+
+    // HKPTRC Alpha Indicators
+  efficiencyRatio: z.number().optional(), // ER: 0-1, higher = stronger trend
+  volatilitySpread: z.number().optional(), // VSpread: 0-1, SD/ATR spread
+  channelRange: z.number().optional(), // CRange: -1 to 1, channel position
 });
 
 export type Signal = z.infer<typeof signalSchema>;
