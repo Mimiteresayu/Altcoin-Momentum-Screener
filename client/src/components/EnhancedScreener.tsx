@@ -232,7 +232,10 @@ export function EnhancedScreener() {
     }
   };
 
-  const getEntryBadge = (entry: string | undefined, phase: string | undefined) => {
+  const getEntryBadge = (
+    entry: string | undefined,
+    phase: string | undefined,
+  ) => {
     const model = entry || getDefaultEntry(phase);
     switch (model) {
       case "BUY DIP":
@@ -359,13 +362,13 @@ export function EnhancedScreener() {
     }
   };
 
-  const getMLScoreBadge = (mlScore: EnhancedSignal['mlScore']) => {
+  const getMLScoreBadge = (mlScore: EnhancedSignal["mlScore"]) => {
     if (!mlScore) {
       return <span className="text-xs text-muted-foreground">-</span>;
     }
     const prob = mlScore.listingProbability;
     const ret = mlScore.expectedReturn;
-    
+
     if (prob >= 70 && ret >= 30) {
       return (
         <Tooltip>
@@ -376,8 +379,8 @@ export function EnhancedScreener() {
           </TooltipTrigger>
           <TooltipContent>
             <p className="text-xs">
-              Prob: {prob}% | Exp. Return: +{ret}%<br/>
-              Confidence: {mlScore.confidence}%<br/>
+              Prob: {prob}% | Exp. Return: +{ret}%<br />
+              Confidence: {mlScore.confidence}%<br />
               Kelly Size: {mlScore.positionSize}%
             </p>
           </TooltipContent>
@@ -394,7 +397,7 @@ export function EnhancedScreener() {
           </TooltipTrigger>
           <TooltipContent>
             <p className="text-xs">
-              Prob: {prob}% | Exp. Return: +{ret}%<br/>
+              Prob: {prob}% | Exp. Return: +{ret}%<br />
               Confidence: {mlScore.confidence}%
             </p>
           </TooltipContent>
@@ -405,7 +408,8 @@ export function EnhancedScreener() {
       <Tooltip>
         <TooltipTrigger>
           <Badge className="bg-slate-500/20 text-slate-400">
-            {prob}%|{ret > 0 ? '+' : ''}{ret}%
+            {prob}%|{ret > 0 ? "+" : ""}
+            {ret}%
           </Badge>
         </TooltipTrigger>
         <TooltipContent>
@@ -551,8 +555,11 @@ export function EnhancedScreener() {
                         </TooltipTrigger>
                         <TooltipContent className="max-w-[280px]">
                           <p className="text-xs">
-                            <strong>HTF Bias Logic (4H Supertrend + Funding):</strong>
-                            <br /><br />
+                            <strong>
+                              HTF Bias Logic (4H Supertrend + Funding):
+                            </strong>
+                            <br />
+                            <br />
                             <strong>1. Supertrend (Primary):</strong>
                             <br />
                             ATR Period: 14, Multiplier: 3.5
@@ -560,13 +567,15 @@ export function EnhancedScreener() {
                             Price above Supertrend = LONG
                             <br />
                             Price below Supertrend = SHORT
-                            <br /><br />
+                            <br />
+                            <br />
                             <strong>2. Funding Rate (Confirmation):</strong>
                             <br />
                             Negative FR = Longs pay shorts (bullish)
                             <br />
                             Positive FR = Shorts pay longs (bearish)
-                            <br /><br />
+                            <br />
+                            <br />
                             <strong>Confidence:</strong>
                             <br />
                             HIGH = Supertrend + FR align
@@ -693,13 +702,15 @@ export function EnhancedScreener() {
                         <TooltipContent>
                           <p className="text-xs max-w-[220px]">
                             <strong>Long/Short Ratio (1H):</strong>
-                            <br /><br />
+                            <br />
+                            <br />
                             <strong>Display Format:</strong>
                             <br />
                             L:1.25 = 1.25 longs per short
                             <br />
                             S:1.50 = 1.50 shorts per long
-                            <br /><br />
+                            <br />
+                            <br />
                             <strong>Interpretation:</strong>
                             <br />
                             High L = Crowded longs (contrarian bearish)
@@ -718,7 +729,8 @@ export function EnhancedScreener() {
                           <p className="text-xs max-w-[200px]">
                             <strong>Volume Profile POC:</strong>
                             <br />
-                            Point of Control - price level with highest traded volume (4H)
+                            Point of Control - price level with highest traded
+                            volume (4H)
                             <br />
                             Acts as strong support/resistance
                           </p>
@@ -740,9 +752,15 @@ export function EnhancedScreener() {
                       </Tooltip>
                     </th>
                     <th className="px-2 py-2 text-center">Conf</th>
-                    <th className="px-2 py-2 text-center" data-testid="header-enhanced-age">
+                    <th
+                      className="px-2 py-2 text-center"
+                      data-testid="header-enhanced-age"
+                    >
                       <Tooltip>
-                        <TooltipTrigger className="flex items-center gap-1 cursor-help" data-testid="trigger-enhanced-age-tooltip">
+                        <TooltipTrigger
+                          className="flex items-center gap-1 cursor-help"
+                          data-testid="trigger-enhanced-age-tooltip"
+                        >
                           AGE <Info className="w-3 h-3" />
                         </TooltipTrigger>
                         <TooltipContent>
@@ -762,7 +780,13 @@ export function EnhancedScreener() {
                           AUR <Info className="w-3 h-3" />
                         </TooltipTrigger>
                         <TooltipContent>
-                          <p className="text-xs max-w-[200px]"><strong>Absolute Up Ratio</strong><br/>Volume-weighted buying concentration from 1-min data. Z>=2 = statistically extreme buying.</p>
+                          <p className="text-xs max-w-[200px]">
+                            <strong>Absolute Up Ratio</strong>
+                            <br />
+                            Volume-weighted buying concentration from 1-min
+                            data. Z-score of 2 or above = = statistically
+                            extreme buying.
+                          </p>
                         </TooltipContent>
                       </Tooltip>
                     </th>
@@ -799,12 +823,14 @@ export function EnhancedScreener() {
                               <Badge
                                 className={clsx(
                                   "font-bold text-[10px] px-2",
-                                  (signal.htfBias?.side ?? signal.side) === "LONG"
+                                  (signal.htfBias?.side ?? signal.side) ===
+                                    "LONG"
                                     ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/30"
                                     : "bg-rose-500/20 text-rose-400 border-rose-500/30",
                                 )}
                               >
-                                {(signal.htfBias?.side ?? signal.side) === "LONG" ? (
+                                {(signal.htfBias?.side ?? signal.side) ===
+                                "LONG" ? (
                                   <TrendingUp className="w-3 h-3 mr-0.5" />
                                 ) : (
                                   <TrendingDown className="w-3 h-3 mr-0.5" />
@@ -816,11 +842,16 @@ export function EnhancedScreener() {
                               <p className="text-xs">
                                 {signal.htfBias ? (
                                   <>
-                                    <strong>Supertrend:</strong> {signal.htfBias.supertrendBias}
+                                    <strong>Supertrend:</strong>{" "}
+                                    {signal.htfBias.supertrendBias}
                                     <br />
-                                    <strong>Confidence:</strong> {signal.htfBias.confidence}
+                                    <strong>Confidence:</strong>{" "}
+                                    {signal.htfBias.confidence}
                                     <br />
-                                    <strong>Funding Confirms:</strong> {signal.htfBias.fundingConfirms ? "Yes" : "No"}
+                                    <strong>Funding Confirms:</strong>{" "}
+                                    {signal.htfBias.fundingConfirms
+                                      ? "Yes"
+                                      : "No"}
                                   </>
                                 ) : (
                                   "Bias from scoring system (HTF data unavailable)"
@@ -955,7 +986,10 @@ export function EnhancedScreener() {
                         <td className="px-2 py-2 text-center">
                           {getConfidenceBadge(signal.storytelling?.confidence)}
                         </td>
-                        <td className="px-2 py-2 text-center" data-testid={`cell-age-${signal.symbol}`}>
+                        <td
+                          className="px-2 py-2 text-center"
+                          data-testid={`cell-age-${signal.symbol}`}
+                        >
                           {signal.ageDays !== undefined ? (
                             <Badge
                               data-testid={`badge-age-${signal.symbol}`}
@@ -964,31 +998,51 @@ export function EnhancedScreener() {
                                 signal.ageDays < 30
                                   ? "bg-amber-500/20 text-amber-400 border-amber-500/30"
                                   : signal.ageDays < 365
-                                  ? "bg-slate-500/20 text-slate-400 border-slate-500/30"
-                                  : "bg-emerald-500/20 text-emerald-400 border-emerald-500/30"
+                                    ? "bg-slate-500/20 text-slate-400 border-slate-500/30"
+                                    : "bg-emerald-500/20 text-emerald-400 border-emerald-500/30",
                               )}
                             >
                               {formatAge(signal.ageDays)}
                             </Badge>
                           ) : (
-                            <span className="text-muted-foreground text-xs">-</span>
+                            <span className="text-muted-foreground text-xs">
+                              -
+                            </span>
                           )}
                         </td>
-                    {/* AUR Column */}
-                    <td className="px-2 py-2 text-center">
-                      {(signal as any).aur != null ? (
-                        <div className="flex flex-col items-center gap-0.5">
-                          <span className={clsx("text-[10px] font-mono", (signal as any).isBuyConcentrated ? "text-emerald-400 font-bold" : "text-muted-foreground")}>
-                            {(signal as any).aur.toFixed(2)}
-                          </span>
-                          <Badge className={clsx("text-[9px] px-1", ((signal as any).aurZScore ?? 0) >= 2 ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/30" : ((signal as any).aurZScore ?? 0) >= 1 ? "bg-amber-500/20 text-amber-400 border-amber-500/30" : "bg-slate-500/20 text-slate-400 border-slate-500/30")}>
-                            Z:{((signal as any).aurZScore ?? 0).toFixed(1)}
-                          </Badge>
-                        </div>
-                      ) : (
-                        <span className="text-muted-foreground text-xs">-</span>
-                      )}
-                    </td>
+                        {/* AUR Column */}
+                        <td className="px-2 py-2 text-center">
+                          {(signal as any).aur != null ? (
+                            <div className="flex flex-col items-center gap-0.5">
+                              <span
+                                className={clsx(
+                                  "text-[10px] font-mono",
+                                  (signal as any).isBuyConcentrated
+                                    ? "text-emerald-400 font-bold"
+                                    : "text-muted-foreground",
+                                )}
+                              >
+                                {(signal as any).aur.toFixed(2)}
+                              </span>
+                              <Badge
+                                className={clsx(
+                                  "text-[9px] px-1",
+                                  ((signal as any).aurZScore ?? 0) >= 2
+                                    ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/30"
+                                    : ((signal as any).aurZScore ?? 0) >= 1
+                                      ? "bg-amber-500/20 text-amber-400 border-amber-500/30"
+                                      : "bg-slate-500/20 text-slate-400 border-slate-500/30",
+                                )}
+                              >
+                                Z:{((signal as any).aurZScore ?? 0).toFixed(1)}
+                              </Badge>
+                            </div>
+                          ) : (
+                            <span className="text-muted-foreground text-xs">
+                              -
+                            </span>
+                          )}
+                        </td>
                         <td className="px-2 py-2 text-center">
                           {expandedRow === signal.symbol ? (
                             <ChevronUp className="w-4 h-4 text-muted-foreground" />
