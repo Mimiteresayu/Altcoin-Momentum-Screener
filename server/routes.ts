@@ -574,6 +574,48 @@ function calculateVolumeAcceleration(volumes: number[]): number {
   return avg4HVolume > 0 ? current1HVolume / avg4HVolume : 1;
 }
 
+
+// ==============================================
+// ABSOLUTE UP RATIO (AUR) - Fine-timeframe alpha
+// ==============================================
+interface AURResult {
+  aur: number;
+  aurZScore: number;
+  isBuyConcentrated: boolean;
+}
+
+async function calculateAUR(symbol: string): Promise<AURResult | null> {
+  try {
+    const url = `https://fapi.bitunix.com/api/v1/futures/market/kline?symbol=${symbol}&interval=1m&limit=1200`;
+    const response = await axios.get(url, { timeout: 10000 });
+    if (!response.data?.data || !Array.isArray(response.data.data) || response.data.data.length < 120) return null;
+    const rawKlines = response.data.data.map((k: any) => ({
+      time: parseInt(k.time), open: parseFloat(k.open),
+      close: parseFloat(k.close), volume: parseFloat(k.quoteVol || k.vol || 0),
+    })).reverse();
+    const hourlyAURs: number[] = [];
+    for (let i = 0; i + 60 <= rawKlines.length; i += 60) {
+      const bucket = rawKlines.slice(i, i + 60);
+      let upW = 0, totalW = 0;
+      for (const k of bucket) {
+        const ch = k.close - k.open;
+        const w = Math.abs(ch) * (k.volume || 1);
+        totalW += w;
+        if (ch > 0) upW += w;
+      }
+      hourlyAURs.push(totalW > 0 ? upW / totalW : 0.5);
+    }
+    if (hourlyAURs.length < 3) return null;
+    const cur = hourlyAURs[hourlyAURs.length - 1];
+    const lb = hourlyAURs.slice(0, -1);
+    const mean = lb.reduce((s,v) => s+v, 0) / lb.length;
+    const vari = lb.reduce((s,v) => s + (v-mean)**2, 0) / lb.length;
+    const sd = Math.sqrt(vari);
+    const z = sd > 0.001 ? (cur - mean) / sd : 0;
+    return { aur: Math.round(cur*1000)/1000, aurZScore: Math.round(z*100)/100, isBuyConcentrated: z >= 2 };
+  } catch { return null; }
+}
+
 function findSwingLows(klines: Kline[], count: number = 3): number[] {
   if (klines.length < 10) return [klines[klines.length - 1]?.low || 0];
 
@@ -1066,6 +1108,11 @@ export async function registerRoutes(
 
           // Volume Acceleration: catches spike as it starts (current1H / avg4H)
           const volAccel = calculateVolumeAcceleration(volumes1H);
+            // Calculate AUR (Absolute Up Ratio) - fine-timeframe alpha
+            let aurData: AURResult | null = null;
+            try {
+              aurData = await calculateAUR(item.symbol);
+            } catch { /* skip AUR on error */ }
           const isAccelerating = volAccel >= 2.0; // Flag if volume is 2x+ the 4H average
 
           const swingLows = findSwingLows(klines1H, 3);
@@ -1335,6 +1382,9 @@ export async function registerRoutes(
             priceChange24h,
             volumeSpikeRatio,
             volAccel, // Volume acceleration: current1H / avg4H
+            aur: aurData?.aur ?? null, // Absolute Up Ratio (0-1)
+            aurZScore: aurData?.aurZScore ?? null, // AUR Z-Score
+            isBuyConcentrated: aurData?.isBuyConcentrated ?? false, // True when Z >= 2
             isAccelerating, // True if volAccel >= 2.0x
             oiChange24h, // Open Interest 24H change %
             hasVolAlert, // True if volume > 2.0x
@@ -2977,8 +3027,16 @@ export async function registerRoutes(
             actionSuggestion: "Wait for Coinglass data",
           },
           ageDays: undefined as number | undefined,
+        aur: null as number | null,
+        aurZScore: null as number | null,
+        isBuyConcentrated: false,
         };
         
+        // Carry AUR data from classic signal
+        if (classicSignal.aur !== undefined) signal.aur = classicSignal.aur;
+        if (classicSignal.aurZScore !== undefined) signal.aurZScore = classicSignal.aurZScore;
+        if (classicSignal.isBuyConcentrated !== undefined) signal.isBuyConcentrated = classicSignal.isBuyConcentrated;
+
         // Fetch listing age (ageDays)
         try {
           const listingTimestamp = await getSymbolListingDate(symbol);

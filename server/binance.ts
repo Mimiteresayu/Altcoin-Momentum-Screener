@@ -1,3 +1,4 @@
+import axios from "axios";
 import * as crypto from "crypto";
 
 const FUTURES_BASE_URL = "https://fapi.binance.com";
@@ -202,14 +203,31 @@ export async function getSymbolListingDate(symbol: string): Promise<number | nul
     return knownDate;
   }
 
-  // For unknown symbols, estimate based on typical listing patterns
-  // New meme coins and altcoins are typically 30-365 days old
-  // Default to 180 days (6 months) as a reasonable estimate
-  const defaultAge = 180;
-  const estimatedDate = Date.now() - (defaultAge * 24 * 60 * 60 * 1000);
-  listingDateCache.set(symbol, estimatedDate);
-  console.log(`[LISTING] ${symbol}: ~${defaultAge} days old (estimated)`);
-  return estimatedDate;
+  // For unknown symbols, try fetching earliest kline from Bitunix
+  try {
+    const resp = await axios.get(
+      `https://fapi.bitunix.com/api/v1/futures/market/kline?symbol=${symbol}&interval=1d&limit=1000`,
+      { timeout: 8000 }
+    );
+    if (resp.data?.data && Array.isArray(resp.data.data) && resp.data.data.length > 0) {
+      const klines = resp.data.data;
+      const oldestKline = klines[klines.length - 1];
+      const ts = parseInt(oldestKline.time);
+      const oldestTs = ts > 1e12 ? ts : ts * 1000;
+      if (oldestTs > 0 && oldestTs < Date.now()) {
+        listingDateCache.set(symbol, oldestTs);
+        const ageDays = Math.floor((Date.now() - oldestTs) / (1000 * 60 * 60 * 24));
+        console.log(`[LISTING] ${symbol}: ${ageDays} days old (from Bitunix kline)`);
+        return oldestTs;
+      }
+    }
+  } catch {
+    console.log(`[LISTING] ${symbol}: Bitunix kline fetch failed`);
+  }
+  // Return null for unknown age instead of fake 180-day default
+  listingDateCache.set(symbol, null);
+  console.log(`[LISTING] ${symbol}: age unknown`);
+  return null;
 }
 
 /**
