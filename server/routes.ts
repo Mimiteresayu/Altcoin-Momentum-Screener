@@ -3122,7 +3122,7 @@ export async function registerRoutes(
         // Enrich with Coinglass data for first N signals
         if (enrichCoinglass && process.env.COINGLASS_API_KEY && i < enrichLimit) {
           try {
-            const enrichedData = await enrichSignalWithCoinglass(signal, high24h, low24h);
+            const enrichedData = await enrichSignalWithCoinglass(signal, high24h, low24h, signal.aur !== undefined ? { aur: signal.aur, aurZScore: signal.aurZScore ?? 0, aurRising: false, aurSlope: 0 } : undefined);
             Object.assign(signal, enrichedData);
           } catch (err) {
             console.log(`[ENHANCED-SCREENER] Failed to enrich ${symbol}`);
@@ -3138,7 +3138,8 @@ export async function registerRoutes(
           signal.riskReward,
           signal.signalStrength,
           signal.fundingRate,
-          signal.longShortRatio
+          signal.longShortRatio,
+        signal.aur !== undefined ? { aur: signal.aur, aurZScore: signal.aurZScore ?? 0, aurRising: false, aurSlope: 0 } : undefined
         );
         
         // Calculate ML listing alpha prediction
