@@ -78,6 +78,8 @@ interface EnrichedSignalData {
   erZScore: number | undefined; // Z-score of Efficiency Ratio
   vsZScore: number | undefined; // Z-score of Volatility Spread
   peZScore: number | undefined; // Z-score of Permutation Entropy
+    aurVelocity: number | undefined; // AUR slope/velocity
+  aurRising: boolean | undefined; // Whether AUR is rising
   preSpikeCombo: {
     comboScore: number;
     aurCondition: boolean;
@@ -1568,6 +1570,8 @@ export async function enrichSignalWithCoinglass(
       erZScore,
       vsZScore,
       peZScore,
+          ageDays,
+    channelRange,
       preSpikeCombo: combo,
           aurVelocity: aurData?.aurSlope,
     aurRising: aurData?.aurRising,
