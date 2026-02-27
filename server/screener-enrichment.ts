@@ -232,9 +232,9 @@ export function calculateMarketPhase(
     return "EXHAUST";
   }
   
-  // Price stalling with extreme RSI
+  // Price stalling with extreme overbought RSI only (oversold goes to ACCUMULATION)
   if (hasValidRsi && Math.abs(priceChange) < 2) {
-    if (rsi > 75 || rsi < 35) {
+    if (rsi > 75) {
       return "EXHAUST";
     }
   }
@@ -277,9 +277,16 @@ export function calculateMarketPhase(
     return "ACCUMULATION";
   }
   
-  // Low RSI with building OI = accumulation
-  if (hasValidRsi && rsi < 40 && oiDelta > 0) {
+  // Low RSI = accumulation (even without OI data)
+  if (hasValidRsi && rsi < 40 && oiDelta >= 0) {
     return "ACCUMULATION";
+  }
+
+  // Flat price with low volume at discount/neutral = quiet accumulation (no OI required)
+  if (Math.abs(priceChange) < 3 && volumeSpike < 1.5 && hasValidRsi && rsi >= 35 && rsi <= 55) {
+    if (priceLocation === "DISCOUNT" || priceLocation === "NEUTRAL") {
+      return "ACCUMULATION";
+    }
   }
 
   // ===== 5. TREND: Moderate price movement with steady OI growth =====
@@ -638,10 +645,11 @@ export function calculateHtfBias(
   let confidence: "high" | "medium" | "low" = "medium";
 
   if (fundingRate !== undefined) {
-    if (supertrendBias === "LONG" && fundingRate >= 0) {
+    // Contrarian confirmation: negative funding + LONG = shorts paying = bullish
+    if (supertrendBias === "LONG" && fundingRate < -0.0001) {
       fundingConfirms = true;
       confidence = "high";
-    } else if (supertrendBias === "SHORT" && fundingRate <= 0) {
+    } else if (supertrendBias === "SHORT" && fundingRate > 0.0001) {
       fundingConfirms = true;
       confidence = "high";
     } else if (Math.abs(fundingRate) < 0.0001) {
@@ -1223,6 +1231,7 @@ export async function enrichSignalWithCoinglass(
   signal: Signal,
   high24h: number,
   low24h: number,
+  aurData?: { aur: number; aurZScore: number; aurRising: boolean; aurSlope: number },
 ): Promise<EnrichedSignalData> {
   const symbol = signal.symbol.replace("USDT", "");
 
@@ -1443,6 +1452,14 @@ export async function enrichSignalWithCoinglass(
   else if (signal.signalStrength && signal.signalStrength >= 3)
     preSpikeScore += 0.5;
 
+    // AUR Pre-Spike Detection (0-1.5 points) - key alpha
+  if (aurData) {
+    if (aurData.aurRising && aurData.aur > 0.5) preSpikeScore += 1.0;
+    else if (aurData.aurRising) preSpikeScore += 0.5;
+    if (aurData.aurSlope > 0.05) preSpikeScore += 0.25;
+    if (aurData.aurZScore > 0.5 && aurData.aurZScore < 2.0) preSpikeScore += 0.25;
+  }
+
   preSpikeScore = Math.min(5, Math.round(preSpikeScore * 10) / 10);
 
   // Calculate liquidation zones
@@ -1524,7 +1541,7 @@ export async function enrichSignalWithCoinglass(
   const peZScore = hist && permutationEntropy !== undefined ? calcZScore(hist.pe, permutationEntropy) : undefined;
 
   // Evaluate Pre-Spike Combo (HKPTRC Alpha)
-      const aurZScoreForCombo = (signal as any).aur !== undefined ? (signal as any).aurZScore : undefined;
+      const aurZScoreForCombo = aurData?.aurZScore ?? 0;
   const combo = evaluatePreSpikeCombo(aurZScoreForCombo, efficiencyRatio, volatilitySpread, permutationEntropy, symbol);
   if (combo.comboScore >= 3) {
     console.log(`[COMBO] ${signal.symbol}: ${combo.comboScore}/4 conditions met! AUR=${combo.aurCondition} ER=${combo.erCondition} VS=${combo.vsCondition} PE=${combo.peCondition}`);
@@ -1545,15 +1562,15 @@ export async function enrichSignalWithCoinglass(
     liquidationZones,
     volumeProfilePOC,
     storytelling,
-    ageDays,
         efficiencyRatio,
     volatilitySpread,
-    channelRange,
       permutationEntropy,
       erZScore,
       vsZScore,
       peZScore,
       preSpikeCombo: combo,
+          aurVelocity: aurData?.aurSlope,
+    aurRising: aurData?.aurRising,
   };
 }
 
