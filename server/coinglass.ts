@@ -57,60 +57,28 @@ function consumeToken(): Promise<void> {
   });
 }
   
-const BASE_URL = "https://open-api-v4.coinglass.com/api";
+const BINANCE_FAPI = "https://fapi.binance.com";
+const BITUNIX_FAPI = "https://fapi.bitunix.com";
 
-function getApiKey(): string {
-  const key = process.env.COINGLASS_API_KEY;
-      
-  if (!key) {
-      
-    throw new Error("COINGLASS_API_KEY environment variable is not set");
-  }
-  return key;
-}
-
-async function apiRequest<T>(
-  endpoint: string,
-  params: Record<string, string | number> = {},
-): Promise<T> {
+async function binanceRequest<T>(path: string): Promise<T> {
   await consumeToken();
-
-  const url = new URL(`${BASE_URL}${endpoint}`);
-  Object.entries(params).forEach(([key, value]) => {
-    url.searchParams.append(key, String(value));
-  });
-
-  console.log(`[COINGLASS API] Calling: ${endpoint}`, params);
-
-  const response = await fetch(url.toString(), {
-    method: "GET",
-    headers: {
-      "CG-API-KEY": getApiKey(),
-      accept: "application/json",
-    },
-  });
-
-  if (!response.ok) {
-    console.error(
-      `[COINGLASS API] HTTP Error: ${response.status} ${response.statusText}`,
-    );
-    throw new Error(
-      `Coinglass API error: ${response.status} ${response.statusText}`,
-    );
-  }
-
-  const data = await response.json();
-  console.log(
-    `[COINGLASS API] Response code: ${data.code}, msg: ${data.msg || "none"}`,
-  );
-
-  if (data.code !== "0" && data.code !== 0) {
-    console.error(`[COINGLASS API] API Error: ${data.msg || "Unknown error"}`);
-    throw new Error(`Coinglass API error: ${data.msg || "Unknown error"}`);
-  }
-
-  return data.data;
+  const url = `${BINANCE_FAPI}${path}`;
+  console.log(`[BINANCE] Calling: ${url}`);
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`Binance error: ${response.status}`);
+  return response.json();
 }
+
+async function bitunixRequest<T>(path: string): Promise<T> {
+  await consumeToken();
+  const url = `${BITUNIX_FAPI}${path}`;
+  console.log(`[BITUNIX] Calling: ${url}`);
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`Bitunix error: ${response.status}`);
+  const data = await response.json();
+  return data.data || data;
+}
+
 
 export interface OpenInterestData {
   time: number;
@@ -123,11 +91,9 @@ export async function getOpenInterestHistory(
   interval: string = "1h",
   limit: number = 100,
 ): Promise<OpenInterestData[]> {
-  return apiRequest<OpenInterestData[]>("/futures/openInterest/ohlc-history", {
-    symbol,
-    interval,
-    limit,
-  });
+  const pair = `${symbol.toUpperCase()}USDT`;
+  const data = await binanceRequest<any[]>(`/futures/data/openInterestHist?symbol=${pair}&period=${interval}&limit=${limit}`);
+  return data.map((d: any) => ({ time: d.timestamp, openInterest: parseFloat(d.sumOpenInterest), openInterestUsd: parseFloat(d.sumOpenInterestValue) }));
 }
 
 export interface LiquidationData {
@@ -141,11 +107,8 @@ export async function getLiquidationHistory(
   interval: string = "1h",
   limit: number = 100,
 ): Promise<LiquidationData[]> {
-  return apiRequest<LiquidationData[]>("/futures/liquidation/history", {
-    symbol,
-    interval,
-    limit,
-  });
+  // No free liquidation history API - return empty
+  return [];
 }
 
 export interface LiquidationMapData {
@@ -157,14 +120,8 @@ export interface LiquidationMapData {
 export async function getLiquidationMap(
   symbol: string = "BTC",
 ): Promise<LiquidationMapData[]> {
-  try {
-    const data = await apiRequest<any>("/futures/liquidation/aggregated-map", {
-      symbol,
-    });
-    return Array.isArray(data) ? data : [];
-  } catch {
-    return [];
-  }
+  // No free liquidation map API - return empty
+  return [];
 }
 
 export interface OrderbookWall {
@@ -182,9 +139,9 @@ export async function getOrderbookWalls(
   symbol: string = "BTC",
 ): Promise<OrderbookWall[]> {
   try {
-    const data = await apiRequest<any>("/futures/orderbook/large-limit-order", {
-      symbol,
-    });
+      const pair = `${symbol.toUpperCase()}USDT`;
+      const raw = await binanceRequest<any>(`/fapi/v1/depth?symbol=${pair}&limit=50`);
+      const data = [...(raw.bids||[]).map((b: any) => ({price: parseFloat(b[0]), amount: parseFloat(b[1]), side: "buy"})), ...(raw.asks||[]).map((a: any) => ({price: parseFloat(a[0]), amount: parseFloat(a[1]), side: "sell"}))];
 
     const walls: OrderbookWall[] = [];
     if (!data || !Array.isArray(data)) return walls;
@@ -219,23 +176,16 @@ export async function getLongShortRatio(
   exchange: string = "Binance",
 ): Promise<LongShortRatioData[]> {
   try {
-    const data = await apiRequest<any[]>(
-      "/futures/global-long-short-account-ratio/history",
-      {
-        symbol,
-        interval,
-        limit,
-        exchange,
-      },
-    );
-    // Transform v4 response format
-    return data.map((item) => ({
-      time: item.time,
-      longRate: item.global_account_long_percent || item.longRate || 50,
-      shortRate: item.global_account_short_percent || item.shortRate || 50,
-      longShortRatio:
-        item.global_account_long_short_ratio || item.longShortRatio || 1,
-    }));
+      const pair = `${symbol.toUpperCase()}USDT`;
+      const periodMap: Record<string,string> = {"1h":"1h","h1":"1h","4h":"4h","h4":"4h","1d":"1d"};
+      const p = periodMap[interval] || "1h";
+      const data = await binanceRequest<any[]>(`/futures/data/globalLongShortAccountRatio?symbol=${pair}&period=${p}&limit=${limit}`);
+      return data.map((item: any) => ({
+        time: item.timestamp,
+        longRate: parseFloat(item.longAccount) * 100,
+        shortRate: parseFloat(item.shortAccount) * 100,
+        longShortRatio: parseFloat(item.longShortRatio),
+      }));
   } catch {
     return [];
   }
@@ -255,22 +205,16 @@ export async function getTakerBuySell(
   exchange: string = "Binance",
 ): Promise<TakerBuySellData[]> {
   try {
-    const data = await apiRequest<any[]>(
-      "/futures/taker-buy-sell-volume/history",
-      {
-        symbol,
-        interval,
-        limit,
-        exchange,
-      },
-    );
-    // Transform v4 response format
-    return data.map((item) => ({
-      time: item.time || item.t,
-      buyVolume: item.buy_volume || item.buyVolume || 0,
-      sellVolume: item.sell_volume || item.sellVolume || 0,
-      buySellRatio: item.buy_sell_ratio || item.buySellRatio || 1,
-    }));
+      const pair = `${symbol.toUpperCase()}USDT`;
+      const periodMap: Record<string,string> = {"1h":"1h","h1":"1h","4h":"4h","h4":"4h","1d":"1d"};
+      const p = periodMap[interval] || "1h";
+      const data = await binanceRequest<any[]>(`/futures/data/takerlongshortRatio?symbol=${pair}&period=${p}&limit=${limit}`);
+      return data.map((item: any) => ({
+        time: item.timestamp,
+        buyVolume: parseFloat(item.buyVol),
+        sellVolume: parseFloat(item.sellVol),
+        buySellRatio: parseFloat(item.buySellRatio),
+      }));
   } catch {
     return [];
   }
@@ -286,33 +230,13 @@ export async function getFundingRate(
   symbol: string = "BTC",
 ): Promise<FundingRateData[]> {
   try {
-    const data = await apiRequest<any>("/futures/funding-rate/exchange-list", {
-      symbol,
-    });
-    // Transform the v4 response format
-    if (!data || !Array.isArray(data)) return [];
-    const result: FundingRateData[] = [];
-    data.forEach((item: any) => {
-      if (item.stablecoin_margin_list) {
-        item.stablecoin_margin_list.forEach((fr: any) => {
-          if (
-            fr.funding_rate !== undefined &&
-            fr.funding_rate !== null &&
-            !isNaN(fr.funding_rate)
-          ) {
-            result.push({
-              time: fr.next_funding_time || Date.now(),
-              fundingRate: Number(fr.funding_rate),
-              exchange: fr.exchange || "Unknown",
-            });
-          }
-        });
-      }
-    });
-    console.log(
-      `[COINGLASS] Funding rate: ${result.length} valid entries, sample: ${result[0]?.fundingRate}`,
-    );
-    return result;
+      const pair = `${symbol.toUpperCase()}USDT`;
+      const data = await binanceRequest<any[]>(`/fapi/v1/fundingRate?symbol=${pair}&limit=100`);
+      return data.map((item: any) => ({
+        time: item.fundingTime,
+        fundingRate: parseFloat(item.fundingRate),
+        exchange: "Binance",
+      }));
   } catch {
     return [];
   }
@@ -331,17 +255,17 @@ export async function getFuturesBasis(
   exchange: string = "Binance",
 ): Promise<FuturesBasisData[]> {
   try {
-    const data = await apiRequest<any[]>("/futures/basis/history", {
-      symbol,
-      interval,
-      limit,
-      exchange,
-    });
-    return data.map((item) => ({
-      time: item.time || item.t,
-      basis: item.basis || 0,
-      basisRate: item.basis_rate || item.basisRate || 0,
-    }));
+      // No free futures basis API - calculate from spot vs futures
+      const pair = `${symbol.toUpperCase()}USDT`;
+      const [spot, futures] = await Promise.all([
+        fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${pair}`).then(r => r.json()),
+        fetch(`${BINANCE_FAPI}/fapi/v1/ticker/price?symbol=${pair}`).then(r => r.json()),
+      ]);
+      const spotPrice = parseFloat(spot.price);
+      const futuresPrice = parseFloat(futures.price);
+      const basis = futuresPrice - spotPrice;
+      const basisRate = (basis / spotPrice) * 100;
+      return [{ time: Date.now(), basis, basisRate }];
   } catch {
     return [];
   }
@@ -355,12 +279,9 @@ export interface FearGreedData {
 
 export async function getFearGreedIndex(): Promise<FearGreedData> {
   try {
-    const data = await apiRequest<FearGreedData[]>(
-      "/index/fear-greed-history",
-      {
-        limit: 1,
-      },
-    );
+      const res = await fetch("https://api.alternative.me/fng/?limit=1");
+      const json = await res.json();
+      const data = json.data?.map((d: any) => ({ time: parseInt(d.timestamp) * 1000, value: parseInt(d.value), classification: d.value_classification })) || [];
     if (Array.isArray(data) && data.length > 0) {
       const item = data[0];
       return {

@@ -165,97 +165,8 @@ async function fetchCoinalyzeOpenInterest(
   symbols: string[],
   apiKey: string,
 ): Promise<Map<string, number>> {
-  const newCache = new Map<string, number>();
-
-  // Coinalyze symbol format: oiDataCache.get_PERP.A (Binance perpetual)
-  // Max 20 symbols per request, rate limit 40 req/min
-  const batchSize = 20;
-  const symbolBatches: string[][] = [];
-
-  for (let i = 0; i < symbols.length; i += batchSize) {
-    symbolBatches.push(symbols.slice(i, i + batchSize));
-  }
-
-  console.log(
-    `[OI] Trying Coinalyze: ${symbols.length} symbols in ${symbolBatches.length} batch(es)...`,
-  );
-
-  for (let i = 0; i < symbolBatches.length; i++) {
-    const batch = symbolBatches[i];
-
-    for (let retry = 0; retry < 2; retry++) {
-      try {
-        // Format: BTCUSDT -> BTCUSDT_PERP.A (Binance perpetual)
-        const formattedSymbols = batch.map((s) => `${s}_PERP.A`).join(",");
-
-        const response = await axios.get(
-          "https://api.coinalyze.net/v1/open-interest-history",
-          {
-            headers: {
-              Accept: "application/json",
-              "api-key": apiKey,
-            },
-            params: {
-              symbols: formattedSymbols,
-              interval: "daily",
-              from: Math.floor(Date.now() / 1000) - 86400 * 2, // 2 days ago
-              to: Math.floor(Date.now() / 1000),
-              convert_to_usd: "true",
-            },
-            timeout: 15000,
-          },
-        );
-
-        if (response.data && Array.isArray(response.data)) {
-          for (const item of response.data) {
-            // Parse symbol back: BTCUSDT_PERP.A -> BTCUSDT
-            const symbol = item.symbol?.replace(/_PERP\.A$/, "") || "";
-            const history = item.history || [];
-
-            if (history.length >= 2) {
-              // Calculate 24h change from history
-              const latestOI =
-                history[history.length - 1]?.c ||
-                history[history.length - 1]?.o ||
-                0;
-              const prevOI = history[0]?.c || history[0]?.o || 0;
-
-              if (prevOI > 0) {
-                const changePercent = ((latestOI - prevOI) / prevOI) * 100;
-                newCache.set(symbol, changePercent);
-              }
-            }
-          }
-          console.log(
-            `[OI] Coinalyze batch ${i + 1}/${symbolBatches.length}: ${newCache.size} OI values`,
-          );
-        }
-        break; // Success, exit retry loop
-      } catch (error: any) {
-        const status = error?.response?.status;
-        const retryAfter = error?.response?.headers?.["retry-after"];
-        const errMsg = error?.response?.data?.message || error?.message;
-
-        if (status === 429 && retry < 1) {
-          // Rate limited - wait and retry
-          const waitTime = retryAfter ? parseInt(retryAfter) * 1000 : 5000;
-          console.log(`[OI] Rate limited, waiting ${waitTime / 1000}s...`);
-          await new Promise((r) => setTimeout(r, waitTime));
-          continue;
-        }
-
-        console.log(`[OI] Coinalyze error:`, errMsg);
-        break;
-      }
-    }
-
-    // Delay between batches to respect rate limit (40/min = 3s between for safety)
-    if (i < symbolBatches.length - 1) {
-      await new Promise((r) => setTimeout(r, 3000));
-    }
-  }
-
-  return newCache;
+  // Coinalyze removed - using free Binance OI via fallback
+  return new Map<string, number>();
 }
 
 // Main OI fetcher with Binance fallback - called by signal calculation
@@ -3139,7 +3050,7 @@ export async function registerRoutes(
           signal.signalStrength,
           signal.fundingRate,
           signal.longShortRatio,
-        signal.aur !== undefined ? { aur: signal.aur, aurZScore: signal.aurZScore ?? 0, aurRising: false, aurSlope: 0 } : undefined
+        signal.aur !== undefined ? { aur: signal.aur, aurZScore: signal.aurZScore ?? 0, aurRising: false, aurSlope: 0 , isBuyConcentrated: false, aurTrend: []}  : undefined
         );
         
         // Calculate ML listing alpha prediction
