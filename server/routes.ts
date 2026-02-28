@@ -1434,7 +1434,10 @@ export async function registerRoutes(
             firstSeenAt: firstSeen.toISOString(),
             timeOnListMinutes,
             spikeReadiness,
-            liquidationLevels, // Estimated liquidation price levels
+                        liquidationLevels, // Estimated liquidation price levels
+                      volume24h: parseFloat(item.quoteVol) || 0,
+                      high24h: parseFloat(item.high) || 0,
+                      low24h: parseFloat(item.low) || 0,
           });
 
           await new Promise((resolve) => setTimeout(resolve, 30));
