@@ -1,3 +1,32 @@
+/**
+ * coinglass.ts — Market Data Provider
+ * 
+ * Uses Binance free endpoints as the default data source.
+ * When COINGLASS_API_KEY is set, augments with CoinGlass V4 API data:
+ *   - Real liquidation data (replaces stubs)
+ *   - Enhanced funding rates (975 symbols in one call)
+ *   - Open Interest with exchange breakdown
+ *   - Global & top-trader long/short ratios
+ *   - Taker buy/sell volume
+ * 
+ * All existing interface contracts are preserved — callers don't need changes.
+ */
+
+import CoinGlassV4Provider, { bitunixToBase, bitunixToCoinglassPair } from "./coinglass-v4-provider";
+
+// ─── V4 Provider Initialization ─────────────────────────────────────────────
+
+const HAS_CG_KEY = !!process.env.COINGLASS_API_KEY;
+const cgV4 = HAS_CG_KEY ? CoinGlassV4Provider.getInstance() : null;
+
+if (HAS_CG_KEY) {
+  console.log('[CoinGlass] V4 API key detected — enhanced data enabled (funding, OI, liquidations, L/S ratio, taker volume)');
+} else {
+  console.log('[CoinGlass] No API key — using Binance free endpoints only (liquidations unavailable)');
+}
+
+// ─── Rate Limiter (for Binance free endpoints) ─────────────────────────────
+
 interface RateLimiter {
   tokens: number;
   lastRefill: number;
@@ -91,6 +120,25 @@ export async function getOpenInterestHistory(
   interval: string = "1h",
   limit: number = 100,
 ): Promise<OpenInterestData[]> {
+  // V4 enhanced: get OI with exchange breakdown
+  if (cgV4) {
+    try {
+      const base = bitunixToBase(symbol + (symbol.endsWith('USDT') ? '' : 'USDT'));
+      const oiData = await cgV4.getOpenInterest(base);
+      if (oiData && oiData.total) {
+        // Return current snapshot as a single-element array (V4 gives real-time, not history)
+        return [{
+          time: oiData.cachedAt,
+          openInterest: oiData.total.open_interest_usd, // Already in USD
+          openInterestUsd: oiData.total.open_interest_usd,
+        }];
+      }
+    } catch (err) {
+      console.log(`[CoinGlass V4] OI fallback to Binance for ${symbol}: ${(err as Error)?.message}`);
+    }
+  }
+  
+  // Fallback: Binance free endpoint
   const pair = `${symbol.toUpperCase()}USDT`;
   const data = await binanceRequest<any[]>(`/futures/data/openInterestHist?symbol=${pair}&period=${interval}&limit=${limit}`);
   return data.map((d: any) => ({ time: d.timestamp, openInterest: parseFloat(d.sumOpenInterest), openInterestUsd: parseFloat(d.sumOpenInterestValue) }));
@@ -107,6 +155,23 @@ export async function getLiquidationHistory(
   interval: string = "1h",
   limit: number = 100,
 ): Promise<LiquidationData[]> {
+  // V4 enhanced: real liquidation history from CoinGlass
+  if (cgV4) {
+    try {
+      const base = bitunixToBase(symbol + (symbol.endsWith('USDT') ? '' : 'USDT'));
+      const liqData = await cgV4.getLiquidations(base);
+      if (liqData && liqData.latest) {
+        return [{
+          time: liqData.latest.time,
+          longLiquidationUsd: parseFloat(String(liqData.latest.aggregated_long_liquidation_usd ?? 0)),
+          shortLiquidationUsd: parseFloat(String(liqData.latest.aggregated_short_liquidation_usd ?? 0)),
+        }];
+      }
+    } catch (err) {
+      console.log(`[CoinGlass V4] Liquidation history error for ${symbol}: ${(err as Error)?.message}`);
+    }
+  }
+  
   // No free liquidation history API - return empty
   return [];
 }
@@ -120,6 +185,30 @@ export interface LiquidationMapData {
 export async function getLiquidationMap(
   symbol: string = "BTC",
 ): Promise<LiquidationMapData[]> {
+  // V4 enhanced: derive liquidation map from aggregated history
+  if (cgV4) {
+    try {
+      const base = bitunixToBase(symbol + (symbol.endsWith('USDT') ? '' : 'USDT'));
+      const liqData = await cgV4.getLiquidations(base);
+      if (liqData && liqData.latest) {
+        const longLiq = parseFloat(String(liqData.latest.aggregated_long_liquidation_usd ?? 0));
+        const shortLiq = parseFloat(String(liqData.latest.aggregated_short_liquidation_usd ?? 0));
+        
+        // If there's any liquidation data, return it as a single price-level entry
+        // This provides real data to the liquidationAnalysis in getEnhancedMarketData
+        if (longLiq > 0 || shortLiq > 0) {
+          return [{
+            price: 0, // Aggregated, not price-specific
+            longLiquidation: longLiq,
+            shortLiquidation: shortLiq,
+          }];
+        }
+      }
+    } catch (err) {
+      console.log(`[CoinGlass V4] Liquidation map error for ${symbol}: ${(err as Error)?.message}`);
+    }
+  }
+  
   // No free liquidation map API - return empty
   return [];
 }
@@ -175,6 +264,25 @@ export async function getLongShortRatio(
   limit: number = 100,
   exchange: string = "Binance",
 ): Promise<LongShortRatioData[]> {
+  // V4 enhanced: global L/S ratio from CoinGlass
+  if (cgV4) {
+    try {
+      const pair = bitunixToCoinglassPair(symbol + (symbol.endsWith('USDT') ? '' : 'USDT'));
+      const lsData = await cgV4.getLongShortRatio(pair);
+      if (lsData && lsData.latest) {
+        return [{
+          time: lsData.latest.time,
+          longRate: parseFloat(String(lsData.latest.global_account_long_percent ?? 50)),
+          shortRate: parseFloat(String(lsData.latest.global_account_short_percent ?? 50)),
+          longShortRatio: parseFloat(String(lsData.latest.global_account_long_short_ratio ?? 1)),
+        }];
+      }
+    } catch (err) {
+      console.log(`[CoinGlass V4] L/S ratio fallback to Binance for ${symbol}: ${(err as Error)?.message}`);
+    }
+  }
+
+  // Fallback: Binance free endpoint
   try {
       const pair = `${symbol.toUpperCase()}USDT`;
       const periodMap: Record<string,string> = {"1h":"1h","h1":"1h","4h":"4h","h4":"4h","1d":"1d"};
@@ -204,6 +312,27 @@ export async function getTakerBuySell(
   limit: number = 100,
   exchange: string = "Binance",
 ): Promise<TakerBuySellData[]> {
+  // V4 enhanced: taker buy/sell volume from CoinGlass
+  if (cgV4) {
+    try {
+      const pair = bitunixToCoinglassPair(symbol + (symbol.endsWith('USDT') ? '' : 'USDT'));
+      const takerData = await cgV4.getTakerVolume(pair);
+      if (takerData && takerData.latest) {
+        const buyVol = parseFloat(String(takerData.latest.taker_buy_volume_usd ?? 0));
+        const sellVol = parseFloat(String(takerData.latest.taker_sell_volume_usd ?? 0));
+        return [{
+          time: takerData.latest.time,
+          buyVolume: buyVol,
+          sellVolume: sellVol,
+          buySellRatio: sellVol > 0 ? buyVol / sellVol : 1,
+        }];
+      }
+    } catch (err) {
+      console.log(`[CoinGlass V4] Taker volume fallback to Binance for ${symbol}: ${(err as Error)?.message}`);
+    }
+  }
+
+  // Fallback: Binance free endpoint
   try {
       const pair = `${symbol.toUpperCase()}USDT`;
       const periodMap: Record<string,string> = {"1h":"1h","h1":"1h","4h":"4h","h4":"4h","1d":"1d"};
@@ -229,6 +358,25 @@ export interface FundingRateData {
 export async function getFundingRate(
   symbol: string = "BTC",
 ): Promise<FundingRateData[]> {
+  // V4 enhanced: funding rate from CoinGlass (975 symbols in one batch call)
+  if (cgV4) {
+    try {
+      const pair = symbol + (symbol.endsWith('USDT') ? '' : 'USDT');
+      const frData = await cgV4.getFundingRate(pair);
+      if (frData && frData.stablecoin_margin_list && frData.stablecoin_margin_list.length > 0) {
+        // Return all exchange funding rates
+        return frData.stablecoin_margin_list.map((ex) => ({
+          time: ex.next_funding_time || Date.now(),
+          fundingRate: ex.funding_rate,
+          exchange: ex.exchange,
+        }));
+      }
+    } catch (err) {
+      console.log(`[CoinGlass V4] Funding rate fallback to Binance for ${symbol}: ${(err as Error)?.message}`);
+    }
+  }
+
+  // Fallback: Binance free endpoint
   try {
       const pair = `${symbol.toUpperCase()}USDT`;
       const data = await binanceRequest<any[]>(`/fapi/v1/fundingRate?symbol=${pair}&limit=100`);
@@ -423,7 +571,7 @@ export async function getEnhancedMarketData(
     return cached;
   }
 
-  console.log(`[ENHANCED-MARKET] Fetching data for ${symbol}...`);
+  console.log(`[ENHANCED-MARKET] Fetching data for ${symbol}${cgV4 ? ' (V4 enhanced)' : ''}...`);
 
   const [
     liquidationMap,
@@ -448,7 +596,7 @@ export async function getEnhancedMarketData(
   ]);
 
   console.log(
-    `[ENHANCED-MARKET] Data fetched - funding rates: ${fundingRates.length}, fear/greed value: ${fearGreed.value}`,
+    `[ENHANCED-MARKET] Data fetched - funding rates: ${fundingRates.length}, liquidations: ${liquidationMap.length}, fear/greed value: ${fearGreed.value}`,
   );
 
   const liquidationAnalysis: LiquidationAnalysis = {
