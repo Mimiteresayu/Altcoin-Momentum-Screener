@@ -1,1 +1,1 @@
-READ_FROM_FILE:/home/user/workspace/ams-fresh/server/routes.ts
+ROUTES_FILE_CONTENT
