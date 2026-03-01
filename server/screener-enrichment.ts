@@ -103,3 +103,1600 @@ export function calculatePriceLocation(
   if (position >= 0.67) return "PREMIUM";
   return "NEUTRAL";
 }
+
+/**
+ * Analyze candlestick pattern for phase refinement
+ * Uses open, close, high, low to determine candle characteristics
+ */
+export function analyzeCandlestick(kline: SimpleKline): CandlestickAnalysis {
+  const open = parseFloat(kline.open);
+  const close = parseFloat(kline.close);
+  const high = parseFloat(kline.high);
+  const low = parseFloat(kline.low);
+  
+  const isBullish = close > open;
+  const isBearish = close < open;
+  
+  const body = Math.abs(close - open);
+  const fullRange = high - low;
+  const upperWick = high - Math.max(open, close);
+  const lowerWick = Math.min(open, close) - low;
+  
+  // Relative measurements (as ratio of full range)
+  const bodyRatio = fullRange > 0 ? body / fullRange : 0;
+  const upperWickRatio = fullRange > 0 ? upperWick / fullRange : 0;
+  const lowerWickRatio = fullRange > 0 ? lowerWick / fullRange : 0;
+  
+  // Long wick = >30% of total range
+  const hasLongUpperWick = upperWickRatio > 0.3;
+  const hasLongLowerWick = lowerWickRatio > 0.3;
+  
+  // Wick to body ratio (for doji/reversal detection)
+  const wickRatio = body > 0 ? (upperWick + lowerWick) / body : Infinity;
+  
+  return {
+    isBullish,
+    isBearish,
+    hasLongUpperWick,
+    hasLongLowerWick,
+    bodySize: bodyRatio,
+    wickRatio,
+  };
+}
+
+/**
+ * Calculate Entry Model based on market phase, RSI, and candlestick patterns
+ */
+export function calculateEntryModel(
+  marketPhase: MarketPhase,
+  rsi: number,
+  priceLocation: PriceLocation,
+  candleAnalysis?: CandlestickAnalysis,
+  fvgLevels?: { price: number; type: string }[],
+): EntryModel {
+  const hasValidRsi = rsi !== 0 && rsi !== undefined && !isNaN(rsi);
+  const hasFVG = fvgLevels && fvgLevels.length > 0;
+  const hasBullishFVG = fvgLevels?.some(f => f.type === "bullish");
+  const hasBearishFVG = fvgLevels?.some(f => f.type === "bearish");
+  
+  switch (marketPhase) {
+    case "ACCUMULATION":
+      // Use RSI to determine entry style
+      if (hasValidRsi) {
+        if (rsi < 40) return "BUY DIP";  // RSI oversold = aggressive buy
+        if (rsi >= 40 && rsi <= 55) return "SCALE IN";  // Neutral = gradual entry
+      }
+      // Use candle pattern
+      if (candleAnalysis?.hasLongLowerWick) return "BUY DIP";  // Buying pressure
+      return "SCALE IN";
+      
+    case "BREAKOUT":
+      // BOS = Break of Structure (momentum confirmation)
+      // FVG = Fair Value Gap (retest entry)
+      if (hasBullishFVG && priceLocation !== "PREMIUM") return "FVG ENTRY";
+      if (candleAnalysis?.isBullish && candleAnalysis?.bodySize > 0.5) return "BOS ENTRY";
+      return "BOS ENTRY";
+      
+    case "TREND":
+      // Pullback = wait for dip in uptrend
+      // Add = increase position on continuation
+      if (hasValidRsi && rsi > 60) return "ADD";  // Strong momentum
+      if (candleAnalysis?.hasLongLowerWick) return "PULLBACK";  // Rejection = good entry
+      if (priceLocation === "NEUTRAL") return "PULLBACK";
+      return "ADD";
+      
+    case "DISTRIBUTION":
+      // Take Profit = close longs
+      // Short Setup = consider shorting
+      if (hasValidRsi && rsi > 70) return "TAKE PROFIT";  // Overbought
+      if (candleAnalysis?.hasLongUpperWick) return "SHORT SETUP";  // Selling pressure
+      if (priceLocation === "PREMIUM") return "TAKE PROFIT";
+      return "TAKE PROFIT";
+      
+    case "EXHAUST":
+      // Avoid = don't enter
+      // Reversal = potential counter-trend
+      if (candleAnalysis && candleAnalysis.wickRatio > 2) return "REVERSAL";  // High wick = reversal candle
+      if (hasValidRsi && (rsi > 80 || rsi < 20)) return "AVOID";  // Extreme RSI
+      return "AVOID";
+      
+    default:
+      return "WAIT";
+  }
+}
+
+/**
+ * Market Phase Detection - Exact Google Doc Definitions
+ * 
+ * 5 Phases: ACCUMULATION | BREAKOUT | DISTRIBUTION | TREND | EXHAUST
+ */
+export function calculateMarketPhase(
+  volumeSpike: number,
+  oiChange: number | undefined,
+  rsi: number,
+  priceChange: number,
+  volAccel: number | undefined,
+  priceLocation: PriceLocation = "NEUTRAL",
+  fundingRate: number | undefined = undefined,
+  longShortRatio: number | undefined = undefined,
+): MarketPhase {
+  const oiDelta = oiChange ?? 0;
+  const hasValidRsi = rsi !== 0 && rsi !== undefined && !isNaN(rsi);
+  const fr = fundingRate ?? 0;
+  const acceleration = volAccel ?? 1;
+
+  // ===== SIMPLIFIED PHASE DETECTION (Google Doc criteria) =====
+  // Phases distribute more evenly across all 5 categories
+  
+  // ===== 1. EXHAUST: Extreme RSI with declining OI and price stalling =====
+  // Extreme RSI (> 75 or < 35) with declining OI
+  if (hasValidRsi && (rsi > 75 || rsi < 35) && oiDelta < 0) {
+    return "EXHAUST";
+  }
+  
+  // Price stalling with extreme overbought RSI only (oversold goes to ACCUMULATION)
+  if (hasValidRsi && Math.abs(priceChange) < 2) {
+    if (rsi > 75) {
+      return "EXHAUST";
+    }
+  }
+
+  // ===== 2. BREAKOUT: Strong price move with high volume and rising OI =====
+  // priceChange > 5%, volumeSpike > 2.5x, oiDelta > 15%
+  if (Math.abs(priceChange) > 5 && volumeSpike > 2.5 && oiDelta > 15) {
+    return "BREAKOUT";
+  }
+  
+  // Relaxed BREAKOUT: Strong price move with high volume (no strict OI requirement)
+  if (Math.abs(priceChange) > 5 && volumeSpike > 2.5) {
+    return "BREAKOUT";
+  }
+  
+  // Alternative BREAKOUT: Good volume with rising OI and notable price move
+  if (Math.abs(priceChange) > 3 && volumeSpike > 2.0 && oiDelta > 10) {
+    return "BREAKOUT";
+  }
+
+  // ===== 3. DISTRIBUTION: Price in PREMIUM zone with declining/flat OI and RSI > 60 =====
+  // STRICT: Requires BOTH priceLocation === 'PREMIUM' AND oiDelta < 2 AND rsi > 60
+  if (priceLocation === "PREMIUM" && oiDelta < 2 && hasValidRsi && rsi > 60) {
+    return "DISTRIBUTION";
+  }
+  
+  // Very high RSI at premium with any declining OI
+  if (priceLocation === "PREMIUM" && oiDelta < 0 && hasValidRsi && rsi > 70) {
+    return "DISTRIBUTION";
+  }
+
+  // ===== 4. ACCUMULATION: Flat price with moderate volume and building OI =====
+  // priceChange < 3%, volumeSpike 1-2.5x, oiDelta 5-25%
+  if (Math.abs(priceChange) < 3 && volumeSpike >= 1.0 && volumeSpike <= 2.5 && oiDelta >= 5 && oiDelta <= 25) {
+    return "ACCUMULATION";
+  }
+  
+  // Relaxed ACCUMULATION: Flat price with building OI at discount/neutral
+  if (Math.abs(priceChange) < 3 && oiDelta > 3 && (priceLocation === "DISCOUNT" || priceLocation === "NEUTRAL")) {
+    return "ACCUMULATION";
+  }
+  
+  // Low RSI = accumulation (even without OI data)
+  if (hasValidRsi && rsi < 40 && oiDelta >= 0) {
+    return "ACCUMULATION";
+  }
+
+  // Flat price with low volume at discount/neutral = quiet accumulation (no OI required)
+  if (Math.abs(priceChange) < 3 && volumeSpike < 1.5 && hasValidRsi && rsi >= 35 && rsi <= 55) {
+    if (priceLocation === "DISCOUNT" || priceLocation === "NEUTRAL") {
+      return "ACCUMULATION";
+    }
+  }
+
+  // ===== 5. TREND: Moderate price movement with steady OI growth =====
+  // oiDelta 5-20%, RSI 40-70 (balanced, middle-ground phase)
+  if (oiDelta >= 5 && oiDelta <= 20 && hasValidRsi && rsi >= 40 && rsi <= 70) {
+    return "TREND";
+  }
+  
+  // Moderate movement with healthy OI (relaxed)
+  if (oiDelta > 2 && oiDelta < 25 && volumeSpike >= 1.0) {
+    return "TREND";
+  }
+  
+  // Price moving with positive OI = trend
+  if (Math.abs(priceChange) > 2 && oiDelta > 0) {
+    return "TREND";
+  }
+
+  // ===== DEFAULT: TREND as balanced fallback =====
+  // TREND is the most common middle-ground phase
+  // Only use specific fallbacks for clear signals
+  
+  if (hasValidRsi) {
+    // Very extreme RSI with no OI data -> EXHAUST
+    if (rsi > 80 || rsi < 25) return "EXHAUST";
+    // High RSI in premium -> only DISTRIBUTION if actually premium
+    if (rsi > 70 && priceLocation === "PREMIUM") return "DISTRIBUTION";
+    // Low RSI at discount -> ACCUMULATION
+    if (rsi < 35 && priceLocation === "DISCOUNT") return "ACCUMULATION";
+  }
+  
+  // Strong positive OI with volume = TREND (not distribution)
+  if (oiDelta > 5 && volumeSpike > 1.2) return "TREND";
+  
+  // Discount location with any positive OI = ACCUMULATION
+  if (priceLocation === "DISCOUNT" && oiDelta > 0) return "ACCUMULATION";
+  
+  // Default to TREND as balanced middle-ground
+  return "TREND";
+}
+
+/**
+ * Alternative Market Phase Detection using OI + Price Change correlation
+ * Provides a complementary perspective based on position dynamics:
+ * - OI up + Price up = BREAKOUT/TREND (long positions opening, bullish momentum)
+ * - OI up + Price down = ACCUMULATION (shorts opening, potential reversal setup)
+ * - OI down + Price up = DISTRIBUTION (shorts closing, weak rally)
+ * - OI down + Price down = EXHAUST (longs closing, capitulation)
+ */
+export function calculateMarketPhaseAlt(
+  rsi: number,
+  priceChange: number,
+  volumeSpike: number,
+  priceLocation: PriceLocation = "NEUTRAL",
+  oiChange: number | undefined = undefined,
+): MarketPhase {
+  const oiDelta = oiChange ?? 0;
+  const hasValidOI = oiChange !== undefined && oiChange !== null;
+  const hasValidRsi = rsi !== 0 && rsi !== undefined && !isNaN(rsi);
+  
+  // If we have valid OI data, use the OI + Price correlation method
+  if (hasValidOI) {
+    const oiUp = oiDelta > 2;
+    const oiDown = oiDelta < -2;
+    const priceUp = priceChange > 2;
+    const priceDown = priceChange < -2;
+    
+    // OI up + Price up = BREAKOUT or TREND (long positions opening, bullish momentum)
+    if (oiUp && priceUp) {
+      // Strong confirmation: high volume = BREAKOUT
+      if (volumeSpike >= 2.5) {
+        return "BREAKOUT";
+      }
+      return "TREND";
+    }
+    
+    // OI up + Price down = ACCUMULATION (shorts opening OR smart money accumulating)
+    // This creates a reversal setup - new positions opening during decline
+    if (oiUp && priceDown) {
+      return "ACCUMULATION";
+    }
+    
+    // OI down + Price up = DISTRIBUTION (shorts closing, weak rally)
+    // Price rising on position closures = unsustainable move
+    if (oiDown && priceUp) {
+      return "DISTRIBUTION";
+    }
+    
+    // OI down + Price down = EXHAUST (longs closing, capitulation)
+    // Positions being liquidated = potential bottom
+    if (oiDown && priceDown) {
+      return "EXHAUST";
+    }
+    
+    // Moderate OI changes - use secondary indicators
+    if (Math.abs(oiDelta) <= 2 && Math.abs(priceChange) <= 2) {
+      // Consolidation with high volume = absorption (smart money accumulating)
+      if (volumeSpike >= 2.0) {
+        return "ACCUMULATION";
+      }
+      // Slight OI increase with flat price = quiet accumulation
+      if (oiDelta > 0 && volumeSpike >= 0.8) {
+        return "ACCUMULATION";
+      }
+    }
+  }
+  
+  // Fallback: Use RSI + Volume when OI data unavailable
+  if (hasValidRsi) {
+    // Extreme RSI = exhaustion
+    if (rsi > 75 || rsi < 35) {
+      return "EXHAUST";
+    }
+    
+    // RSI momentum with price confirmation = trend
+    if (rsi > 55 && rsi <= 75 && priceChange > 3 && volumeSpike >= 1.2) {
+      return "TREND";
+    }
+    
+    // RSI recovering from oversold with volume = accumulation
+    if (rsi >= 30 && rsi <= 50 && volumeSpike >= 1.0) {
+      return "ACCUMULATION";
+    }
+    
+    // RSI overbought at premium = distribution
+    if (rsi > 70 && priceLocation === "PREMIUM") {
+      return "DISTRIBUTION";
+    }
+  }
+  
+  // Final fallback: price/volume only
+  if (priceChange > 5 && volumeSpike >= 2.5) return "BREAKOUT";
+  if (priceChange > 3 && volumeSpike >= 1.5) return "TREND";
+  if (priceChange < -5 && volumeSpike < 0.8) return "EXHAUST";
+  if (priceLocation === "DISCOUNT" && volumeSpike >= 1.0) return "ACCUMULATION";
+  if (priceLocation === "PREMIUM" && volumeSpike < 0.9) return "DISTRIBUTION";
+  
+  return "TREND";
+}
+
+export function calculatePreSpikeScore(
+  volumeSpike: number,
+  volAccel: number | undefined,
+  oiChange: number | undefined,
+  rsi: number,
+  riskReward: number,
+  signalStrength: number,
+  fundingRate: number | undefined,
+  longShortRatio: number | undefined,
+  aurData?: { aur: number; aurZScore: number; isBuyConcentrated: boolean; aurTrend: number[]; aurRising: boolean; aurSlope: number },
+): number {
+  let score = 0;
+
+  // ═══════════════════════════════════════════════════════════════
+  // DIMENSION 1: Volume / Supply-Demand (0-1.5 pts)
+  // Research: RVOL is #1 leading indicator (Granger p<0.001)
+  // Optimal pre-spike range: 2-5x (not 8x+ which is during/post-spike)
+  // ═══════════════════════════════════════════════════════════════
+  if (volumeSpike >= 2.0 && volumeSpike < 5.0) score += 1.5;      // Sweet spot: accumulation range
+  else if (volumeSpike >= 5.0 && volumeSpike < 8.0) score += 1.0; // Getting hot, still pre-spike
+  else if (volumeSpike >= 1.5) score += 0.75;                      // Early accumulation
+  else if (volumeSpike >= 8.0) score += 0.5;                       // Already spiking (less pre-spike value)
+
+  // Volume acceleration (current vs 4H average) — catches the ignition
+  const accel = volAccel ?? 1;
+  if (accel >= 2.0 && accel < 5.0) score += 0.5;  // Accelerating
+  else if (accel >= 5.0) score += 0.25;             // Already accelerated
+
+  // ═══════════════════════════════════════════════════════════════
+  // DIMENSION 2: Derivatives Flow (0-1.0 pts)
+  // Research: Funding rate alone = zero predictive power (p>0.23)
+  // BUT: Negative funding + other signals = contrarian squeeze fuel
+  // Research: Falling OI at breakout = BETTER (57.1% vs 50.6%)
+  // ═══════════════════════════════════════════════════════════════
+  // OI: Research says FALLING OI = better breakout quality
+  const oi = oiChange ?? 0;
+  if (oi < -5) score += 0.5;           // Falling OI = clean slate, strongest
+  else if (oi >= -5 && oi <= 5) score += 0.25;  // Flat OI = neutral
+  // Rising OI gets 0 points (research: worse breakout quality)
+
+  // Funding rate: Only valuable as contrarian signal (shorts overcrowded)
+  // Research: Extreme negative FR → +1.82% avg 24h return
+  if (fundingRate !== undefined && fundingRate < -0.0005) score += 0.5;  // Deeply negative = squeeze fuel
+  else if (fundingRate !== undefined && fundingRate < -0.0001) score += 0.25;
+
+  // ═══════════════════════════════════════════════════════════════
+  // DIMENSION 3: RSI / Momentum context (0-0.5 pts)
+  // Research: Pre-spike optimal RSI is 40-60 (not yet overbought)
+  // ═══════════════════════════════════════════════════════════════
+  if (rsi >= 40 && rsi <= 60) score += 0.5;        // Optimal pre-spike zone
+  else if (rsi >= 35 && rsi <= 70) score += 0.25;  // Acceptable range
+
+  // Risk/Reward quality
+  if (riskReward >= 3) score += 0.25;
+  else if (riskReward >= 2) score += 0.15;
+
+  // Signal strength boost
+  if (signalStrength >= 4) score += 0.25;
+
+  // Long/Short ratio: Low ratio = fewer longs = contrarian bullish setup
+  if (longShortRatio !== undefined && longShortRatio < 0.8) score += 0.25;
+  else if (longShortRatio !== undefined && longShortRatio < 0.95) score += 0.1;
+
+  // ═══════════════════════════════════════════════════════════════
+  // DIMENSION 4: AUR Pre-Spike Detection (0-1.5 pts)
+  // Detects stealth accumulation: buying concentration rising but not extreme
+  // Mind Map: AUR slope > 0 & Z < 1.5 (rising but pre-spike, not during)
+  // ═══════════════════════════════════════════════════════════════
+  if (aurData) {
+    // Rising AUR trend = smart money accumulating
+    if (aurData.aurRising && aurData.aur > 0.5) {
+      score += 1.0;
+    } else if (aurData.aurRising) {
+      score += 0.5;
+    }
+    // Positive slope bonus — buying acceleration
+    if (aurData.aurSlope > 0.05) {
+      score += 0.25;
+    }
+    // Moderate Z-score (0.5-1.5) = building but not spiked
+    // Research: Z > 1.5 means already in spike territory
+    if (aurData.aurZScore > 0.5 && aurData.aurZScore < 1.5) {
+      score += 0.25;
+    }
+  }
+
+  return Math.min(5, Math.round(score * 10) / 10);
+}
+
+export function calculateATR(
+  klines: { high: string; low: string; close: string }[],
+  period: number = 10
+): number {
+  if (klines.length < period + 1) return 0;
+
+  const trueRanges: number[] = [];
+  for (let i = 1; i < klines.length; i++) {
+    const high = parseFloat(klines[i].high);
+    const low = parseFloat(klines[i].low);
+    const prevClose = parseFloat(klines[i - 1].close);
+    const tr = Math.max(
+      high - low,
+      Math.abs(high - prevClose),
+      Math.abs(low - prevClose)
+    );
+    trueRanges.push(tr);
+  }
+
+  if (trueRanges.length < period) return 0;
+  const recentTR = trueRanges.slice(-period);
+  return recentTR.reduce((a, b) => a + b, 0) / period;
+}
+
+export function calculateSupertrend(
+  klines: { high: string; low: string; close: string }[],
+  atrPeriod: number = 10,
+  multiplier: number = 3
+): { value: number; direction: "LONG" | "SHORT" } | null {
+  // Need enough candles to calculate ATR and iterate
+  if (klines.length < atrPeriod + 2) return null;
+
+  // Calculate ATR for each candle (we need ATR values for the iteration)
+  const atrValues: number[] = [];
+  for (let i = atrPeriod; i < klines.length; i++) {
+    const trueRanges: number[] = [];
+    for (let j = i - atrPeriod + 1; j <= i; j++) {
+      const high = parseFloat(klines[j].high);
+      const low = parseFloat(klines[j].low);
+      const prevClose = parseFloat(klines[j - 1].close);
+      const tr = Math.max(
+        high - low,
+        Math.abs(high - prevClose),
+        Math.abs(low - prevClose)
+      );
+      trueRanges.push(tr);
+    }
+    const atr = trueRanges.reduce((a, b) => a + b, 0) / atrPeriod;
+    atrValues.push(atr);
+  }
+
+  if (atrValues.length === 0) return null;
+
+  // Initialize Supertrend state
+  let prevFinalUpperBand = Infinity;
+  let prevFinalLowerBand = 0;
+  let prevSupertrend = 0;
+  let prevDirection: "LONG" | "SHORT" = "LONG";
+
+  // Iterate through candles starting from where we have ATR
+  for (let i = 0; i < atrValues.length; i++) {
+    const candleIndex = atrPeriod + i;
+    const candle = klines[candleIndex];
+    const atr = atrValues[i];
+    
+    const high = parseFloat(candle.high);
+    const low = parseFloat(candle.low);
+    const close = parseFloat(candle.close);
+    const hl2 = (high + low) / 2;
+
+    // Calculate basic bands
+    const basicUpperBand = hl2 + (multiplier * atr);
+    const basicLowerBand = hl2 - (multiplier * atr);
+
+    // Calculate final bands (they can only move in favorable direction)
+    // Final Upper Band: can only go DOWN (tighten the stop for shorts)
+    let finalUpperBand: number;
+    if (basicUpperBand < prevFinalUpperBand || parseFloat(klines[candleIndex - 1].close) > prevFinalUpperBand) {
+      finalUpperBand = basicUpperBand;
+    } else {
+      finalUpperBand = prevFinalUpperBand;
+    }
+
+    // Final Lower Band: can only go UP (tighten the stop for longs)
+    let finalLowerBand: number;
+    if (basicLowerBand > prevFinalLowerBand || parseFloat(klines[candleIndex - 1].close) < prevFinalLowerBand) {
+      finalLowerBand = basicLowerBand;
+    } else {
+      finalLowerBand = prevFinalLowerBand;
+    }
+
+    // Determine Supertrend value and direction
+    let supertrend: number;
+    let direction: "LONG" | "SHORT";
+
+    if (prevSupertrend === prevFinalUpperBand) {
+      // Was in downtrend (using upper band)
+      if (close > finalUpperBand) {
+        // Price crossed above - flip to uptrend
+        supertrend = finalLowerBand;
+        direction = "LONG";
+      } else {
+        supertrend = finalUpperBand;
+        direction = "SHORT";
+      }
+    } else {
+      // Was in uptrend (using lower band)
+      if (close < finalLowerBand) {
+        // Price crossed below - flip to downtrend
+        supertrend = finalUpperBand;
+        direction = "SHORT";
+      } else {
+        supertrend = finalLowerBand;
+        direction = "LONG";
+      }
+    }
+
+    // Update state for next iteration
+    prevFinalUpperBand = finalUpperBand;
+    prevFinalLowerBand = finalLowerBand;
+    prevSupertrend = supertrend;
+    prevDirection = direction;
+  }
+
+  return { value: prevSupertrend, direction: prevDirection };
+}
+
+export function calculateHtfBias(
+  klines4H: { high: string; low: string; close: string }[],
+  fundingRate: number | undefined,
+  symbol?: string
+): HtfBias | undefined {
+  // Use ATR period 14, multiplier 3.5 to match TradingView defaults
+  const supertrend = calculateSupertrend(klines4H, 14, 3.5);
+  if (!supertrend) return undefined;
+  
+  // Debug logging for specific symbols
+  if (symbol && ["RIVER", "BTC", "ETH"].includes(symbol.replace("USDT", ""))) {
+    const lastCandle = klines4H[klines4H.length - 1];
+    console.log(`[SUPERTREND] ${symbol}: price=${lastCandle?.close}, ST=${supertrend.value.toFixed(4)}, dir=${supertrend.direction}`);
+  }
+
+  const supertrendBias = supertrend.direction;
+  const supertrendValue = supertrend.value;
+
+  let fundingConfirms = false;
+  let confidence: "high" | "medium" | "low" = "medium";
+
+  if (fundingRate !== undefined) {
+    // Contrarian confirmation: negative funding + LONG = shorts paying = bullish
+    if (supertrendBias === "LONG" && fundingRate < -0.0001) {
+      fundingConfirms = true;
+      confidence = "high";
+    } else if (supertrendBias === "SHORT" && fundingRate > 0.0001) {
+      fundingConfirms = true;
+      confidence = "high";
+    } else if (Math.abs(fundingRate) < 0.0001) {
+      confidence = "medium";
+    } else {
+      confidence = "low";
+    }
+  }
+
+  return {
+    side: supertrendBias,
+    confidence,
+    supertrendBias,
+    fundingConfirms,
+    supertrendValue,
+  };
+}
+
+function calculateLiquidationZones(
+  currentPrice: number,
+  liquidationMap: LiquidationMapData[],
+): {
+  nearestLongLiq: number | undefined;
+  nearestShortLiq: number | undefined;
+  longLiqDistance: number | undefined;
+  shortLiqDistance: number | undefined;
+} {
+  if (!liquidationMap || liquidationMap.length === 0) {
+    return {
+      nearestLongLiq: undefined,
+      nearestShortLiq: undefined,
+      longLiqDistance: undefined,
+      shortLiqDistance: undefined,
+    };
+  }
+
+  // Find nearest significant liquidation levels
+  let nearestLong: { price: number; amount: number } | null = null;
+  let nearestShort: { price: number; amount: number } | null = null;
+
+  // Sort by price distance from current
+  const sortedByDistance = [...liquidationMap].sort(
+    (a, b) =>
+      Math.abs(a.price - currentPrice) - Math.abs(b.price - currentPrice),
+  );
+
+  // Find nearest with significant volume (> 1M)
+  for (const level of sortedByDistance) {
+    if (
+      !nearestLong &&
+      level.longLiquidation > 1000000 &&
+      level.price < currentPrice
+    ) {
+      nearestLong = { price: level.price, amount: level.longLiquidation };
+    }
+    if (
+      !nearestShort &&
+      level.shortLiquidation > 1000000 &&
+      level.price > currentPrice
+    ) {
+      nearestShort = { price: level.price, amount: level.shortLiquidation };
+    }
+    if (nearestLong && nearestShort) break;
+  }
+
+  return {
+    nearestLongLiq: nearestLong?.price,
+    nearestShortLiq: nearestShort?.price,
+    longLiqDistance: nearestLong
+      ? ((currentPrice - nearestLong.price) / currentPrice) * 100
+      : undefined,
+    shortLiqDistance: nearestShort
+      ? ((nearestShort.price - currentPrice) / currentPrice) * 100
+      : undefined,
+  };
+}
+
+function generateStorytelling(
+  signal: Signal,
+  marketPhase: MarketPhase,
+  priceLocation: PriceLocation,
+  preSpikeScore: number,
+  fundingBias: "bullish" | "bearish" | "neutral" | undefined,
+  lsrBias: "long_dominant" | "short_dominant" | "balanced" | undefined,
+): {
+  summary: string;
+  interpretation: string;
+  confidence: Confidence;
+  actionSuggestion: string;
+} {
+  const volumeDesc =
+    signal.volumeSpikeRatio >= 8
+      ? "extreme volume"
+      : signal.volumeSpikeRatio >= 5
+        ? "high volume"
+        : signal.volumeSpikeRatio >= 3
+          ? "elevated volume"
+          : "normal volume";
+
+  const rsiDesc =
+    signal.rsi > 70
+      ? "overbought"
+      : signal.rsi > 60
+        ? "bullish momentum"
+        : signal.rsi < 30
+          ? "oversold"
+          : signal.rsi < 40
+            ? "bearish momentum"
+            : "neutral momentum";
+
+  const oiDesc =
+    signal.oiChange24h && signal.oiChange24h > 10
+      ? "strong OI buildup"
+      : signal.oiChange24h && signal.oiChange24h > 5
+        ? "moderate OI increase"
+        : signal.oiChange24h && signal.oiChange24h < -5
+          ? "OI declining"
+          : "stable OI";
+
+  let summary = "";
+  let interpretation = "";
+  let actionSuggestion = "";
+  let confidence: Confidence = "medium";
+
+  switch (marketPhase) {
+    case "ACCUMULATION":
+      summary = `${signal.symbol} in ${priceLocation} zone with ${volumeDesc}, ${oiDesc}`;
+      interpretation = `Smart money appears to be accumulating. Volume building while price consolidates in ${priceLocation.toLowerCase()} zone. ${rsiDesc} suggests room for upside.`;
+      if (preSpikeScore >= 4) {
+        actionSuggestion = `Strong LONG setup. Entry near ${signal.entryPrice.toFixed(4)}, SL at ${signal.slPrice.toFixed(4)}`;
+        confidence = "high";
+      } else {
+        actionSuggestion = "Watch for volume continuation before entry.";
+        confidence = "medium";
+      }
+      break;
+
+    case "DISTRIBUTION":
+      summary = `${signal.symbol} showing distribution at ${priceLocation} with ${volumeDesc}`;
+      interpretation = `Signs of distribution detected. ${oiDesc} with ${rsiDesc}. Smart money may be exiting.`;
+      actionSuggestion =
+        "Consider reducing exposure or SHORT setup if breakdown confirmed.";
+      confidence = "medium";
+      break;
+
+    case "BREAKOUT":
+      summary = `${signal.symbol} BREAKOUT with ${volumeDesc} and ${oiDesc}`;
+      interpretation = `Explosive momentum confirmed. ${volumeDesc} with OI surge confirms institutional participation. ${fundingBias === "bearish" ? "Negative funding supports continuation." : ""}`;
+      if (signal.side === "LONG" && preSpikeScore >= 4) {
+        actionSuggestion = `Enter on confirmation, ride momentum with trailing stop at ${signal.slPrice.toFixed(4)}`;
+        confidence = "high";
+      } else {
+        actionSuggestion = "Enter on confirmation, use trailing stop to ride momentum";
+        confidence = "high";
+      }
+      break;
+
+    case "TREND":
+      summary = `${signal.symbol} in sustained TREND with ${volumeDesc}`;
+      interpretation = `Multi-timeframe alignment confirmed. ${oiDesc} supports continuation. ${rsiDesc} in momentum zone.`;
+      if (preSpikeScore >= 3) {
+        actionSuggestion = `Trade with trend, add on pullbacks. Entry near ${signal.entryPrice.toFixed(4)}`;
+        confidence = "high";
+      } else {
+        actionSuggestion = "Trade with trend, add on pullbacks to support levels";
+        confidence = "medium";
+      }
+      break;
+
+    case "EXHAUST":
+      summary = `${signal.symbol} showing EXHAUST signals - reversal imminent`;
+      interpretation = `Momentum exhaustion detected. ${volumeDesc} declining from peak with ${rsiDesc} at extreme. ${lsrBias === "long_dominant" ? "Crowded positioning adds reversal risk." : ""}`;
+      actionSuggestion =
+        "AVOID new entries. Tighten stops on existing positions. Expect reversal.";
+      confidence = "medium";
+      break;
+
+    default:
+      summary = `${signal.symbol} at ${priceLocation} with ${volumeDesc}`;
+      interpretation = `Mixed signals. ${rsiDesc}, ${oiDesc}. Wait for clearer setup.`;
+      actionSuggestion = "Monitor for phase clarity before action.";
+      confidence = "low";
+  }
+
+  // Boost confidence if multiple factors align
+  if (
+    preSpikeScore >= 4 &&
+    priceLocation === "DISCOUNT" &&
+    (marketPhase === "ACCUMULATION" || marketPhase === "BREAKOUT")
+  ) {
+    confidence = "high";
+  }
+
+  return { summary, interpretation, confidence, actionSuggestion };
+}
+
+function estimateFVGLevels(
+  currentPrice: number,
+  high24h: number,
+  low24h: number,
+  priceChange: number,
+): { price: number; type: "bullish" | "bearish"; strength: number }[] {
+  const levels: {
+    price: number;
+    type: "bullish" | "bearish";
+    strength: number;
+  }[] = [];
+  const range = high24h - low24h;
+
+  if (range <= 0) return levels;
+
+  // Estimate FVG zones based on price action
+  // Bullish FVGs form on strong up moves - gaps below current price
+  if (priceChange > 2) {
+    const fvgZone = currentPrice - range * 0.1;
+    levels.push({
+      price: fvgZone,
+      type: "bullish",
+      strength: Math.min(1, priceChange / 10),
+    });
+  }
+
+  // Bearish FVGs form on strong down moves - gaps above current price
+  if (priceChange < -2) {
+    const fvgZone = currentPrice + range * 0.1;
+    levels.push({
+      price: fvgZone,
+      type: "bearish",
+      strength: Math.min(1, Math.abs(priceChange) / 10),
+    });
+  }
+
+  // Near the 24h low often has bullish FVG
+  if (currentPrice < low24h + range * 0.3) {
+    levels.push({
+      price: low24h + range * 0.05,
+      type: "bullish",
+      strength: 0.7,
+    });
+  }
+
+  return levels;
+}
+
+function estimateOBLevels(
+  currentPrice: number,
+  high24h: number,
+  low24h: number,
+  supportWalls: { price: number; amount: number }[],
+  resistanceWalls: { price: number; amount: number }[],
+): { price: number; type: "bullish" | "bearish"; strength: number }[] {
+  const levels: {
+    price: number;
+    type: "bullish" | "bearish";
+    strength: number;
+  }[] = [];
+
+  // Use orderbook walls as proxy for order blocks
+  if (supportWalls.length > 0) {
+    const strongest = supportWalls[0];
+    levels.push({
+      price: strongest.price,
+      type: "bullish",
+      strength: Math.min(1, strongest.amount / 5000000),
+    });
+  }
+
+  if (resistanceWalls.length > 0) {
+    const strongest = resistanceWalls[0];
+    levels.push({
+      price: strongest.price,
+      type: "bearish",
+      strength: Math.min(1, strongest.amount / 5000000),
+    });
+  }
+
+  // Add levels at key price zones
+  const range = high24h - low24h;
+  if (range > 0) {
+    levels.push({
+      price: low24h + range * 0.382,
+      type: "bullish",
+      strength: 0.5,
+    });
+    levels.push({
+      price: low24h + range * 0.618,
+      type: "bearish",
+      strength: 0.5,
+    });
+  }
+
+  return levels;
+}
+
+// Calculate Volume Profile POC (Point of Control) from Klines
+// POC is the price level where the most volume was traded
+function calculateVolumeProfilePOC(klines: { high: string; low: string; close: string; volume?: string }[]): number | undefined {
+  if (klines.length < 10) return undefined;
+  
+  // Create price bins and aggregate volume
+  const priceVolume: Map<number, number> = new Map();
+  
+  // Determine price range
+  const prices = klines.map(k => parseFloat(k.close));
+  const highs = klines.map(k => parseFloat(k.high));
+  const lows = klines.map(k => parseFloat(k.low));
+  const maxPrice = Math.max(...highs);
+  const minPrice = Math.min(...lows);
+  const range = maxPrice - minPrice;
+  
+  if (range === 0) return undefined;
+  
+  // Create bins (20 bins across the range)
+  const numBins = 20;
+  const binSize = range / numBins;
+  
+  // Aggregate volume into bins using typical price (H+L+C)/3
+  for (const k of klines) {
+    const high = parseFloat(k.high);
+    const low = parseFloat(k.low);
+    const close = parseFloat(k.close);
+    const volume = k.volume ? parseFloat(k.volume) : 1;
+    const typicalPrice = (high + low + close) / 3;
+    
+    // Find bin for this candle
+    const binIndex = Math.floor((typicalPrice - minPrice) / binSize);
+    const binPrice = minPrice + (binIndex + 0.5) * binSize; // Midpoint of bin
+    
+    priceVolume.set(binPrice, (priceVolume.get(binPrice) || 0) + volume);
+  }
+  
+  // Find POC (price with highest volume)
+  let pocPrice = 0;
+  let maxVolume = 0;
+  priceVolume.forEach((volume, price) => {
+    if (volume > maxVolume) {
+      maxVolume = volume;
+      pocPrice = price;
+    }
+  });
+  
+  return pocPrice > 0 ? pocPrice : undefined;
+}
+
+// Helper function to fetch Binance Klines
+// Helper function to fetch Bitunix Klines
+async function getBitunixKlines(
+  symbol: string,
+  interval: string,
+  limit: number = 100,
+): Promise<SimpleKline[]> {
+  try {
+    // Use PUBLIC Bitunix futures market kline API (no auth required)
+    const url = `https://fapi.bitunix.com/api/v1/futures/market/kline?symbol=${symbol}USDT&interval=${interval}&limit=${limit}`;
+    const resp = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    if (!resp.ok) {
+      console.log(`[ENRICHMENT] Bitunix public kline failed for ${symbol}: ${resp.status}`);
+      return [];
+    }
+    const data = await resp.json();
+    if (data?.data && Array.isArray(data.data) && data.data.length > 0) {
+      return data.data.map((k: any) => ({
+        open: String(k[1] ?? k.open ?? '0'),
+        high: String(k[2] ?? k.high ?? '0'),
+        low: String(k[3] ?? k.low ?? '0'),
+        close: String(k[4] ?? k.close ?? '0'),
+        volume: String(k[5] ?? k.volume ?? '0'),
+        openTime: parseInt(k[0] ?? k.time ?? '0'),
+        closeTime: parseInt(k[6] ?? k[0] ?? '0') + (interval === '4h' ? 14400000 : interval === '1h' ? 3600000 : 86400000),
+      }));
+    }
+    return [];
+  } catch (error) {
+    console.log(`[ENRICHMENT] Bitunix kline fetch failed for ${symbol}`);
+    return [];
+  }
+}
+// ============================================
+// HKPTRC Alpha Indicators
+// ============================================
+
+/**
+ * Efficiency Ratio (ER) - Perry Kaufman
+ * Measures trending strength: net price change / sum of absolute per-bar changes
+ * Range: 0 to 1. Higher = stronger trend. Low ER = mean-reverting/choppy.
+ * Pre-spike: ER rising from low values indicates trend forming.
+ */
+export function calculateEfficiencyRatio(
+  klines: { close: string }[],
+  period: number = 20
+): number | undefined {
+  if (klines.length < period + 1) return undefined;
+  const recent = klines.slice(-period - 1);
+  const closes = recent.map(k => parseFloat(k.close));
+  const netChange = Math.abs(closes[closes.length - 1] - closes[0]);
+  let sumAbsChanges = 0;
+  for (let i = 1; i < closes.length; i++) {
+    sumAbsChanges += Math.abs(closes[i] - closes[i - 1]);
+  }
+  if (sumAbsChanges === 0) return 0;
+  return netChange / sumAbsChanges;
+}
+
+/**
+ * Volatility Spread (VSpread) - SD vs ATR spread
+ * Measures volatility clustering. When SD >> ATR, price is making directional moves.
+ * When SD << ATR, price is choppy. Normalized to 0-1 range.
+ * Pre-spike: VSpread rising = volatility expanding directionally.
+ */
+export function calculateVolatilitySpread(
+  klines: { high: string; low: string; close: string }[],
+  period: number = 20
+): number | undefined {
+  if (klines.length < period + 1) return undefined;
+  const recent = klines.slice(-period - 1);
+  const closes = recent.map(k => parseFloat(k.close));
+  // Calculate SD of returns
+  const returns: number[] = [];
+  for (let i = 1; i < closes.length; i++) {
+    returns.push((closes[i] - closes[i - 1]) / closes[i - 1]);
+  }
+  const meanReturn = returns.reduce((a, b) => a + b, 0) / returns.length;
+  const variance = returns.reduce((a, r) => a + Math.pow(r - meanReturn, 2), 0) / returns.length;
+  const sd = Math.sqrt(variance);
+  // Calculate ATR normalized by price
+  let atrSum = 0;
+  for (let i = 1; i < recent.length; i++) {
+    const high = parseFloat(recent[i].high);
+    const low = parseFloat(recent[i].low);
+    const prevClose = parseFloat(recent[i - 1].close);
+    const tr = Math.max(high - low, Math.abs(high - prevClose), Math.abs(low - prevClose));
+    atrSum += tr / prevClose; // Normalize by price
+  }
+  const atrNorm = atrSum / (recent.length - 1);
+  if (atrNorm === 0) return 0;
+  // VSpread = SD / ATR ratio, clamped to 0-1
+  const spread = sd / atrNorm;
+  return Math.min(1, Math.max(0, spread));
+}
+
+/**
+ * Channel Range (CRange) - Normalized position in Donchian channel
+ * Measures where price is relative to its N-period high-low channel.
+ * Range: -1 to 1. Above 0.8 = breakout zone. Below -0.8 = breakdown zone.
+ * Pre-spike: CRange moving toward extremes with rising ER = imminent breakout.
+ */
+export function calculateChannelRange(
+  klines: { high: string; low: string; close: string }[],
+  period: number = 20
+): number | undefined {
+  if (klines.length < period) return undefined;
+  const recent = klines.slice(-period);
+  const highs = recent.map(k => parseFloat(k.high));
+  const lows = recent.map(k => parseFloat(k.low));
+  const channelHigh = Math.max(...highs);
+  const channelLow = Math.min(...lows);
+  const channelRange = channelHigh - channelLow;
+  if (channelRange === 0) return 0;
+  const currentClose = parseFloat(klines[klines.length - 1].close);
+  const midline = (channelHigh + channelLow) / 2;
+  // Normalize to -1 to 1 range
+  return (currentClose - midline) / (channelRange / 2);
+}
+
+/**
+ * Permutation Entropy (PE) - Measures complexity/randomness of price series
+ * Higher PE = more random/chaotic. Lower PE = more ordered/predictable.
+ * Pre-spike: PE rising above mean signals transition from order to chaos (breakout imminent).
+ * Uses embedding dimension m=3, delay=1.
+ */
+export function calculatePermutationEntropy(
+  klines: { close: string }[],
+  period: number = 20,
+  m: number = 3
+): number | undefined {
+  if (klines.length < period + m) return undefined;
+  const recent = klines.slice(-period - m + 1);
+  const closes = recent.map(k => parseFloat(k.close));
+  // Count permutation patterns
+  const patternCounts: Map<string, number> = new Map();
+  let totalPatterns = 0;
+  for (let i = 0; i <= closes.length - m; i++) {
+    const window = closes.slice(i, i + m);
+    // Get rank order (permutation pattern)
+    const indexed = window.map((v, idx) => ({ v, idx }));
+    indexed.sort((a, b) => a.v - b.v || a.idx - b.idx);
+    const pattern = indexed.map(x => x.idx).join(',');
+    patternCounts.set(pattern, (patternCounts.get(pattern) || 0) + 1);
+    totalPatterns++;
+  }
+  if (totalPatterns === 0) return 0;
+  // Calculate Shannon entropy of permutation distribution
+  let entropy = 0;
+    for (const count of Array.from(patternCounts.values())) {
+    const p = count / totalPatterns;
+    if (p > 0) entropy -= p * Math.log2(p);
+  }
+  // Normalize by max possible entropy (log2(m!))
+  const factorial = (n: number): number => n <= 1 ? 1 : n * factorial(n - 1);
+  const maxEntropy = Math.log2(factorial(m));
+  return maxEntropy > 0 ? entropy / maxEntropy : 0;
+}
+
+// ============================================
+// Rolling History Store for Z-Score Computation
+// ============================================
+const HISTORY_MAX_LENGTH = 50; // Keep last 50 readings per symbol
+const indicatorHistory: Map<string, {
+  er: number[];
+  vs: number[];
+  pe: number[];
+}> = new Map();
+
+function pushIndicatorHistory(symbol: string, er: number | undefined, vs: number | undefined, pe: number | undefined) {
+  if (!indicatorHistory.has(symbol)) {
+    indicatorHistory.set(symbol, { er: [], vs: [], pe: [] });
+  }
+  const h = indicatorHistory.get(symbol)!;
+  if (er !== undefined) { h.er.push(er); if (h.er.length > HISTORY_MAX_LENGTH) h.er.shift(); }
+  if (vs !== undefined) { h.vs.push(vs); if (h.vs.length > HISTORY_MAX_LENGTH) h.vs.shift(); }
+  if (pe !== undefined) { h.pe.push(pe); if (h.pe.length > HISTORY_MAX_LENGTH) h.pe.shift(); }
+}
+
+function calcZScore(values: number[], current: number): number | undefined {
+  if (values.length < 3) return undefined; // Reduced from 5 to 3 — history seeds faster from klines
+  const mean = values.reduce((a, b) => a + b, 0) / values.length;
+  const variance = values.reduce((a, v) => a + Math.pow(v - mean, 2), 0) / values.length;
+  const std = Math.sqrt(variance);
+  if (std === 0) return 0;
+  return (current - mean) / std;
+}
+
+function calcMean(values: number[]): number | undefined {
+  if (values.length < 3) return undefined;
+  return values.reduce((a, b) => a + b, 0) / values.length;
+}
+
+/**
+ * Evaluate Pre-Spike Combo Conditions (HKPTRC Alpha)
+ * Returns count of conditions met (0-4) and which ones are true.
+ * 
+ * Research-backed conditions (4 orthogonal dimensions):
+ * 1. AUR: slope > 0 AND Z < 1.5 (buying rising but NOT yet extreme — pre-spike, not during-spike)
+ * 2. ER: Rising from low base (ER < 0.35 consolidating → starting to trend, or crossing above mean)
+ * 3. VS Z < -1.0 (volatility compressed — relaxed from -1.5 which never triggered; closest was -1.47)
+ * 4. PE > rolling mean (market disorder rising, about to resolve into directional momentum)
+ * 
+ * Academic evidence: T-4h window is optimal — all 4 converge before price breaks out
+ * Rolling Z-scores are self-calibrating across market regimes (no fixed thresholds)
+ */
+export function evaluatePreSpikeCombo(
+  aurZScore: number | undefined,
+  er: number | undefined,
+  vs: number | undefined,
+  pe: number | undefined,
+  symbol: string,
+  aurSlope?: number,
+  aurRising?: boolean
+): {
+  comboScore: number;
+  aurCondition: boolean;
+  erCondition: boolean;
+  vsCondition: boolean;
+  peCondition: boolean;
+} {
+  const hist = indicatorHistory.get(symbol);
+  const erMean = hist ? calcMean(hist.er) : undefined;
+  const vsMean = hist ? calcMean(hist.vs) : undefined;
+  const vsZScore = hist && vs !== undefined ? calcZScore(hist.vs, vs) : undefined;
+  const peMean = hist ? calcMean(hist.pe) : undefined;
+
+  // Research-aligned Primary Filters:
+  // AUR: Buying concentration RISING (slope > 0) but NOT yet extreme (Z < 1.5)
+  // This catches the pre-spike accumulation phase, not the spike itself
+  const aurCondition = aurSlope !== undefined && aurRising !== undefined
+    ? (aurSlope > 0 || aurRising) && (aurZScore === undefined || aurZScore < 1.5)
+    : aurZScore !== undefined && aurZScore > 0.5 && aurZScore < 1.5;
+
+  // ER: Efficiency rising from consolidation base (ER < 0.35 = choppy → starting to trend)
+  // Research: ER < 0.35 is setup condition, crossing above mean = confirmation
+  const erCondition = er !== undefined && erMean !== undefined 
+    ? (er < 0.35 && er > erMean * 0.8) || (er > erMean && er < 0.6)
+    : er !== undefined && er > 0.15 && er < 0.45;
+
+  // VS: Volatility compressed — Z < -1.0 (relaxed from -1.5 which was too tight)
+  // BBKC squeeze backtest: Sharpe >1.0, 83% parameter robustness
+  const vsCondition = vsZScore !== undefined && vsZScore < -1.0;
+
+  // PE: Disorder rising above mean — market about to resolve into trend
+  const peCondition = pe !== undefined && peMean !== undefined && pe > peMean;
+
+  const comboScore = (aurCondition ? 1 : 0) + (erCondition ? 1 : 0) + (vsCondition ? 1 : 0) + (peCondition ? 1 : 0);
+
+  return { comboScore, aurCondition, erCondition, vsCondition, peCondition };
+}
+
+
+export async function enrichSignalWithCoinglass(
+  signal: Signal,
+  high24h: number,
+  low24h: number,
+  aurData?: { aur: number; aurZScore: number; aurRising: boolean; aurSlope: number },
+): Promise<EnrichedSignalData> {
+  const symbol = signal.symbol.replace("USDT", "");
+
+  // PRIORITY 1: Use OKX as primary data source (works from Replit, no geo-restrictions)
+  let okxData: { fundingRate: number | null; klines4H: SimpleKline[]; klines1H: SimpleKline[]; openInterest: number | null; longShortRatio: number | null; source: string } | null = null;
+  let klines4H: SimpleKline[] = [];
+  let klines1H: SimpleKline[] = [];
+  
+  try {
+    const rawOkxData = await getOKXMarketData(symbol);
+    
+    klines4H = rawOkxData.klines4H.map(k => ({
+      open: k.open,
+      high: k.high,
+      low: k.low,
+      close: k.close,
+      volume: k.volume,
+      openTime: k.ts,
+      closeTime: k.ts + 14400000
+    }));
+    
+    klines1H = rawOkxData.klines1H.map(k => ({
+      open: k.open,
+      high: k.high,
+      low: k.low,
+      close: k.close,
+      volume: k.volume,
+      openTime: k.ts,
+      closeTime: k.ts + 3600000
+    }));
+    
+    okxData = {
+      fundingRate: rawOkxData.fundingRate,
+      klines4H,
+      klines1H,
+      openInterest: rawOkxData.openInterest,
+      longShortRatio: rawOkxData.longShortRatio,
+      source: rawOkxData.source
+    };
+    
+    console.log(`[ENRICHMENT] ${symbol} - OKX data: FR=${okxData.fundingRate !== null ? (okxData.fundingRate * 100).toFixed(4) + '%' : 'N/A'}, L/S=${okxData.longShortRatio ?? 'N/A'}, 4H=${klines4H.length}, 1H=${klines1H.length}`);
+  } catch (error) {
+    console.log(`[ENRICHMENT] OKX API failed for ${symbol}:`, error);
+  }
+
+
+    // FALLBACK: If OKX returned no klines, try Bitunix as kline source
+  if (klines4H.length === 0) {
+    try {
+      console.log(`[ENRICHMENT] ${symbol} - OKX klines empty, trying Bitunix fallback...`);
+      const bitunixKlines4H = await getBitunixKlines(symbol, '4h', 100);
+      if (bitunixKlines4H && bitunixKlines4H.length > 0) {
+        klines4H = bitunixKlines4H.map((k: any) => ({
+          open: String(k.open ?? k.o ?? '0'),
+          high: String(k.high ?? k.h ?? '0'),
+          low: String(k.low ?? k.l ?? '0'),
+          close: String(k.close ?? k.c ?? '0'),
+          volume: String(k.volume ?? k.v ?? '0'),
+          openTime: k.openTime ?? k.ts ?? Date.now(),
+          closeTime: k.closeTime ?? (k.openTime ?? k.ts ?? Date.now()) + 14400000
+        }));
+        console.log(`[ENRICHMENT] ${symbol} - Bitunix 4H klines: ${klines4H.length}`);
+      }
+    } catch (err) {
+      console.log(`[ENRICHMENT] ${symbol} - Bitunix 4H fallback failed:`, err);
+    }
+  }
+  if (klines1H.length === 0) {
+    try {
+      const bitunixKlines1H = await getBitunixKlines(symbol, '1h', 100);
+      if (bitunixKlines1H && bitunixKlines1H.length > 0) {
+        klines1H = bitunixKlines1H.map((k: any) => ({
+          open: String(k.open ?? k.o ?? '0'),
+          high: String(k.high ?? k.h ?? '0'),
+          low: String(k.low ?? k.l ?? '0'),
+          close: String(k.close ?? k.c ?? '0'),
+          volume: String(k.volume ?? k.v ?? '0'),
+          openTime: k.openTime ?? k.ts ?? Date.now(),
+          closeTime: k.closeTime ?? (k.openTime ?? k.ts ?? Date.now()) + 3600000
+        }));
+        console.log(`[ENRICHMENT] ${symbol} - Bitunix 1H klines: ${klines1H.length}`);
+      }
+    } catch (err) {
+      console.log(`[ENRICHMENT] ${symbol} - Bitunix 1H fallback failed:`, err);
+    }
+  }
+  // PRIORITY 2: Use Coinglass as fallback (paid plan - may fail)
+  let enhancedData: EnhancedMarketData | null = null;
+  let liquidationMap: LiquidationMapData[] = [];
+
+  try {
+    [enhancedData, liquidationMap] = await Promise.all([
+      getEnhancedMarketData(symbol).catch(() => null),
+      getLiquidationMap(symbol).catch(() => []),
+    ]);
+  } catch (error) {
+    // Coinglass may fail due to rate limits or paid plan requirements
+  }
+
+  // Calculate price location from 1H klines, with fallback estimation
+  let priceLocation: PriceLocation = "NEUTRAL";
+  if (klines1H.length > 0) {
+    const ictResult = bitunixTradeService.getICTLocation(klines1H as any);
+    priceLocation = ictResult.location.toUpperCase() as PriceLocation;
+  } else if (klines4H.length > 0) {
+    // Fallback: use 4H klines to estimate price location
+    const closes4H = klines4H.map(k => parseFloat(k.close));
+    const highs4H = klines4H.map(k => parseFloat(k.high));
+    const lows4H = klines4H.map(k => parseFloat(k.low));
+    const currentPrice = closes4H[closes4H.length - 1];
+    const high24h = Math.max(...highs4H.slice(-6)); // ~24h with 4H candles
+    const low24h = Math.min(...lows4H.slice(-6));
+    priceLocation = calculatePriceLocation(currentPrice, high24h, low24h);
+  } else {
+    // Final fallback: estimate from price change and RSI
+    const priceChange = signal.priceChange24h || 0;
+    const rsi = signal.rsi || 50;
+    
+    // Positive price change + high RSI = likely at premium
+    if (priceChange > 3 && rsi > 60) {
+      priceLocation = "PREMIUM";
+    }
+    // Negative price change + low RSI = likely at discount
+    else if (priceChange < -3 && rsi < 40) {
+      priceLocation = "DISCOUNT";
+    }
+    // Extreme positive = premium
+    else if (priceChange > 5) {
+      priceLocation = "PREMIUM";
+    }
+    // Extreme negative = discount
+    else if (priceChange < -5) {
+      priceLocation = "DISCOUNT";
+    }
+    // Default to neutral
+    else {
+      priceLocation = "NEUTRAL";
+    }
+  }
+    
+  // Extract funding rate and L/S data - OKX IS PRIMARY (works from Replit)
+  let fundingRate: number | undefined = undefined;
+  let fundingBias: "bullish" | "bearish" | "neutral" | undefined = undefined;
+  let longShortRatio: number | undefined = undefined;
+  let lsrBias: "long_dominant" | "short_dominant" | "balanced" | undefined = undefined;
+  
+  // OKX FIRST (works from Replit, no geo-restrictions)
+  if (okxData && okxData.fundingRate !== null) {
+    fundingRate = okxData.fundingRate;
+    fundingBias = fundingRate < -0.0001 ? "bullish" : fundingRate > 0.0003 ? "bearish" : "neutral";
+    console.log(`[ENRICHMENT] ${symbol} - FR: ${(fundingRate * 100).toFixed(4)}% (${fundingBias})`);
+  } else if (enhancedData?.fundingBasisAnalysis?.averageFundingRate !== undefined) {
+    fundingRate = enhancedData.fundingBasisAnalysis.averageFundingRate;
+    fundingBias = enhancedData.fundingBasisAnalysis.fundingBias;
+  }
+  
+  // L/S Ratio: OKX FIRST
+  if (okxData && okxData.longShortRatio !== null) {
+    longShortRatio = okxData.longShortRatio;
+    lsrBias = longShortRatio > 1.1 ? "long_dominant" : longShortRatio < 0.9 ? "short_dominant" : "balanced";
+    console.log(`[ENRICHMENT] ${symbol} - L/S: ${longShortRatio.toFixed(2)} (${lsrBias})`);
+  } else if (enhancedData?.positioningAnalysis?.longShortRatio !== undefined) {
+    longShortRatio = enhancedData.positioningAnalysis.longShortRatio;
+    lsrBias = enhancedData.positioningAnalysis.trend;
+  }
+  
+  // Calculate Volume Profile POC (Point of Control) from 4H klines
+  let volumeProfilePOC: number | undefined = undefined;
+  if (klines4H.length >= 20) {
+    volumeProfilePOC = calculateVolumeProfilePOC(klines4H);
+    console.log(`[ENRICHMENT] ${symbol} - POC: $${volumeProfilePOC?.toFixed(4)}`);
+  }
+
+  // Calculate market phase using SMC + Order Flow logic with funding rate and L/S ratio
+  const marketPhase = calculateMarketPhase(
+    signal.volumeSpikeRatio || 1,
+    signal.oiChange24h,
+    signal.rsi || 50,
+    signal.priceChange24h || 0,
+    signal.volAccel,
+    priceLocation,
+    fundingRate,
+    longShortRatio,
+  );
+
+  // Detect FVG and Order Blocks from 1H klines FIRST (before using in preSpikeScore)
+  const fvgs1H = klines1H.length > 0 ? bitunixTradeService.detectFVG(klines1H as any) : [];
+  const obs1H = klines1H.length > 0 ? bitunixTradeService.detectOrderBlocks(klines1H as any) : [];
+  
+  // Calculate pre-spike score using FVG/OB and ICT analysis (0-5 scale)
+  let preSpikeScore = 0;
+
+  // FVG presence (0-1 points)
+  if (fvgs1H.length > 0) {
+    const unfilledFVGs = fvgs1H.filter((f) => !f.filled);
+    if (unfilledFVGs.length >= 2) preSpikeScore += 1;
+    else if (unfilledFVGs.length === 1) preSpikeScore += 0.5;
+  }
+
+  // Order Block presence (0-1 points)
+  if (obs1H.length > 0) {
+    if (obs1H.length >= 2) preSpikeScore += 1;
+    else preSpikeScore += 0.5;
+  }
+
+  // ICT Location (0-1 points) - discount zone favored for longs
+  if (priceLocation === "DISCOUNT") preSpikeScore += 1;
+  else if (priceLocation === "NEUTRAL") preSpikeScore += 0.5;
+
+  // Volume spike (0-1 points)
+  if (signal.volumeSpikeRatio && signal.volumeSpikeRatio >= 3)
+    preSpikeScore += 1;
+  else if (signal.volumeSpikeRatio && signal.volumeSpikeRatio >= 2)
+    preSpikeScore += 0.5;
+
+  // Signal strength from original screener (0-1 points)
+  if (signal.signalStrength && signal.signalStrength >= 4) preSpikeScore += 1;
+  else if (signal.signalStrength && signal.signalStrength >= 3)
+    preSpikeScore += 0.5;
+
+    // AUR Pre-Spike Detection (0-1.5 points) - key alpha
+  if (aurData) {
+    if (aurData.aurRising && aurData.aur > 0.5) preSpikeScore += 1.0;
+    else if (aurData.aurRising) preSpikeScore += 0.5;
+    if (aurData.aurSlope > 0.05) preSpikeScore += 0.25;
+    if (aurData.aurZScore > 0.5 && aurData.aurZScore < 2.0) preSpikeScore += 0.25;
+  }
+
+  preSpikeScore = Math.min(5, Math.round(preSpikeScore * 10) / 10);
+
+  // Calculate liquidation zones
+  const liquidationZones = calculateLiquidationZones(
+    signal.currentPrice,
+    liquidationMap,
+  );
+
+  // Extract FVG and OB levels for display
+  const fvgLevels = fvgs1H.slice(-5).map((fvg) => ({
+    price: (fvg.top + fvg.bottom) / 2,
+    type: fvg.type,
+    strength: 0.7,
+  }));
+
+  const obLevels = obs1H.slice(-5).map((ob) => ({
+    price: (ob.high + ob.low) / 2,
+    type: ob.type,
+    strength: 0.8,
+  }));
+
+  // Generate storytelling
+  const storytelling = generateStorytelling(
+    signal,
+    marketPhase,
+    priceLocation,
+    preSpikeScore,
+    fundingBias,
+    lsrBias,
+  );
+
+  // Analyze latest candlestick for entry model refinement
+  let candleAnalysis: CandlestickAnalysis | undefined = undefined;
+  if (klines1H.length > 0) {
+    candleAnalysis = analyzeCandlestick(klines1H[klines1H.length - 1]);
+  } else if (klines4H.length > 0) {
+    candleAnalysis = analyzeCandlestick(klines4H[klines4H.length - 1]);
+  }
+  
+  // Calculate entry model based on phase, RSI, candlestick, and FVG levels
+  const entryModel = calculateEntryModel(
+    marketPhase,
+    signal.rsi || 50,
+    priceLocation,
+    candleAnalysis,
+    fvgLevels,
+  );
+
+  // Calculate HTF bias using Supertrend (4H) + Funding Rate
+  const htfBias = calculateHtfBias(klines4H as any, fundingRate, signal.symbol);
+
+  // Get symbol listing age
+  let ageDays: number | undefined = undefined;
+  try {
+    const listingTimestamp = await getSymbolListingDate(signal.symbol);
+    if (listingTimestamp) {
+      ageDays = calculateAgeDays(listingTimestamp);
+      console.log(`[ENRICHMENT] ${signal.symbol}: ageDays=${ageDays}`);
+    }
+  } catch (error) {
+    console.log(`[ENRICHMENT] ${signal.symbol}: ageDays error -`, (error as Error).message);
+  }
+
+  // Calculate HKPTRC Alpha Indicators from 4H klines
+  const efficiencyRatio = klines4H.length >= 21 ? calculateEfficiencyRatio(klines4H, 20) : undefined;
+  const volatilitySpread = klines4H.length >= 21 ? calculateVolatilitySpread(klines4H, 20) : undefined;
+  const channelRange = klines4H.length >= 20 ? calculateChannelRange(klines4H, 20) : undefined;
+
+    // Calculate Permutation Entropy from 4H klines
+  const permutationEntropy = klines4H.length >= 23 ? calculatePermutationEntropy(klines4H, 20, 3) : undefined;
+
+  // SEED indicatorHistory from kline rolling windows if insufficient history
+  // This ensures Z-scores work from the FIRST enrichment cycle after deploy
+  if (!indicatorHistory.has(symbol) || (indicatorHistory.get(symbol)?.er?.length ?? 0) < 3) {
+    if (klines4H.length >= 44) { // Need at least 44 bars for 4 rolling windows of 20
+      const seedHist = { er: [] as number[], vs: [] as number[], pe: [] as number[] };
+      // Compute ER/VS/PE at multiple historical offsets (stepping back 5 bars each time)
+      for (let offset = Math.min(klines4H.length - 21, 40); offset >= 0; offset -= 5) {
+        const windowKlines = klines4H.slice(offset, offset + 21);
+        if (windowKlines.length >= 21) {
+          const seedER = calculateEfficiencyRatio(windowKlines, 20);
+          const seedVS = calculateVolatilitySpread(windowKlines, 20);
+          if (seedER !== undefined) seedHist.er.push(seedER);
+          if (seedVS !== undefined) seedHist.vs.push(seedVS);
+        }
+        if (offset + 23 <= klines4H.length) {
+          const peWindow = klines4H.slice(offset, offset + 23);
+          const seedPE = calculatePermutationEntropy(peWindow, 20, 3);
+          if (seedPE !== undefined) seedHist.pe.push(seedPE);
+        }
+      }
+      if (seedHist.er.length >= 3) {
+        indicatorHistory.set(symbol, seedHist);
+        console.log(`[ENRICHMENT] ${symbol}: Seeded indicator history with ${seedHist.er.length} ER, ${seedHist.vs.length} VS, ${seedHist.pe.length} PE values from klines`);
+      }
+    }
+  }
+
+  // Push to rolling history store for Z-score computation
+  pushIndicatorHistory(symbol, efficiencyRatio, volatilitySpread, permutationEntropy);
+
+  // Compute Z-scores for ER and VSpread from rolling history
+  const hist = indicatorHistory.get(symbol);
+  const erZScore = hist && efficiencyRatio !== undefined ? calcZScore(hist.er, efficiencyRatio) : undefined;
+  const vsZScore = hist && volatilitySpread !== undefined ? calcZScore(hist.vs, volatilitySpread) : undefined;
+  const peZScore = hist && permutationEntropy !== undefined ? calcZScore(hist.pe, permutationEntropy) : undefined;
+
+  // Evaluate Pre-Spike Combo (HKPTRC Alpha)
+      const aurZScoreForCombo = aurData?.aurZScore ?? 0;
+  const combo = evaluatePreSpikeCombo(aurZScoreForCombo, efficiencyRatio, volatilitySpread, permutationEntropy, symbol, aurData?.aurSlope, aurData?.aurRising);
+  if (combo.comboScore >= 2) {
+    console.log(`[COMBO] ${signal.symbol}: ${combo.comboScore}/4 conditions met! AUR=${combo.aurCondition} ER=${combo.erCondition} VS=${combo.vsCondition} PE=${combo.peCondition}`);
+  }
+
+  return {
+    priceLocation,
+    marketPhase,
+    entryModel,
+    preSpikeScore,
+    fundingRate,
+    fundingBias,
+    longShortRatio,
+    lsrBias,
+    htfBias,
+    fvgLevels,
+    obLevels,
+    liquidationZones,
+    volumeProfilePOC,
+    storytelling,
+        efficiencyRatio,
+    volatilitySpread,
+      permutationEntropy,
+      erZScore,
+      vsZScore,
+      peZScore,
+          ageDays,
+    channelRange,
+      preSpikeCombo: combo,
+          aurVelocity: aurData?.aurSlope,
+    aurRising: aurData?.aurRising,
+  };
+}
+
+export interface ScreenerFilters {
+  minPScore?: number;
+  hideExhaust?: boolean;
+  phaseFilter?: MarketPhase | "ALL";
+  minSignalStrength?: number;
+  sideFilter?: "LONG" | "SHORT" | "ALL";
+}
+
+export function applyScreenerFilters(
+  signals: Signal[],
+  filters: ScreenerFilters,
+): Signal[] {
+  return signals.filter((signal) => {
+    // Filter by pre-spike score
+    if (
+      filters.minPScore !== undefined &&
+      (signal.preSpikeScore ?? 0) < filters.minPScore
+    ) {
+      return false;
+    }
+
+    // Hide EXHAUST phase
+    if (filters.hideExhaust && signal.marketPhase === "EXHAUST") {
+      return false;
+    }
+
+    // Filter by specific phase
+    if (
+      filters.phaseFilter &&
+      filters.phaseFilter !== "ALL" &&
+      signal.marketPhase !== filters.phaseFilter
+    ) {
+      return false;
+    }
+
+    // Filter by signal strength
+    if (
+      filters.minSignalStrength !== undefined &&
+      signal.signalStrength < filters.minSignalStrength
+    ) {
+      return false;
+    }
+
+    // Filter by side
+    if (
+      filters.sideFilter &&
+      filters.sideFilter !== "ALL" &&
+      signal.side !== filters.sideFilter
+    ) {
+      return false;
+    }
+
+    return true;
+  });
+}
