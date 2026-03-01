@@ -169,6 +169,65 @@ async function fetchCoinalyzeOpenInterest(
   return new Map<string, number>();
 }
 
+// Fetch OI data from CoinGlass V4 API (primary source, paid $79/mo)
+// Uses /api/futures/open-interest/exchange-list?symbol=XXX per coin
+// Returns 24h OI change % for each symbol
+async function fetchCoinglassV4OpenInterest(symbols: string[]): Promise<Map<string, number>> {
+  const apiKey = process.env.COINGLASS_API_KEY;
+  if (!apiKey) return new Map();
+  
+  const result = new Map<string, number>();
+  
+  // Deduplicate and convert to base symbols (BTCUSDT -> BTC)
+  const baseSymbols = [...new Set(
+    symbols
+      .filter(s => s.endsWith('USDT'))
+      .map(s => s.replace('USDT', '').toUpperCase())
+  )].slice(0, 40); // Limit to 40 to respect rate limits (80 req/min)
+  
+  // Batch requests with concurrency limit
+  const BATCH_SIZE = 5;
+  for (let i = 0; i < baseSymbols.length; i += BATCH_SIZE) {
+    const batch = baseSymbols.slice(i, i + BATCH_SIZE);
+    const requests = batch.map(async (base) => {
+      try {
+        const response = await axios.get(
+          'https://open-api-v4.coinglass.com/api/futures/open-interest/exchange-list',
+          {
+            params: { symbol: base },
+            headers: { 'CG-API-KEY': apiKey },
+            timeout: 10000,
+          }
+        );
+        
+        if (String(response.data?.code) === '0' && Array.isArray(response.data?.data)) {
+          const allRow = response.data.data.find((r: any) => r.exchange === 'All');
+          if (allRow && allRow.open_interest_change_percent_24h !== undefined) {
+            const oiChange = parseFloat(allRow.open_interest_change_percent_24h);
+            if (!isNaN(oiChange)) {
+              result.set(base + 'USDT', oiChange);
+            }
+          }
+        }
+      } catch (err: any) {
+        // Skip individual symbol errors silently
+      }
+    });
+    
+    await Promise.all(requests);
+    // Small delay between batches to respect rate limits
+    if (i + BATCH_SIZE < baseSymbols.length) {
+      await new Promise(r => setTimeout(r, 400));
+    }
+  }
+  
+  if (result.size > 0) {
+    console.log(`[OI] CoinGlass V4: ${result.size}/${baseSymbols.length} symbols with 24h OI change data`);
+  }
+  
+  return result;
+}
+
 // Main OI fetcher with Binance fallback - called by signal calculation
 async function fetchOpenInterestWithBinanceFallback(
   symbols: string[],
@@ -184,7 +243,23 @@ async function fetchOpenInterestWithBinanceFallback(
 
   const apiKey = process.env.COINALYZE_API_KEY;
 
-  // Try Coinalyze first if API key is available
+  // PRIORITY 1: Try CoinGlass V4 API (paid, most reliable)
+  if (process.env.COINGLASS_API_KEY) {
+    try {
+      const v4Data = await fetchCoinglassV4OpenInterest(symbols);
+      if (v4Data.size > 0) {
+        oiDataCache = v4Data;
+        oiLastFetched = new Date();
+        oiDataSource = "coinglass";
+        console.log(`[OI] CoinGlass V4: ${v4Data.size} symbols with OI change data`);
+        return v4Data;
+      }
+    } catch (error: any) {
+      console.log(`[OI] CoinGlass V4 failed, trying fallbacks: ${error?.message}`);
+    }
+  }
+
+  // Try Coinalyze next if API key is available
   if (apiKey) {
     try {
       // Priority symbols for OI data - include major coins AND the actual symbols being processed
@@ -573,6 +648,28 @@ async function calculateAUR(symbol: string): Promise<AURResult | null> {
     const vari = lb.reduce((s,v) => s + (v-mean)**2, 0) / lb.length;
     const sd = Math.sqrt(vari);
     const z = sd > 0.001 ? (cur - mean) / sd : 0;
+    
+    // SEED aurHistoryMap from kline data if insufficient history
+    // This ensures aurRising/aurSlope work from the FIRST refresh cycle after deploy
+    if (!aurHistoryMap.has(symbol) || (aurHistoryMap.get(symbol)?.length ?? 0) < 3) {
+      const seedData: Array<{ts: number, aur: number, z: number}> = [];
+      const now = Date.now();
+      // Use the last 6 hourly AURs as historical seed points (1 hour apart)
+      const seedAURs = hourlyAURs.slice(-Math.min(6, hourlyAURs.length));
+      for (let si = 0; si < seedAURs.length; si++) {
+        const seedMean = hourlyAURs.slice(0, Math.max(1, hourlyAURs.length - seedAURs.length + si)).reduce((s,v) => s+v, 0) / Math.max(1, hourlyAURs.length - seedAURs.length + si);
+        const seedVar = hourlyAURs.slice(0, Math.max(1, hourlyAURs.length - seedAURs.length + si)).reduce((s,v) => s + (v-seedMean)**2, 0) / Math.max(1, hourlyAURs.length - seedAURs.length + si);
+        const seedSd = Math.sqrt(seedVar);
+        const seedZ = seedSd > 0.001 ? (seedAURs[si] - seedMean) / seedSd : 0;
+        seedData.push({
+          ts: now - (seedAURs.length - si) * 3600000, // space 1 hour apart
+          aur: seedAURs[si],
+          z: seedZ,
+        });
+      }
+      aurHistoryMap.set(symbol, seedData);
+    }
+    
     // Use cross-cycle history for trend detection (persists across 5-min refresh cycles)
     const trendData = detectAurTrendFromHistory(symbol, cur, z);
     const result = {
@@ -1200,8 +1297,17 @@ export async function registerRoutes(
           // MAJOR: Always include BTC/ETH regardless of volume
           const isMajorQualified = isMajor;
 
-          // Determine signal type (priority order: HOT > MAJOR > ACTIVE > PRE)
-          let signalType: "HOT" | "ACTIVE" | "PRE" | "MAJOR" | null = null;
+          // COIL criteria: Compression before spike — low vol, tight price range, neutral RSI
+          // Mind Map: volSpike < 0.8, priceChange -5% to +8%, RSI 40-60
+          const isCoil =
+            volumeSpikeRatio < 0.8 &&
+            priceChange24h >= -5 &&
+            priceChange24h <= 8 &&
+            rsi >= 40 &&
+            rsi <= 60;
+
+          // Determine signal type (priority order: HOT > MAJOR > ACTIVE > PRE > COIL)
+          let signalType: "HOT" | "ACTIVE" | "PRE" | "COIL" | "MAJOR" | null = null;
           if (isHotMomentum) {
             signalType = "HOT";
           } else if (isMajorQualified) {
@@ -1210,6 +1316,8 @@ export async function registerRoutes(
             signalType = "ACTIVE";
           } else if (isPreConsolidation) {
             signalType = "PRE";
+          } else if (isCoil) {
+            signalType = "COIL";
           }
 
           // Filter out if doesn't match any category
@@ -1229,13 +1337,17 @@ export async function registerRoutes(
               ? priceChange24h >= 20
               : signalType === "ACTIVE"
                 ? priceChange24h >= 5 && priceChange24h <= 60
-                : priceChange24h >= -8 && priceChange24h <= 15;
+                : signalType === "COIL"
+                  ? priceChange24h >= -5 && priceChange24h <= 8
+                  : priceChange24h >= -8 && priceChange24h <= 15;
           const volumeInRange =
             signalType === "HOT"
               ? volumeSpikeRatio >= 2.0
               : signalType === "ACTIVE"
                 ? volumeSpikeRatio >= 1.0
-                : volumeSpikeRatio >= 0.5 && volumeSpikeRatio < 1.0;
+                : signalType === "COIL"
+                  ? volumeSpikeRatio < 0.8
+                  : volumeSpikeRatio >= 0.5 && volumeSpikeRatio < 1.0;
           const rsiInRange =
             signalType === "ACTIVE"
               ? rsi >= 50 && rsi <= 85
@@ -1371,7 +1483,7 @@ export async function registerRoutes(
             isAccelerating, // True if volAccel >= 2.0x
             oiChange24h, // Open Interest 24H change %
             hasVolAlert, // True if volume > 2.0x
-            signalType, // "HOT" | "ACTIVE" | "PRE" | "MAJOR"
+            signalType, // "HOT" | "ACTIVE" | "PRE" | "COIL" | "MAJOR"
             rsi,
             ageDays, // Listing age in days
             entryPrice: currentPrice,
@@ -1449,7 +1561,7 @@ export async function registerRoutes(
 
       // Sort by signalType priority: HOT first, then MAJOR, then ACTIVE, then PRE
       // Within each category, sort by R:R descending
-      const typePriority = { HOT: 0, MAJOR: 1, ACTIVE: 2, PRE: 3 };
+      const typePriority = { HOT: 0, MAJOR: 1, ACTIVE: 2, PRE: 3, COIL: 4 };
       const sortedSignals = signals.sort((a, b) => {
         const aPriority =
           typePriority[a.signalType as keyof typeof typePriority] ?? 4;
@@ -1467,6 +1579,7 @@ export async function registerRoutes(
         MAJOR: signals.filter((s) => s.signalType === "MAJOR").length,
         ACTIVE: signals.filter((s) => s.signalType === "ACTIVE").length,
         PRE: signals.filter((s) => s.signalType === "PRE").length,
+        COIL: signals.filter((s) => s.signalType === "COIL").length,
       };
       lastUpdated = new Date();
 
@@ -1493,7 +1606,7 @@ export async function registerRoutes(
       };
 
       console.log(
-        `Signal calculation complete. Found ${cachedSignals.length} signals (${typeCount.HOT} HOT, ${typeCount.MAJOR} MAJOR, ${typeCount.ACTIVE} ACTIVE, ${typeCount.PRE} PRE).`,
+        `Signal calculation complete. Found ${cachedSignals.length} signals (${typeCount.HOT} HOT, ${typeCount.MAJOR} MAJOR, ${typeCount.ACTIVE} ACTIVE, ${typeCount.PRE} PRE, ${typeCount.COIL} COIL).`,
       );
       console.log(
         `Spike readiness: ${readinessCount.warming} warming, ${readinessCount.primed} primed, ${readinessCount.hot} hot, ${readinessCount.overdue} overdue`,
@@ -2904,7 +3017,7 @@ export async function registerRoutes(
       const signals: any[] = [];
       
       // Limit Coinglass enrichment to first 15 to respect rate limits
-      const enrichLimit = Math.min(validSignals.length, 15);
+      const enrichLimit = validSignals.length; // Enrich ALL signals (CoinGlass V4 rate limiter handles throttling)
 
       for (let i = 0; i < validSignals.length; i++) {
         const classicSignal = validSignals[i];
@@ -2942,7 +3055,7 @@ export async function registerRoutes(
         );
         
         // Use signalType from Classic View
-        const signalType = classicSignal.signalType as "HOT" | "MAJOR" | "ACTIVE" | "PRE";
+        const signalType = classicSignal.signalType as "HOT" | "MAJOR" | "ACTIVE" | "PRE" | "COIL";
         
         // Build base signal from Classic View data
         const signal: any = {
@@ -3036,7 +3149,7 @@ export async function registerRoutes(
         // Enrich with Coinglass data for first N signals
         if (enrichCoinglass && process.env.COINGLASS_API_KEY && i < enrichLimit) {
           try {
-            const enrichedData = await enrichSignalWithCoinglass(signal, high24h, low24h, signal.aur !== undefined ? { aur: signal.aur, aurZScore: signal.aurZScore ?? 0, aurRising: false, aurSlope: 0 } : undefined);
+            const enrichedData = await enrichSignalWithCoinglass(signal, high24h, low24h, signal.aur !== undefined ? { aur: signal.aur, aurZScore: signal.aurZScore ?? 0, aurRising: classicSignal.aurRising ?? false, aurSlope: classicSignal.aurSlope ?? 0 } : undefined);
             Object.assign(signal, enrichedData);
           } catch (err) {
             console.log(`[ENHANCED-SCREENER] Failed to enrich ${symbol}`);
@@ -3053,7 +3166,7 @@ export async function registerRoutes(
           signal.signalStrength,
           signal.fundingRate,
           signal.longShortRatio,
-        signal.aur !== undefined ? { aur: signal.aur, aurZScore: signal.aurZScore ?? 0, aurRising: false, aurSlope: 0 , isBuyConcentrated: false, aurTrend: []}  : undefined
+        signal.aur !== undefined ? { aur: signal.aur, aurZScore: signal.aurZScore ?? 0, aurRising: classicSignal.aurRising ?? false, aurSlope: classicSignal.aurSlope ?? 0, isBuyConcentrated: classicSignal.isBuyConcentrated ?? false, aurTrend: classicSignal.aurTrend ?? []}  : undefined
         );
         
         // Calculate ML listing alpha prediction
