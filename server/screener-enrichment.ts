@@ -1176,7 +1176,7 @@ function pushIndicatorHistory(symbol: string, er: number | undefined, vs: number
 }
 
 function calcZScore(values: number[], current: number): number | undefined {
-  if (values.length < 5) return undefined; // Need minimum history
+  if (values.length < 3) return undefined; // Reduced from 5 to 3 — history seeds faster from klines
   const mean = values.reduce((a, b) => a + b, 0) / values.length;
   const variance = values.reduce((a, v) => a + Math.pow(v - mean, 2), 0) / values.length;
   const std = Math.sqrt(variance);
@@ -1193,10 +1193,10 @@ function calcMean(values: number[]): number | undefined {
  * Evaluate Pre-Spike Combo Conditions (HKPTRC Alpha)
  * Returns count of conditions met (0-4) and which ones are true.
  * 
- * Conditions:
- * 1. AUR Z-score > 2 (buying concentration rising, trend confirming)
- * 2. ER > rolling mean (price movement becoming efficient/trending)
- * 3. VSpread Z < -2 (volatility compressed to extreme, explosion imminent)
+ * Conditions (aligned with Mind Map Primary Filters):
+ * 1. AUR Z-score > 1.0 (buying concentration rising — Mind Map: AUR slope > 0 & Z < 1.5)
+ * 2. ER > rolling mean (price movement becoming efficient/trending — Mind Map: ER rising)
+ * 3. VSpread Z < -1.5 (volatility compressed — Mind Map: VS Z < -1.5)
  * 4. PE > rolling mean (market disorder rising, about to resolve into momentum)
  */
 export function evaluatePreSpikeCombo(
@@ -1218,9 +1218,10 @@ export function evaluatePreSpikeCombo(
   const vsZScore = hist && vs !== undefined ? calcZScore(hist.vs, vs) : undefined;
   const peMean = hist ? calcMean(hist.pe) : undefined;
 
-  const aurCondition = aurZScore !== undefined && aurZScore > 2;
+  // Relaxed thresholds aligned with Mind Map Primary Filters
+  const aurCondition = aurZScore !== undefined && aurZScore > 1.0;
   const erCondition = er !== undefined && erMean !== undefined && er > erMean;
-  const vsCondition = vsZScore !== undefined && vsZScore < -2;
+  const vsCondition = vsZScore !== undefined && vsZScore < -1.5;
   const peCondition = pe !== undefined && peMean !== undefined && pe > peMean;
 
   const comboScore = (aurCondition ? 1 : 0) + (erCondition ? 1 : 0) + (vsCondition ? 1 : 0) + (peCondition ? 1 : 0);
@@ -1532,6 +1533,33 @@ export async function enrichSignalWithCoinglass(
 
     // Calculate Permutation Entropy from 4H klines
   const permutationEntropy = klines4H.length >= 23 ? calculatePermutationEntropy(klines4H, 20, 3) : undefined;
+
+  // SEED indicatorHistory from kline rolling windows if insufficient history
+  // This ensures Z-scores work from the FIRST enrichment cycle after deploy
+  if (!indicatorHistory.has(symbol) || (indicatorHistory.get(symbol)?.er?.length ?? 0) < 3) {
+    if (klines4H.length >= 44) { // Need at least 44 bars for 4 rolling windows of 20
+      const seedHist = { er: [] as number[], vs: [] as number[], pe: [] as number[] };
+      // Compute ER/VS/PE at multiple historical offsets (stepping back 5 bars each time)
+      for (let offset = Math.min(klines4H.length - 21, 40); offset >= 0; offset -= 5) {
+        const windowKlines = klines4H.slice(offset, offset + 21);
+        if (windowKlines.length >= 21) {
+          const seedER = calculateEfficiencyRatio(windowKlines, 20);
+          const seedVS = calculateVolatilitySpread(windowKlines, 20);
+          if (seedER !== undefined) seedHist.er.push(seedER);
+          if (seedVS !== undefined) seedHist.vs.push(seedVS);
+        }
+        if (offset + 23 <= klines4H.length) {
+          const peWindow = klines4H.slice(offset, offset + 23);
+          const seedPE = calculatePermutationEntropy(peWindow, 20, 3);
+          if (seedPE !== undefined) seedHist.pe.push(seedPE);
+        }
+      }
+      if (seedHist.er.length >= 3) {
+        indicatorHistory.set(symbol, seedHist);
+        console.log(`[ENRICHMENT] ${symbol}: Seeded indicator history with ${seedHist.er.length} ER, ${seedHist.vs.length} VS, ${seedHist.pe.length} PE values from klines`);
+      }
+    }
+  }
 
   // Push to rolling history store for Z-score computation
   pushIndicatorHistory(symbol, efficiencyRatio, volatilitySpread, permutationEntropy);
