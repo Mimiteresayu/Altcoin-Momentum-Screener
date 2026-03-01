@@ -19,6 +19,15 @@ import CoinGlassV4Provider, { bitunixToBase, bitunixToCoinglassPair } from "./co
 const HAS_CG_KEY = !!process.env.COINGLASS_API_KEY;
 const cgV4 = HAS_CG_KEY ? CoinGlassV4Provider.getInstance() : null;
 
+// Diagnostic: collect V4 errors for debugging
+const _recentV4Errors: string[] = [];
+function _trackV4Error(context: string, err: unknown) {
+  const msg = `${context}: ${(err as Error)?.message || String(err)}`;
+  console.log(`[CoinGlass V4 ERROR] ${msg}`);
+  _recentV4Errors.push(msg);
+  if (_recentV4Errors.length > 20) _recentV4Errors.shift();
+}
+
 if (HAS_CG_KEY) {
   console.log('[CoinGlass] V4 API key detected — enhanced data enabled (funding, OI, liquidations, L/S ratio, taker volume)');
 } else {
@@ -134,7 +143,7 @@ export async function getOpenInterestHistory(
         }];
       }
     } catch (err) {
-      console.log(`[CoinGlass V4] OI fallback to Binance for ${symbol}: ${(err as Error)?.message}`);
+      _trackV4Error(`OI ${symbol}`, err);
     }
   }
   
@@ -168,7 +177,7 @@ export async function getLiquidationHistory(
         }];
       }
     } catch (err) {
-      console.log(`[CoinGlass V4] Liquidation history error for ${symbol}: ${(err as Error)?.message}`);
+      _trackV4Error(`LiqHistory ${symbol}`, err);
     }
   }
   
@@ -205,7 +214,7 @@ export async function getLiquidationMap(
         }
       }
     } catch (err) {
-      console.log(`[CoinGlass V4] Liquidation map error for ${symbol}: ${(err as Error)?.message}`);
+      _trackV4Error(`LiqMap ${symbol}`, err);
     }
   }
   
@@ -278,7 +287,7 @@ export async function getLongShortRatio(
         }];
       }
     } catch (err) {
-      console.log(`[CoinGlass V4] L/S ratio fallback to Binance for ${symbol}: ${(err as Error)?.message}`);
+      _trackV4Error(`LS ${symbol}`, err);
     }
   }
 
@@ -328,7 +337,7 @@ export async function getTakerBuySell(
         }];
       }
     } catch (err) {
-      console.log(`[CoinGlass V4] Taker volume fallback to Binance for ${symbol}: ${(err as Error)?.message}`);
+      _trackV4Error(`Taker ${symbol}`, err);
     }
   }
 
@@ -372,7 +381,7 @@ export async function getFundingRate(
         }));
       }
     } catch (err) {
-      console.log(`[CoinGlass V4] Funding rate fallback to Binance for ${symbol}: ${(err as Error)?.message}`);
+      _trackV4Error(`Funding ${symbol}`, err);
     }
   }
 
@@ -507,6 +516,8 @@ export interface EnhancedMarketData {
     | "bearish"
     | "strong_bearish";
   _dataSource?: string; // Diagnostic: "v4" or "binance-free"
+  _v4Errors?: string[]; // Diagnostic: capture V4 call errors
+  _v4ApiKey?: string; // Diagnostic: first/last chars of key
 }
 
 function calculateAccumulationScore(
@@ -572,7 +583,12 @@ export async function getEnhancedMarketData(
     return cached;
   }
 
-  console.log(`[ENHANCED-MARKET] Fetching data for ${symbol}${cgV4 ? ' (V4 enhanced)' : ''}...`);
+  const v4Errors: string[] = [];
+  const apiKeyHint = process.env.COINGLASS_API_KEY 
+    ? `${process.env.COINGLASS_API_KEY.substring(0, 4)}...${process.env.COINGLASS_API_KEY.substring(process.env.COINGLASS_API_KEY.length - 4)}`
+    : 'NOT SET';
+  
+  console.log(`[ENHANCED-MARKET] Fetching data for ${symbol}${cgV4 ? ' (V4 enhanced)' : ''}... API Key: ${apiKeyHint}`);
 
   const [
     liquidationMap,
@@ -583,12 +599,12 @@ export async function getEnhancedMarketData(
     futuresBasis,
     fearGreed,
   ] = await Promise.all([
-    getLiquidationMap(symbol).catch(() => [] as LiquidationMapData[]),
-    getOrderbookWalls(symbol).catch(() => [] as OrderbookWall[]),
-    getLongShortRatio(symbol, "h1", 1).catch(() => [] as LongShortRatioData[]),
-    getTakerBuySell(symbol, "h1", 1).catch(() => [] as TakerBuySellData[]),
-    getFundingRate(symbol).catch(() => [] as FundingRateData[]),
-    getFuturesBasis(symbol, "h1", 1).catch(() => [] as FuturesBasisData[]),
+    getLiquidationMap(symbol).catch((e) => { v4Errors.push(`liqMap: ${(e as Error)?.message}`); return [] as LiquidationMapData[]; }),
+    getOrderbookWalls(symbol).catch((e) => { v4Errors.push(`orderbook: ${(e as Error)?.message}`); return [] as OrderbookWall[]; }),
+    getLongShortRatio(symbol, "h1", 1).catch((e) => { v4Errors.push(`ls: ${(e as Error)?.message}`); return [] as LongShortRatioData[]; }),
+    getTakerBuySell(symbol, "h1", 1).catch((e) => { v4Errors.push(`taker: ${(e as Error)?.message}`); return [] as TakerBuySellData[]; }),
+    getFundingRate(symbol).catch((e) => { v4Errors.push(`funding: ${(e as Error)?.message}`); return [] as FundingRateData[]; }),
+    getFuturesBasis(symbol, "h1", 1).catch((e) => { v4Errors.push(`basis: ${(e as Error)?.message}`); return [] as FuturesBasisData[]; }),
     getFearGreedIndex().catch(() => ({
       time: Date.now(),
       value: 50,
@@ -724,6 +740,8 @@ export async function getEnhancedMarketData(
     distributionScore,
     momentumStrength,
     _dataSource: cgV4 ? 'coinglass-v4' : 'binance-free',
+    _v4Errors: _recentV4Errors.length > 0 ? [..._recentV4Errors] : undefined,
+    _v4ApiKey: apiKeyHint,
   };
 
   // Cache the result for 1 minute to reduce API calls on repeated requests
