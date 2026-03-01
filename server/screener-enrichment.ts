@@ -1,1 +1,1 @@
-ENRICHMENT_CONTENT_PLACEHOLDER
+READ_FROM_FILE:/home/user/workspace/ams-fresh/server/screener-enrichment.ts
