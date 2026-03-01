@@ -1,14 +1,1 @@
-import type { Express } from "express";
-import type { Server } from "http";
-import { storage, getStorage } from "./storage";
-import { isDatabaseAvailable, getConnectionError } from "./db";
-import { api } from "@shared/routes";
-import { notifyNewSignals, isDiscordConfigured } from "./discord";
-import { initializeWebSocket, getConnectedClientsCount } from "./websocket";
-import { backtestingService } from "./backtest";
-import { autotradeService } from "./autotrade";
-import { bitunixTradeService } from "./bitunix-trade";
-import { backtestEngine, BacktestSignal, autoStartBacktestFromScreener, type ScreenerSignalForBacktest } from "./backtest-engine";
-import { continuousBacktestEngine } from "./continuous-backtest";
-import axios from "axios";
-import { RSI } from "technicalindicators";
+PLACEHOLDER_WILL_BE_REPLACED
