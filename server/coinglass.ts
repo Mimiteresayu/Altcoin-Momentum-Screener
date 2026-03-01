@@ -506,6 +506,7 @@ export interface EnhancedMarketData {
     | "neutral"
     | "bearish"
     | "strong_bearish";
+  _dataSource?: string; // Diagnostic: "v4" or "binance-free"
 }
 
 function calculateAccumulationScore(
@@ -722,6 +723,7 @@ export async function getEnhancedMarketData(
     accumulationScore,
     distributionScore,
     momentumStrength,
+    _dataSource: cgV4 ? 'coinglass-v4' : 'binance-free',
   };
 
   // Cache the result for 1 minute to reduce API calls on repeated requests
