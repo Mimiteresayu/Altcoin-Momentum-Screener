@@ -1009,6 +1009,11 @@ export async function registerRoutes(
   let isCalculating = false;
   let lastUpdated: Date = new Date();
 
+  // Enhanced screener cache — enrichment runs in background, endpoint serves instantly
+  let cachedEnhancedSignals: any[] = [];
+  let enhancedLastUpdated: Date | null = null;
+  let isEnriching = false;
+
   // Initialize ML model
   const ML_MODEL_PATH = './server/ml/trained-models';
   listingAlphaModel.load(ML_MODEL_PATH).then(loaded => {
@@ -1625,6 +1630,132 @@ export async function registerRoutes(
     }
   }
 
+  // ─── Background enrichment: builds enhanced signals cache ───────
+  async function calculateEnhancedSignals() {
+    if (isEnriching || cachedSignals.length === 0) return;
+    isEnriching = true;
+    const startTime = Date.now();
+    console.log(`[ENHANCED-CACHE] Starting background enrichment for ${cachedSignals.length} signals...`);
+    try {
+      const enrichLimit = Math.min(cachedSignals.length, 30);
+      const validSignals = cachedSignals.slice(0, 30);
+      const signals: any[] = [];
+
+      for (let i = 0; i < validSignals.length; i++) {
+        const classicSignal = validSignals[i];
+        const symbol = classicSignal.symbol;
+        const price = classicSignal.currentPrice;
+        const high24h = classicSignal.high24h || price * 1.05;
+        const low24h = classicSignal.low24h || price * 0.95;
+        const volume = classicSignal.volume24h || 0;
+        const priceChange24h = classicSignal.priceChange24h || 0;
+        const volumeSpikeRatio = classicSignal.volumeSpikeRatio || 1.0;
+        const rsi = classicSignal.rsi || 50;
+
+        const priceLocation = calculatePriceLocation(price, high24h, low24h);
+        const marketPhase = calculateMarketPhase(volumeSpikeRatio, classicSignal.oiChange24h, rsi, priceChange24h, classicSignal.volAccel, priceLocation, classicSignal.fundingRate, classicSignal.longShortRatio);
+        const entryModel = calculateEntryModel(marketPhase, rsi, priceLocation, undefined, undefined);
+        const signalType = classicSignal.signalType as "HOT" | "MAJOR" | "ACTIVE" | "PRE" | "COIL";
+
+        const signal: any = {
+          symbol, signalType,
+          side: classicSignal.side || (priceChange24h > 0 ? "LONG" : "SHORT"),
+          currentPrice: price, priceChange24h, volumeSpikeRatio,
+          volAccel: classicSignal.volAccel,
+          oiChange24h: classicSignal.oiChange24h, rsi,
+          entryPrice: classicSignal.entryPrice || price * (priceChange24h > 0 ? 0.995 : 1.005),
+          slPrice: classicSignal.slPrice || price * (priceChange24h > 0 ? 0.95 : 1.05),
+          slDistancePct: classicSignal.slDistancePct || 5,
+          slReason: classicSignal.slReason || "5% default stop",
+          tpLevels: classicSignal.tpLevels || [
+            { label: "TP1", price: price * (priceChange24h > 0 ? 1.03 : 0.97), pct: 3, reason: "3% target" },
+            { label: "TP2", price: price * (priceChange24h > 0 ? 1.06 : 0.94), pct: 6, reason: "6% target" },
+          ],
+          riskReward: classicSignal.riskReward || 1.2,
+          signalStrength: classicSignal.signalStrength || 3,
+          strengthBreakdown: classicSignal.strengthBreakdown || { priceInRange: true, volumeInRange: volumeSpikeRatio >= 2, rsiInRange: rsi >= 40 && rsi <= 70, rrInRange: true, hasLeadingIndicators: false },
+          leadingIndicators: classicSignal.leadingIndicators || { hasFVG: false, hasOB: false, hasLiquidityGrab: false, hasBreakOfStructure: false, fvgType: null, obType: null, liquidityLevel: null, liquidityStrength: 0 },
+          timeframes: classicSignal.timeframes || [],
+          confirmedTimeframes: classicSignal.confirmedTimeframes || [],
+          isMajor: symbol === "BTCUSDT" || symbol === "ETHUSDT",
+          high24h, low24h, volume24h: volume,
+          priceLocation, marketPhase, entryModel,
+          preSpikeScore: 0,
+          fundingRate: undefined, fundingBias: undefined,
+          longShortRatio: undefined, lsrBias: undefined,
+          fvgLevels: [], obLevels: [],
+          liquidationZones: { nearestLongLiq: undefined, nearestShortLiq: undefined, longLiqDistance: undefined, shortLiqDistance: undefined },
+          storytelling: { summary: `${symbol} at ${priceLocation} zone`, interpretation: "Awaiting enrichment", confidence: "low" as const, actionSuggestion: "Wait for data" },
+          ageDays: undefined as number | undefined,
+          aur: null as number | null,
+          aurZScore: null as number | null,
+          isBuyConcentrated: false,
+        };
+
+        if (classicSignal.aur !== undefined) signal.aur = classicSignal.aur;
+        if (classicSignal.aurZScore !== undefined) signal.aurZScore = classicSignal.aurZScore;
+        if (classicSignal.isBuyConcentrated !== undefined) signal.isBuyConcentrated = classicSignal.isBuyConcentrated;
+
+        try {
+          const listingTimestamp = await getSymbolListingDate(symbol);
+          if (listingTimestamp) signal.ageDays = calculateAgeDays(listingTimestamp);
+        } catch { /* skip */ }
+
+        if (process.env.COINGLASS_API_KEY && i < enrichLimit) {
+          try {
+            const enrichedData = await enrichSignalWithCoinglass(signal, high24h, low24h,
+              signal.aur !== undefined ? { aur: signal.aur, aurZScore: signal.aurZScore ?? 0, aurRising: classicSignal.aurRising ?? false, aurSlope: classicSignal.aurSlope ?? 0 } : undefined);
+            Object.assign(signal, enrichedData);
+          } catch (err) {
+            console.log(`[ENHANCED-CACHE] Failed to enrich ${symbol}`);
+          }
+        }
+
+        signal.preSpikeScore = calculatePreSpikeScore(
+          signal.volumeSpikeRatio, signal.volAccel, signal.oiChange24h, signal.rsi,
+          signal.riskReward, signal.signalStrength, signal.fundingRate, signal.longShortRatio,
+          signal.aur !== undefined ? { aur: signal.aur, aurZScore: signal.aurZScore ?? 0, aurRising: classicSignal.aurRising ?? false, aurSlope: classicSignal.aurSlope ?? 0, isBuyConcentrated: classicSignal.isBuyConcentrated ?? false, aurTrend: classicSignal.aurTrend ?? [] } : undefined
+        );
+
+        try {
+          const now = new Date();
+          const mlFeatures: ListingFeatures = {
+            marketCap: 100000000, marketCapRank: 200,
+            daysSinceBinanceListing: signal.ageDays ?? 30, numExchangesListed: 5,
+            circulatingSupplyRatio: 0.5, narrativeCategory: 'Other',
+            twitterMentions24h: 1000, sentimentScore: 0.5,
+            koreanSocialMentions: signal.volumeSpikeRatio > 3 ? 2000 : 500,
+            return24h: signal.priceChange24h / 100, return7d: signal.priceChange24h / 50,
+            volumeSpike: signal.volumeSpikeRatio, volatility24h: 0.15, rsi14: signal.rsi,
+            exchangeNetflow: 0.1, whaleTransactions24h: 20,
+            hourOfDay: now.getUTCHours() + 8, dayOfWeek: now.getDay(),
+            isKoreaTradingHours: now.getUTCHours() >= 0 && now.getUTCHours() < 9,
+            kimchiPremium: 0.02, targetExchange: 'upbit'
+          };
+          const mlPrediction = await listingAlphaModel.predict(mlFeatures);
+          signal.mlScore = {
+            listingProbability: Math.round(mlPrediction.listingProbability * 100),
+            expectedReturn: Math.round(mlPrediction.expectedReturn * 100),
+            confidence: Math.round(mlPrediction.confidence * 100),
+            positionSize: Math.round(mlPrediction.recommendedPositionSize * 100)
+          };
+        } catch { /* ML failed, continue */ }
+
+        signals.push(signal);
+      }
+
+      // Sort by pre-spike score
+      signals.sort((a: any, b: any) => (b.preSpikeScore ?? 0) - (a.preSpikeScore ?? 0));
+      cachedEnhancedSignals = signals;
+      enhancedLastUpdated = new Date();
+      console.log(`[ENHANCED-CACHE] Background enrichment done: ${signals.length} signals in ${((Date.now() - startTime) / 1000).toFixed(1)}s`);
+    } catch (err: any) {
+      console.error(`[ENHANCED-CACHE] Error:`, err?.message || err);
+    } finally {
+      isEnriching = false;
+    }
+  }
+
   // Track if initial calculation is done
   let initialCalculationDone = false;
   let initialCalculationPromise: Promise<void> | null = null;
@@ -1634,11 +1765,17 @@ export async function registerRoutes(
     backtestingService.startMonitoring(60000);
   });
 
-  // Start initial calculation and track completion
+  // Start initial calculation, then enrich in background
   initialCalculationPromise = calculateSignals().then(() => {
     initialCalculationDone = true;
+    // Kick off first enrichment in background (non-blocking)
+    calculateEnhancedSignals();
   });
-  setInterval(calculateSignals, UPDATE_FREQUENCY_MINUTES * 60 * 1000);
+  setInterval(async () => {
+    await calculateSignals();
+    // Enrich after fresh signals are ready
+    calculateEnhancedSignals();
+  }, UPDATE_FREQUENCY_MINUTES * 60 * 1000);
 
   app.get(api.tickers.list.path, async (req, res) => {
     // Wait for initial calculation if not done yet (max 30 seconds)
@@ -2987,7 +3124,7 @@ export async function registerRoutes(
     }
   });
 
-  // GET /api/enhanced-screener - Full enriched signals with LOC, PHASE, PSCORE, storytelling
+  // GET /api/enhanced-screener - Serves from background-enriched cache (instant response)
   app.get("/api/enhanced-screener", async (req, res) => {
     try {
       // Parse filter parameters
@@ -2998,231 +3135,32 @@ export async function registerRoutes(
         minSignalStrength: req.query.minStrength ? parseInt(req.query.minStrength as string) : undefined,
         sideFilter: (req.query.sideFilter as any) || "ALL",
       };
-      const limit = Math.min(parseInt(req.query.limit as string) || 30, 50);
-      const enrichCoinglass = req.query.enrich !== "false";
-      
-      console.log(`[ENHANCED-SCREENER] Using cachedSignals from Classic View (${cachedSignals.length} signals)`);
-      
-      // USE THE SAME cachedSignals AS CLASSIC VIEW - this ensures both views show identical symbols
-      if (cachedSignals.length === 0) {
-        console.log(`[ENHANCED-SCREENER] No cached signals available, triggering calculation...`);
-        await calculateSignals();
+
+      // If cache is empty and initial enrichment hasn't run yet, wait up to 90s
+      if (cachedEnhancedSignals.length === 0) {
+        console.log(`[ENHANCED-SCREENER] Cache empty, waiting for background enrichment...`);
+        const maxWait = 90000;
+        const start = Date.now();
+        while (cachedEnhancedSignals.length === 0 && Date.now() - start < maxWait) {
+          await new Promise(r => setTimeout(r, 2000));
+        }
+        // If still empty after wait, trigger enrichment synchronously as fallback
+        if (cachedEnhancedSignals.length === 0 && cachedSignals.length > 0) {
+          console.log(`[ENHANCED-SCREENER] Fallback: running enrichment synchronously`);
+          await calculateEnhancedSignals();
+        }
       }
-      
-      // Take the same signals from cachedSignals
-      const validSignals = cachedSignals.slice(0, limit);
-      console.log(`[ENHANCED-SCREENER] Processing ${validSignals.length} signals from cachedSignals`);
 
-      // Build enhanced signals from cachedSignals data
-      const signals: any[] = [];
-      
-      // Limit Coinglass enrichment to first 15 to respect rate limits
-      const enrichLimit = Math.min(validSignals.length, 30); // Enrich top 30 signals (CoinGlass V4 rate: 80 req/min)
+      // Apply filters on cached data (instant)
+      const filteredSignals = applyScreenerFilters([...cachedEnhancedSignals], filters);
 
-      for (let i = 0; i < validSignals.length; i++) {
-        const classicSignal = validSignals[i];
-        const symbol = classicSignal.symbol;
-        const price = classicSignal.currentPrice;
-        const high24h = classicSignal.high24h || price * 1.05;
-        const low24h = classicSignal.low24h || price * 0.95;
-        const volume = classicSignal.volume24h || 0;
-        const priceChange24h = classicSignal.priceChange24h || 0;
-        const volumeSpikeRatio = classicSignal.volumeSpikeRatio || 1.0;
-        const rsi = classicSignal.rsi || 50;
-        
-        // Calculate price location
-        const priceLocation = calculatePriceLocation(price, high24h, low24h);
-        
-        // Calculate market phase using SMC + Order Flow logic with funding rate and L/S ratio
-        const marketPhase = calculateMarketPhase(
-          volumeSpikeRatio,
-          classicSignal.oiChange24h,
-          rsi,
-          priceChange24h,
-          classicSignal.volAccel,
-          priceLocation,
-          classicSignal.fundingRate,
-          classicSignal.longShortRatio
-        );
-        
-        // Calculate entry model based on phase and RSI (will be refined with enrichment)
-        const entryModel = calculateEntryModel(
-          marketPhase,
-          rsi,
-          priceLocation,
-          undefined, // No candlestick data yet
-          undefined  // No FVG data yet
-        );
-        
-        // Use signalType from Classic View
-        const signalType = classicSignal.signalType as "HOT" | "MAJOR" | "ACTIVE" | "PRE" | "COIL";
-        
-        // Build base signal from Classic View data
-        const signal: any = {
-          symbol,
-          signalType,
-          side: classicSignal.side || (priceChange24h > 0 ? "LONG" : "SHORT"),
-          currentPrice: price,
-          priceChange24h,
-          volumeSpikeRatio,
-          volAccel: classicSignal.volAccel,
-          oiChange24h: classicSignal.oiChange24h,
-          rsi,
-          entryPrice: classicSignal.entryPrice || price * (priceChange24h > 0 ? 0.995 : 1.005),
-          slPrice: classicSignal.slPrice || price * (priceChange24h > 0 ? 0.95 : 1.05),
-          slDistancePct: classicSignal.slDistancePct || 5,
-          slReason: classicSignal.slReason || "5% default stop",
-          tpLevels: classicSignal.tpLevels || [
-            { label: "TP1", price: price * (priceChange24h > 0 ? 1.03 : 0.97), pct: 3, reason: "3% target" },
-            { label: "TP2", price: price * (priceChange24h > 0 ? 1.06 : 0.94), pct: 6, reason: "6% target" },
-          ],
-          riskReward: classicSignal.riskReward || 1.2,
-          signalStrength: classicSignal.signalStrength || 3,
-          strengthBreakdown: classicSignal.strengthBreakdown || {
-            priceInRange: true,
-            volumeInRange: volumeSpikeRatio >= 2,
-            rsiInRange: rsi >= 40 && rsi <= 70,
-            rrInRange: true,
-            hasLeadingIndicators: false,
-          },
-          leadingIndicators: classicSignal.leadingIndicators || {
-            hasFVG: false,
-            hasOB: false,
-            hasLiquidityGrab: false,
-            hasBreakOfStructure: false,
-            fvgType: null,
-            obType: null,
-            liquidityLevel: null,
-            liquidityStrength: 0,
-          },
-          timeframes: classicSignal.timeframes || [],
-          confirmedTimeframes: classicSignal.confirmedTimeframes || [],
-          isMajor: symbol === "BTCUSDT" || symbol === "ETHUSDT",
-          high24h,
-          low24h,
-          volume24h: volume,
-          
-          // Enhanced fields (defaults)
-          priceLocation,
-          marketPhase,
-          entryModel,
-          preSpikeScore: 0,
-          fundingRate: undefined,
-          fundingBias: undefined,
-          longShortRatio: undefined,
-          lsrBias: undefined,
-          fvgLevels: [],
-          obLevels: [],
-          liquidationZones: {
-            nearestLongLiq: undefined,
-            nearestShortLiq: undefined,
-            longLiqDistance: undefined,
-            shortLiqDistance: undefined,
-          },
-          storytelling: {
-            summary: `${symbol} at ${priceLocation} zone`,
-            interpretation: "Awaiting enrichment for detailed analysis",
-            confidence: "low" as const,
-            actionSuggestion: "Wait for Coinglass data",
-          },
-          ageDays: undefined as number | undefined,
-        aur: null as number | null,
-        aurZScore: null as number | null,
-        isBuyConcentrated: false,
-        };
-        
-        // Carry AUR data from classic signal
-        if (classicSignal.aur !== undefined) signal.aur = classicSignal.aur;
-        if (classicSignal.aurZScore !== undefined) signal.aurZScore = classicSignal.aurZScore;
-        if (classicSignal.isBuyConcentrated !== undefined) signal.isBuyConcentrated = classicSignal.isBuyConcentrated;
-
-        // Fetch listing age (ageDays)
-        try {
-          const listingTimestamp = await getSymbolListingDate(symbol);
-          if (listingTimestamp) {
-            signal.ageDays = calculateAgeDays(listingTimestamp);
-          }
-        } catch {
-          // Skip age if unavailable
-        }
-        
-        // Enrich with Coinglass data for first N signals
-        if (enrichCoinglass && process.env.COINGLASS_API_KEY && i < enrichLimit) {
-          try {
-            const enrichedData = await enrichSignalWithCoinglass(signal, high24h, low24h, signal.aur !== undefined ? { aur: signal.aur, aurZScore: signal.aurZScore ?? 0, aurRising: classicSignal.aurRising ?? false, aurSlope: classicSignal.aurSlope ?? 0 } : undefined);
-            Object.assign(signal, enrichedData);
-          } catch (err) {
-            console.log(`[ENHANCED-SCREENER] Failed to enrich ${symbol}`);
-          }
-        }
-        
-        // Calculate pre-spike score with available data
-        signal.preSpikeScore = calculatePreSpikeScore(
-          signal.volumeSpikeRatio,
-          signal.volAccel,
-          signal.oiChange24h,
-          signal.rsi,
-          signal.riskReward,
-          signal.signalStrength,
-          signal.fundingRate,
-          signal.longShortRatio,
-        signal.aur !== undefined ? { aur: signal.aur, aurZScore: signal.aurZScore ?? 0, aurRising: classicSignal.aurRising ?? false, aurSlope: classicSignal.aurSlope ?? 0, isBuyConcentrated: classicSignal.isBuyConcentrated ?? false, aurTrend: classicSignal.aurTrend ?? []}  : undefined
-        );
-        
-        // Calculate ML listing alpha prediction
-        try {
-          const now = new Date();
-          const mlFeatures: ListingFeatures = {
-            marketCap: 100000000,
-            marketCapRank: 200,
-            daysSinceBinanceListing: signal.ageDays ?? 30,
-            numExchangesListed: 5,
-            circulatingSupplyRatio: 0.5,
-            narrativeCategory: 'Other',
-            twitterMentions24h: 1000,
-            sentimentScore: 0.5,
-            koreanSocialMentions: signal.volumeSpikeRatio > 3 ? 2000 : 500,
-            return24h: signal.priceChange24h / 100,
-            return7d: signal.priceChange24h / 50,
-            volumeSpike: signal.volumeSpikeRatio,
-            volatility24h: 0.15,
-            rsi14: signal.rsi,
-            exchangeNetflow: 0.1,
-            whaleTransactions24h: 20,
-            hourOfDay: now.getUTCHours() + 8,
-            dayOfWeek: now.getDay(),
-            isKoreaTradingHours: now.getUTCHours() >= 0 && now.getUTCHours() < 9,
-            kimchiPremium: 0.02,
-            targetExchange: 'upbit'
-          };
-          
-          const mlPrediction = await listingAlphaModel.predict(mlFeatures);
-          signal.mlScore = {
-            listingProbability: Math.round(mlPrediction.listingProbability * 100),
-            expectedReturn: Math.round(mlPrediction.expectedReturn * 100),
-            confidence: Math.round(mlPrediction.confidence * 100),
-            positionSize: Math.round(mlPrediction.recommendedPositionSize * 100)
-          };
-        } catch (err) {
-          // ML prediction failed, continue without it
-        }
-        
-        signals.push(signal);
-      }
-      
-      // Apply filters
-      const filteredSignals = applyScreenerFilters(signals, filters);
-      
-      // Sort by pre-spike score descending
-      filteredSignals.sort((a, b) => (b.preSpikeScore ?? 0) - (a.preSpikeScore ?? 0));
-      
       res.json({
         signals: filteredSignals,
-        timestamp: new Date().toISOString(),
+        timestamp: enhancedLastUpdated?.toISOString() || new Date().toISOString(),
         totalSignals: filteredSignals.length,
-        unfilteredCount: signals.length,
+        unfilteredCount: cachedEnhancedSignals.length,
         filters,
-        enrichedCount: Math.min(enrichLimit, validSignals.length),
+        enrichedCount: cachedEnhancedSignals.length,
       });
     } catch (error: any) {
       console.error("[ENHANCED-SCREENER] Error:", error.message);
