@@ -1,1 +1,1 @@
-PLACEHOLDER_ENRICHMENT
+import { Signal } from "@shared/schema";

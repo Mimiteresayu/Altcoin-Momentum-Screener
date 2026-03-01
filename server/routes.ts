@@ -1,1 +1,1 @@
-PLACEHOLDER_ROUTES
+import type { Express } from "express";
