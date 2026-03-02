@@ -128,6 +128,17 @@ interface EnhancedSignal {
   fundingSignal?: string;     // "SQUEEZE_FUEL" | "OVERCROWDED_LONG" | "NEUTRAL"
   atrExpanding?: boolean;     // ATR expansion flag
   atrRatio?: number;          // ATR ratio
+  spikeProbability?: {
+    probability: number;
+    confidence: "HIGH" | "MEDIUM" | "LOW";
+    expectedMagnitude: number;
+    timeDecay: number;
+    dominantDriver: string;
+    signalAgreement: number;
+    spikeScore: number;
+    vwapConfirmation: "BULLISH" | "BEARISH" | "NEUTRAL";
+    koreaListingAlpha: boolean;
+  };
 }
 
 interface ScreenerResponse {
@@ -146,6 +157,7 @@ interface ScreenerResponse {
 
 export function EnhancedScreener() {
   const [minPScore, setMinPScore] = useState<number>(0);
+  const [minProbability, setMinProbability] = useState<number>(0);
   const [hideExhaust, setHideExhaust] = useState(true);
   const [phaseFilter, setPhaseFilter] = useState("ALL");
   const [sideFilter, setSideFilter] = useState("ALL");
@@ -486,6 +498,31 @@ export function EnhancedScreener() {
         <CardContent>
           <div className="flex flex-wrap items-center gap-4 mb-4 p-3 bg-muted/30 rounded-lg">
             <div className="flex items-center gap-2">
+              <Label htmlFor="minProbability" className="text-xs whitespace-nowrap">
+                Min P(Spike)%:
+              </Label>
+              <Select
+                value={minProbability.toString()}
+                onValueChange={(v: string) => setMinProbability(parseInt(v))}
+              >
+                <SelectTrigger
+                  className="w-20 h-8"
+                  id="minProbability"
+                  data-testid="select-min-probability"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="0">All</SelectItem>
+                  <SelectItem value="10">10%+</SelectItem>
+                  <SelectItem value="20">20%+</SelectItem>
+                  <SelectItem value="30">30%+</SelectItem>
+                  <SelectItem value="50">50%+</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="flex items-center gap-2">
               <Label htmlFor="minPScore" className="text-xs whitespace-nowrap">
                 Min Spike:
               </Label>
@@ -672,14 +709,14 @@ export function EnhancedScreener() {
                         </TooltipContent>
                       </Tooltip>
                     </th>
-                    <th className="px-2 py-2 text-center">
+                    <th className="px-2 py-2 text-center min-w-[80px]">
                       <Tooltip>
                         <TooltipTrigger className="flex items-center gap-1 cursor-help">
-                          SPIKE <Info className="w-3 h-3" />
+                          P(Spike) <Info className="w-3 h-3" />
                         </TooltipTrigger>
                         <TooltipContent>
-                          <p className="text-xs max-w-[200px]">
-                            Spike Score (0-10): Composite of RVOL(30%), OI Surge(25%), BB/KC Squeeze(15%), Funding(10%), ATR Expansion. Score 7+ = High probability intraday spike.
+                          <p className="text-xs max-w-[240px]">
+                            Probability of spike in next 15 min. Based on logistic sigmoid model with 7 signal inputs. HIGH confidence = 4+ signals aligned.
                           </p>
                         </TooltipContent>
                       </Tooltip>
@@ -732,6 +769,42 @@ export function EnhancedScreener() {
                         </TooltipContent>
                       </Tooltip>
                     </th>
+                    <th className="px-2 py-2 text-center">
+                      <Tooltip>
+                        <TooltipTrigger className="flex items-center gap-1 cursor-help">
+                          MAG <Info className="w-3 h-3" />
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p className="text-xs max-w-[200px]">
+                            Expected spike magnitude % if spike occurs.
+                          </p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </th>
+                    <th className="px-2 py-2 text-center">
+                      <Tooltip>
+                        <TooltipTrigger className="flex items-center gap-1 cursor-help">
+                          DRV <Info className="w-3 h-3" />
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p className="text-xs max-w-[200px]">
+                            Signal contributing most to spike probability. (RVOL, OI, SQZ, FR, ER, AGE, ATR)
+                          </p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </th>
+                    <th className="px-2 py-2 text-center">
+                      <Tooltip>
+                        <TooltipTrigger className="flex items-center gap-1 cursor-help">
+                          VWAP <Info className="w-3 h-3" />
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p className="text-xs max-w-[200px]">
+                            Price vs Volume-Weighted Average Price.
+                          </p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </th>
                     <th
                       className="px-2 py-2 text-center"
                       data-testid="header-enhanced-age"
@@ -774,7 +847,10 @@ export function EnhancedScreener() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-white/5">
-                  {data?.signals.map((signal: any) => (
+                  {data?.signals.filter((signal: any) =>
+                    minProbability === 0 ||
+                    (signal.spikeProbability?.probability ?? 0) >= minProbability / 100
+                  ).map((signal: any) => (
                     <>
                       <tr
                         key={signal.symbol}
@@ -787,6 +863,9 @@ export function EnhancedScreener() {
                           (signal.spikeScore ?? 0) >= 7 &&
                             signal.signalType !== "HOT" &&
                             "border-l-2 border-l-emerald-500",
+                          (signal.spikeProbability?.probability ?? 0) >= 0.30 &&
+                            signal.spikeProbability?.confidence === "HIGH" &&
+                            "animate-pulse",
                         )}
                         onClick={() =>
                           setExpandedRow(
@@ -897,9 +976,44 @@ export function EnhancedScreener() {
                         <td className="px-2 py-2 text-center">
                           {getEntryBadge(signal.entryModel, signal.marketPhase)}
                         </td>
-                        {/* SPIKE column */}
-                        <td className="px-2 py-2 text-center">
-                          {getSpikeBadge(signal.spikeScore ?? signal.preSpikeScore ?? 0)}
+                        {/* P(Spike) column — backend returns 0.0-1.0, display as percentage */}
+                        <td className="px-2 py-2 text-center min-w-[80px]">
+                          {signal.spikeProbability != null ? (() => {
+                            const pct = signal.spikeProbability!.probability * 100;
+                            return (
+                            <div className="flex flex-col items-center gap-0.5">
+                              <span
+                                className={clsx(
+                                  "text-xs font-mono font-bold",
+                                  pct >= 50
+                                    ? "bg-rose-500/80 text-white px-1.5 py-0.5 rounded animate-pulse"
+                                    : pct >= 30
+                                    ? "bg-orange-500/60 text-white px-1.5 py-0.5 rounded"
+                                    : pct >= 15
+                                    ? "text-yellow-400"
+                                    : "text-muted-foreground",
+                                )}
+                              >
+                                {pct >= 50 ? "🎯 " : ""}
+                                {pct.toFixed(0)}%
+                              </span>
+                              <Badge
+                                className={clsx(
+                                  "text-[8px] px-1 py-0",
+                                  signal.spikeProbability.confidence === "HIGH"
+                                    ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/30"
+                                    : signal.spikeProbability.confidence === "MEDIUM"
+                                    ? "bg-amber-500/20 text-amber-400 border-amber-500/30"
+                                    : "bg-slate-500/20 text-slate-400 border-slate-500/30",
+                                )}
+                              >
+                                {signal.spikeProbability.confidence}
+                              </Badge>
+                            </div>
+                            );
+                          })() : (
+                            <span className="text-muted-foreground text-xs">—</span>
+                          )}
                         </td>
                         {/* RVOL column */}
                         <td className="px-2 py-2 text-center">
@@ -966,6 +1080,47 @@ export function EnhancedScreener() {
                             <Badge className="bg-rose-500/20 text-rose-400 border-rose-500/30">
                               ⚠ CROWD
                             </Badge>
+                          ) : (
+                            <span className="text-muted-foreground text-xs">—</span>
+                          )}
+                        </td>
+                        {/* MAG column */}
+                        <td className="px-2 py-2 text-center">
+                          {signal.spikeProbability?.expectedMagnitude != null ? (
+                            <span
+                              className={clsx(
+                                "text-xs font-mono",
+                                signal.spikeProbability.expectedMagnitude >= 8
+                                  ? "text-orange-400 font-bold"
+                                  : signal.spikeProbability.expectedMagnitude >= 5
+                                  ? "text-yellow-400"
+                                  : "text-muted-foreground",
+                              )}
+                            >
+                              ~{signal.spikeProbability.expectedMagnitude.toFixed(1)}%
+                            </span>
+                          ) : (
+                            <span className="text-muted-foreground text-xs">—</span>
+                          )}
+                        </td>
+                        {/* DRV column */}
+                        <td className="px-2 py-2 text-center">
+                          {signal.spikeProbability?.dominantDriver ? (
+                            <Badge className="bg-slate-500/20 text-slate-300 border-slate-500/30 text-[9px] px-1">
+                              {signal.spikeProbability.dominantDriver}
+                            </Badge>
+                          ) : (
+                            <span className="text-muted-foreground text-xs">—</span>
+                          )}
+                        </td>
+                        {/* VWAP column */}
+                        <td className="px-2 py-2 text-center">
+                          {signal.spikeProbability?.vwapConfirmation === "BULLISH" ? (
+                            <span className="text-emerald-400 text-xs font-mono">↑ BULL</span>
+                          ) : signal.spikeProbability?.vwapConfirmation === "BEARISH" ? (
+                            <span className="text-rose-400 text-xs font-mono">↓ BEAR</span>
+                          ) : signal.spikeProbability?.vwapConfirmation === "NEUTRAL" ? (
+                            <span className="text-muted-foreground text-xs">—</span>
                           ) : (
                             <span className="text-muted-foreground text-xs">—</span>
                           )}
@@ -1087,7 +1242,7 @@ export function EnhancedScreener() {
                       </tr>
                       {expandedRow === signal.symbol && (
                         <tr className="bg-muted/20">
-                          <td colSpan={14} className="px-4 py-3">
+                          <td colSpan={17} className="px-4 py-3">
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
                               <div className="space-y-2">
                                 <h4 className="font-semibold text-primary flex items-center gap-1">
