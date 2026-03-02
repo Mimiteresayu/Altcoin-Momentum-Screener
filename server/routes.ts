@@ -1630,7 +1630,7 @@ export async function registerRoutes(
     }
   }
 
-  // ─── Background enrichment: builds enhanced signals cache ───────
+  // ─── Background enrichment: builds enhanced signals cache ───────────────────────
   async function calculateEnhancedSignals() {
     if (isEnriching || cachedSignals.length === 0) return;
     isEnriching = true;
@@ -1758,11 +1758,14 @@ export async function registerRoutes(
         signals.push(signal);
       }
 
-      // Sort by SPIKE_SCORE (intraday composite), with combo as tiebreaker, then RVOL
-      // spikeScore (0-10) is the primary sort — captures RVOL, OI, squeeze, funding, regime
+      // Sort by SPIKE PROBABILITY (primary), then spikeScore, then combo, then RVOL
+      // P(spike) is the core ranking signal — answers "which coin is most likely to spike NOW"
+      // spikeScore (0-10) as secondary for backward compatibility
       // ComboScore (0-4) counts how many HKPTRC primary filters are met
       // RVOL is the #1 single leading indicator as final tiebreaker
       signals.sort((a: any, b: any) => {
+        const probDiff = (b.spikeProbability?.probability ?? 0) - (a.spikeProbability?.probability ?? 0);
+        if (Math.abs(probDiff) > 0.01) return probDiff; // >1% probability difference = meaningful
         const spikeDiff = (b.spikeScore ?? 0) - (a.spikeScore ?? 0);
         if (spikeDiff !== 0) return spikeDiff;
         const scoreDiff = (b.preSpikeScore ?? 0) - (a.preSpikeScore ?? 0);
