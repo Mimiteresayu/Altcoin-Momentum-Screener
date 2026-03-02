@@ -117,6 +117,17 @@ interface EnhancedSignal {
     vsCondition: boolean;
     peCondition: boolean;
   };
+  // Intraday Spike Detection (new)
+  spikeScore?: number;        // 0-10 composite score
+  rvol?: number;              // Relative volume multiplier
+  rvolZScore?: number;        // RVOL z-score
+  squeezeState?: string;      // "SQUEEZE" | "NO_SQUEEZE" | "FIRING_LONG" | "FIRING_SHORT"
+  squeezeBars?: number;       // bars in squeeze
+  oiSurgeZScore?: number;     // OI surge z-score
+  oiDirection?: string;       // "RISING" | "FALLING" | "FLAT"
+  fundingSignal?: string;     // "SQUEEZE_FUEL" | "OVERCROWDED_LONG" | "NEUTRAL"
+  atrExpanding?: boolean;     // ATR expansion flag
+  atrRatio?: number;          // ATR ratio
 }
 
 interface ScreenerResponse {
@@ -339,21 +350,21 @@ export function EnhancedScreener() {
     }
   };
 
-  const getPScoreBadge = (score: number | undefined) => {
+  const getSpikeBadge = (score: number | undefined) => {
     const s = score ?? 0;
-    if (s >= 4)
+    if (s >= 7)
       return (
         <Badge className="bg-emerald-500/30 text-emerald-300 border-emerald-500/50 font-bold animate-pulse">
-          {s.toFixed(1)}
+          🔥 {s.toFixed(1)}
         </Badge>
       );
-    if (s >= 3)
+    if (s >= 5)
       return (
         <Badge className="bg-teal-500/20 text-teal-400 border-teal-500/30 font-bold">
           {s.toFixed(1)}
         </Badge>
       );
-    if (s >= 2)
+    if (s >= 3)
       return (
         <Badge className="bg-amber-500/20 text-amber-400 border-amber-500/30">
           {s.toFixed(1)}
@@ -476,7 +487,7 @@ export function EnhancedScreener() {
           <div className="flex flex-wrap items-center gap-4 mb-4 p-3 bg-muted/30 rounded-lg">
             <div className="flex items-center gap-2">
               <Label htmlFor="minPScore" className="text-xs whitespace-nowrap">
-                Min PSCORE:
+                Min Spike:
               </Label>
               <Select
                 value={minPScore.toString()}
@@ -491,9 +502,9 @@ export function EnhancedScreener() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="0">All</SelectItem>
-                  <SelectItem value="2">2+</SelectItem>
                   <SelectItem value="3">3+</SelectItem>
-                  <SelectItem value="4">4+</SelectItem>
+                  <SelectItem value="5">5+</SelectItem>
+                  <SelectItem value="7">7+</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -664,47 +675,11 @@ export function EnhancedScreener() {
                     <th className="px-2 py-2 text-center">
                       <Tooltip>
                         <TooltipTrigger className="flex items-center gap-1 cursor-help">
-                          PSCORE <Info className="w-3 h-3" />
+                          SPIKE <Info className="w-3 h-3" />
                         </TooltipTrigger>
                         <TooltipContent>
                           <p className="text-xs max-w-[200px]">
-                            <strong>Pre-Spike Score (0-5):</strong>
-                            <br />
-                            Composite of volume, OI, RSI, R:R, funding
-                            <br />
-                            4+ = High probability setup
-                          </p>
-                        </TooltipContent>
-                      </Tooltip>
-                    </th>
-                                  <th className="px-2 py-2 text-center">
-                <Tooltip>
-                  <TooltipTrigger className="flex items-center gap-1 cursor-help">
-                    ER <Info className="w-3 h-3" />
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    <p className="text-xs max-w-[200px]">
-                      <strong>Efficiency Ratio (0-1):</strong>
-                      <br />
-                      Net price change / sum of bar changes.
-                      <br />
-                      High ER = strong trend. Low = choppy.
-                    </p>
-                  </TooltipContent>
-                </Tooltip>
-              </th>
-                    <th className="px-2 py-2 text-center">
-                      <Tooltip>
-                        <TooltipTrigger className="flex items-center gap-1 cursor-help">
-                          <DollarSign className="w-3 h-3" /> FR
-                        </TooltipTrigger>
-                        <TooltipContent>
-                          <p className="text-xs max-w-[200px]">
-                            <strong>Funding Rate:</strong>
-                            <br />
-                            Negative = Longs pay shorts (bullish)
-                            <br />
-                            Positive = Shorts pay longs (bearish)
+                            Spike Score (0-10): Composite of RVOL(30%), OI Surge(25%), BB/KC Squeeze(15%), Funding(10%), ATR Expansion. Score 7+ = High probability intraday spike.
                           </p>
                         </TooltipContent>
                       </Tooltip>
@@ -712,61 +687,51 @@ export function EnhancedScreener() {
                     <th className="px-2 py-2 text-center">
                       <Tooltip>
                         <TooltipTrigger className="flex items-center gap-1 cursor-help">
-                          L/S
+                          RVOL <Info className="w-3 h-3" />
                         </TooltipTrigger>
                         <TooltipContent>
-                          <p className="text-xs max-w-[220px]">
-                            <strong>Long/Short Ratio (1H):</strong>
-                            <br />
-                            <br />
-                            <strong>Display Format:</strong>
-                            <br />
-                            L:1.25 = 1.25 longs per short
-                            <br />
-                            S:1.50 = 1.50 shorts per long
-                            <br />
-                            <br />
-                            <strong>Interpretation:</strong>
-                            <br />
-                            High L = Crowded longs (contrarian bearish)
-                            <br />
-                            High S = Crowded shorts (contrarian bullish)
+                          <p className="text-xs max-w-[200px]">
+                            Relative Volume: Current volume vs 10-period average. 2x+ = unusual activity. #1 leading indicator for spikes.
                           </p>
                         </TooltipContent>
                       </Tooltip>
                     </th>
-              <th className="px-2 py-2 text-center">
-                <Tooltip>
-                  <TooltipTrigger className="flex items-center gap-1 cursor-help">
-                    VS <Info className="w-3 h-3" />
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    <p className="text-xs max-w-[200px]">
-                      <strong>Volatility Spread (0-1):</strong>
-                      <br />
-                      SD/ATR ratio. High = directional volatility.
-                      <br />
-                      Rising VS + Rising ER = breakout setup.
-                    </p>
-                  </TooltipContent>
-                </Tooltip>
-              </th>
-              <th className="px-2 py-2 text-center">
-                <Tooltip>
-                  <TooltipTrigger className="flex items-center gap-1 cursor-help">
-                    CR <Info className="w-3 h-3" />
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    <p className="text-xs max-w-[200px]">
-                      <strong>Channel Range (-1 to 1):</strong>
-                      <br />
-                      Position in Donchian channel.
-                      <br />
-                      Above 0.8 = breakout zone. Below -0.8 = breakdown.
-                    </p>
-                  </TooltipContent>
-                </Tooltip>
-              </th>
+                    <th className="px-2 py-2 text-center">
+                      <Tooltip>
+                        <TooltipTrigger className="flex items-center gap-1 cursor-help">
+                          SQZ <Info className="w-3 h-3" />
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p className="text-xs max-w-[200px]">
+                            BB/KC Squeeze: Bollinger Bands inside Keltner Channel = energy compression. SQUEEZE = building, FIRING = releasing directionally.
+                          </p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </th>
+                    <th className="px-2 py-2 text-center">
+                      <Tooltip>
+                        <TooltipTrigger className="flex items-center gap-1 cursor-help">
+                          OI <Info className="w-3 h-3" />
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p className="text-xs max-w-[200px]">
+                            OI Direction: RISING = new positions entering. FALLING = positions closing (potential short squeeze if price rising). Research shows FALLING OI = 57.1% win rate.
+                          </p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </th>
+                    <th className="px-2 py-2 text-center">
+                      <Tooltip>
+                        <TooltipTrigger className="flex items-center gap-1 cursor-help">
+                          FR-SIG <Info className="w-3 h-3" />
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p className="text-xs max-w-[200px]">
+                            Funding Signal: SQUEEZE_FUEL = negative funding (shorts paying longs, squeeze potential). OVERCROWDED_LONG = heavy long positioning.
+                          </p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </th>
                     <th
                       className="px-2 py-2 text-center"
                       data-testid="header-enhanced-age"
@@ -805,39 +770,6 @@ export function EnhancedScreener() {
                         </TooltipContent>
                       </Tooltip>
                     </th>
-                                  <th className="px-2 py-2 text-center">
-                <Tooltip>
-                  <TooltipTrigger className="flex items-center gap-1 cursor-help">
-                    PE <Info className="w-3 h-3" />
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    <p className="text-xs max-w-[200px]">
-                      <strong>Permutation Entropy</strong>
-                      <br />
-                      Measures price randomness from 4H klines.
-                      <br />
-                      Higher = more random, Lower = more structured/trending.
-                    </p>
-                  </TooltipContent>
-                </Tooltip>
-              </th>
-              <th className="px-2 py-2 text-center">
-                <Tooltip>
-                  <TooltipTrigger className="flex items-center gap-1 cursor-help">
-                    COMBO <Info className="w-3 h-3" />
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    <p className="text-xs max-w-[200px]">
-                      <strong>Pre-Spike Combo</strong>
-                      <br />
-                      HKPTRC Alpha score (0-4). Counts conditions:
-                      AUR Z{'>'}2, ER{'>'} mean, VS Z{'<'}-2, PE{'>'} mean.
-                      <br />
-                      Score of 3+ = strong pre-spike signal.
-                    </p>
-                  </TooltipContent>
-                </Tooltip>
-              </th>
                     <th className="px-2 py-2 w-8"></th>
                   </tr>
                 </thead>
@@ -852,7 +784,7 @@ export function EnhancedScreener() {
                           signal.signalType === "MAJOR" && "bg-amber-500/5",
                           signal.signalType === "ACTIVE" && "bg-emerald-500/5",
                           signal.signalType === "PRE" && "bg-blue-500/5",
-                          (signal.preSpikeScore ?? 0) >= 4 &&
+                          (signal.spikeScore ?? 0) >= 7 &&
                             signal.signalType !== "HOT" &&
                             "border-l-2 border-l-emerald-500",
                         )}
@@ -965,76 +897,80 @@ export function EnhancedScreener() {
                         <td className="px-2 py-2 text-center">
                           {getEntryBadge(signal.entryModel, signal.marketPhase)}
                         </td>
+                        {/* SPIKE column */}
                         <td className="px-2 py-2 text-center">
-                          {getPScoreBadge(signal.preSpikeScore)}
+                          {getSpikeBadge(signal.spikeScore ?? signal.preSpikeScore ?? 0)}
                         </td>
-              <td className="px-2 py-2 text-center">
-                <span className={clsx(
-                  "text-xs font-mono",
-                  (signal.efficiencyRatio ?? 0) >= 0.6 ? "text-emerald-400 font-bold" :
-                  (signal.efficiencyRatio ?? 0) >= 0.4 ? "text-amber-400" :
-                  "text-muted-foreground"
-                )}>
-                  {signal.efficiencyRatio !== undefined ? signal.efficiencyRatio.toFixed(2) : "N/A"}
-                </span>
-              </td>
+                        {/* RVOL column */}
                         <td className="px-2 py-2 text-center">
-                          <span
-                            className={clsx(
-                              "text-xs font-mono",
-                              signal.fundingRate !== undefined &&
-                                signal.fundingRate < 0
-                                ? "text-emerald-400"
-                                : signal.fundingRate !== undefined &&
-                                    signal.fundingRate > 0.01
-                                  ? "text-rose-400"
+                          {signal.rvol != null ? (
+                            <span
+                              className={clsx(
+                                "text-xs font-mono",
+                                signal.rvol >= 3
+                                  ? "text-emerald-400 font-bold"
+                                  : signal.rvol >= 2
+                                  ? "text-teal-400"
+                                  : signal.rvol >= 1.5
+                                  ? "text-amber-400"
                                   : "text-muted-foreground",
-                            )}
-                          >
-                            {formatFundingRate(signal.fundingRate)}
-                          </span>
+                              )}
+                            >
+                              {signal.rvol.toFixed(1)}x
+                            </span>
+                          ) : (
+                            <span className="text-muted-foreground text-xs">
+                              {signal.rvol?.toFixed(1) ?? "-"}x
+                            </span>
+                          )}
                         </td>
+                        {/* SQZ column */}
                         <td className="px-2 py-2 text-center">
-                          <span
-                            className={clsx(
-                              "text-xs font-mono",
-                              signal.lsrBias === "long_dominant"
-                                ? "text-amber-400"
-                                : signal.lsrBias === "short_dominant"
-                                  ? "text-cyan-400"
-                                  : "text-muted-foreground",
-                            )}
-                          >
-                            {signal.longShortRatio !== undefined
-                              ? signal.longShortRatio >= 1
-                                ? `L:${signal.longShortRatio.toFixed(2)}`
-                                : `S:${(1 / signal.longShortRatio).toFixed(2)}`
-                              : "N/A"}
-                          </span>
+                          {signal.squeezeState === "FIRING_LONG" ? (
+                            <Badge className="bg-emerald-500/30 text-emerald-300 border-emerald-500/50 animate-pulse">
+                              🚀 FIRE↑
+                            </Badge>
+                          ) : signal.squeezeState === "FIRING_SHORT" ? (
+                            <Badge className="bg-rose-500/30 text-rose-300 border-rose-500/50 animate-pulse">
+                              🚀 FIRE↓
+                            </Badge>
+                          ) : signal.squeezeState === "SQUEEZE" ? (
+                            <Badge className="bg-amber-500/20 text-amber-400 border-amber-500/30">
+                              SQZ({signal.squeezeBars})
+                            </Badge>
+                          ) : (
+                            <span className="text-muted-foreground text-xs">-</span>
+                          )}
                         </td>
-              {/* VSpread Cell */}
-              <td className="px-2 py-2 text-center">
-                <span className={clsx(
-                  "text-xs font-mono",
-                  (signal.volatilitySpread ?? 0) >= 0.6 ? "text-emerald-400 font-bold" :
-                  (signal.volatilitySpread ?? 0) >= 0.4 ? "text-amber-400" :
-                  "text-muted-foreground"
-                )}>
-                  {signal.volatilitySpread !== undefined ? signal.volatilitySpread.toFixed(2) : "N/A"}
-                </span>
-              </td>
-              {/* CRange Cell */}
-              <td className="px-2 py-2 text-center">
-                <span className={clsx(
-                  "text-xs font-mono",
-                  (signal.channelRange ?? 0) >= 0.8 ? "text-emerald-400 font-bold" :
-                  (signal.channelRange ?? 0) <= -0.8 ? "text-rose-400 font-bold" :
-                  Math.abs(signal.channelRange ?? 0) >= 0.5 ? "text-amber-400" :
-                  "text-muted-foreground"
-                )}>
-                  {signal.channelRange !== undefined ? signal.channelRange.toFixed(2) : "N/A"}
-                </span>
-              </td>
+                        {/* OI column */}
+                        <td className="px-2 py-2 text-center">
+                          {signal.oiDirection === "RISING" ? (
+                            <span className="text-xs font-mono text-cyan-400">
+                              RISING ↑
+                            </span>
+                          ) : signal.oiDirection === "FALLING" ? (
+                            <span className="text-xs font-mono text-amber-400">
+                              FALLING ↓
+                            </span>
+                          ) : (
+                            <span className="text-muted-foreground text-xs">—</span>
+                          )}
+                        </td>
+                        {/* FR-SIG column */}
+                        <td className="px-2 py-2 text-center">
+                          {signal.fundingSignal === "SQUEEZE_FUEL" ? (
+                            <Badge className="bg-emerald-500/20 text-emerald-400 border-emerald-500/30">
+                              ⛽ FUEL
+                            </Badge>
+                          ) : signal.fundingSignal === "OVERCROWDED_LONG" ? (
+                            <Badge className="bg-rose-500/20 text-rose-400 border-rose-500/30">
+                              ⚠ CROWD
+                            </Badge>
+                          ) : (
+                            <span className="text-muted-foreground text-xs">—</span>
+                          )}
+                        </td>
+                        {/* AGE column */}
                         <td
                           className="px-2 py-2 text-center"
                           data-testid={`cell-age-${signal.symbol}`}
@@ -1141,42 +1077,6 @@ export function EnhancedScreener() {
                             </span>
                           )}
                         </td>
-                                            {/* PE Column */}
-                    <td className="px-2 py-2 text-center">
-                      {signal.permutationEntropy != null ? (
-                        <span className={clsx(
-                          "text-[10px] font-mono",
-                          signal.permutationEntropy < 0.6 ? "text-emerald-400 font-bold" : "text-muted-foreground"
-                        )}>
-                          {signal.permutationEntropy.toFixed(2)}
-                        </span>
-                      ) : (
-                        <span className="text-muted-foreground text-xs">-</span>
-                      )}
-                    </td>
-                    {/* COMBO Column */}
-                    <td className="px-2 py-2 text-center">
-                      {signal.preSpikeCombo ? (
-                        <div className="flex flex-col items-center gap-0.5">
-                          <span className={clsx(
-                            "text-[10px] font-mono font-bold",
-                            signal.preSpikeCombo.comboScore >= 3 ? "text-amber-400" :
-                            signal.preSpikeCombo.comboScore >= 2 ? "text-emerald-400" :
-                            "text-muted-foreground"
-                          )}>
-                            {signal.preSpikeCombo.comboScore}/4
-                          </span>
-                          <div className="flex gap-px">
-                            <span className={clsx("w-1.5 h-1.5 rounded-full", signal.preSpikeCombo.aurCondition ? "bg-emerald-400" : "bg-muted/40")} title="AUR" />
-                            <span className={clsx("w-1.5 h-1.5 rounded-full", signal.preSpikeCombo.erCondition ? "bg-emerald-400" : "bg-muted/40")} title="ER" />
-                            <span className={clsx("w-1.5 h-1.5 rounded-full", signal.preSpikeCombo.vsCondition ? "bg-emerald-400" : "bg-muted/40")} title="VS" />
-                            <span className={clsx("w-1.5 h-1.5 rounded-full", signal.preSpikeCombo.peCondition ? "bg-emerald-400" : "bg-muted/40")} title="PE" />
-                          </div>
-                        </div>
-                      ) : (
-                        <span className="text-muted-foreground text-xs">-</span>
-                      )}
-                    </td>
                         <td className="px-2 py-2 text-center">
                           {expandedRow === signal.symbol ? (
                             <ChevronUp className="w-4 h-4 text-muted-foreground" />
@@ -1187,7 +1087,7 @@ export function EnhancedScreener() {
                       </tr>
                       {expandedRow === signal.symbol && (
                         <tr className="bg-muted/20">
-                          <td colSpan={17} className="px-4 py-3">
+                          <td colSpan={14} className="px-4 py-3">
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
                               <div className="space-y-2">
                                 <h4 className="font-semibold text-primary flex items-center gap-1">
