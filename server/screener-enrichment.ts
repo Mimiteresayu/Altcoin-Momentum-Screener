@@ -1726,10 +1726,10 @@ export function calculateSpikeProbability(params: {
 }): SpikeProbability {
   const { rvolData, oiData, squeezeData, fundingData, atrData } = params;
 
-  // ── Sigmoid helper ──────────────────────────────────────────────────────────────────────────
+  // ── Sigmoid helper ────────────────────────────────────────────────────────
   const sigmoid = (z: number): number => 1 / (1 + Math.exp(-z));
 
-  // ── β₀: Intercept — base rate ~3% (sigmoid(-3.5) ≈ 0.030) ─────────────────────────────────────────────
+  // ── β₀: Intercept — base rate ~3% (sigmoid(-3.5) ≈ 0.030) ────────────────
   let logit = -3.5;
 
   // ── β₁: RVOL (weight 1.2 per z-score unit, but we use rvol ratio directly) ─
@@ -1747,7 +1747,7 @@ export function calculateSpikeProbability(params: {
   const beta1_contribution = 1.2 * x_rvol;
   logit += beta1_contribution;
 
-  // ── β₂: OI Surge (weight 0.8) ───────────────────────────────────────────────────────────────────────
+  // ── β₂: OI Surge (weight 0.8) ─────────────────────────────────────────────
   // Rising OI + price move = new money entering = bullish signal
   let x_oi = 0;
   const oiZ = oiData.oiSurgeZScore;
@@ -1763,7 +1763,7 @@ export function calculateSpikeProbability(params: {
   const beta2_contribution = 0.8 * x_oi;
   logit += beta2_contribution;
 
-  // ── β₃: BB/KC Squeeze (weight 1.5 for FIRING, 0.5 for SQUEEZE) ─────────────────────────
+  // ── β₃: BB/KC Squeeze (weight 1.5 for FIRING, 0.5 for SQUEEZE) ────────────
   let x_squeeze = 0;
   const { state: sqzState, squeezeIntensity, squeezeBars } = squeezeData;
   if (sqzState === "FIRING_LONG" || sqzState === "FIRING_SHORT") {
@@ -1798,7 +1798,7 @@ export function calculateSpikeProbability(params: {
   const beta5_contribution = 0.6 * x_regime;
   logit += beta5_contribution;
 
-  // ── β₆: Age / New Listing Alpha (weight 0.3) ──────────────────────────────────────────────
+  // ── β₆: Age / New Listing Alpha (weight 0.3) ──────────────────────────────
   let x_age = 0;
   const koreaAlpha = detectKoreaListingAlpha(params.ageDays);
   if (params.ageDays !== undefined && params.ageDays < 7) x_age = 2.0;  // Korea listing window
@@ -1807,18 +1807,18 @@ export function calculateSpikeProbability(params: {
   const beta6_contribution = 0.3 * x_age + koreaAlpha.logitBonus;
   logit += beta6_contribution;
 
-  // ── β₇: ATR Expansion (weight 0.5 when ratio > 1.5) ─────────────────────────────────
+  // ── β₇: ATR Expansion (weight 0.5 when ratio > 1.5) ─────────────────────
   let x_atr = 0;
   if (atrData.expanding && atrData.atrRatio > 1.5) x_atr = 1.0;
   else if (atrData.expanding) x_atr = 0.5;
   const beta7_contribution = 0.5 * x_atr;
   logit += beta7_contribution;
 
-  // ── Order Book Imbalance bonus ──────────────────────────────────────────────────────────────
+  // ── Order Book Imbalance bonus ─────────────────────────────────────────────
   const obImbalance = scoreOrderBookImbalance(params.bidAskVolumeRatio);
   logit += obImbalance.logitBonus;
 
-  // ── VWAP Confirmation (±10% multiplier on probability post-sigmoid) ──────────────────────
+  // ── VWAP Confirmation (±10% multiplier on probability post-sigmoid) ────────
   const vwap = calculateVWAP(params.klines);
   let vwapConfirmation: "BULLISH" | "BEARISH" | "NEUTRAL" = "NEUTRAL";
   let vwapMultiplier = 1.0;
@@ -1833,15 +1833,18 @@ export function calculateSpikeProbability(params: {
     }
   }
 
-  // ── Compute raw probability ───────────────────────────────────────────────────────────────────────
+  // ── Compute raw probability ────────────────────────────────────────────────
+  // Cap logit at 3.5 to prevent sigmoid saturation (sigmoid(3.5) ≈ 97%)
+  // No coin should show >95% — that implies certainty which doesn't exist
+  logit = Math.min(3.5, logit);
   let probability = sigmoid(logit) * vwapMultiplier;
-  probability = Math.max(0, Math.min(1, probability));
+  probability = Math.max(0, Math.min(0.95, probability)); // Hard cap at 95%
 
-  // ── Time Decay (default 0.8 for 1H klines, ~30min avg signal age) ─────────────────────
+  // ── Time Decay (default 0.8 for 1H klines, ~30min avg signal age) ─────────
   // Full implementation would track signal timestamps; for now use fixed default.
   const timeDecay = 0.8;
 
-  // ── Signal Agreement / Confluence ─────────────────────────────────────────────────────
+  // ── Signal Agreement / Confluence ─────────────────────────────────────────
   // Count how many of the 7 signal dimensions are meaningfully "on"
   const signalThresholds = [
     rvol >= 2.0,                                                // RVOL elevated
@@ -1856,7 +1859,7 @@ export function calculateSpikeProbability(params: {
   const activeSignals = signalThresholds.filter(Boolean).length;
   const signalAgreement = activeSignals / definedSignals;
 
-  // ── Data Quality Score ─────────────────────────────────────────────────────────────────────────
+  // ── Data Quality Score ─────────────────────────────────────────────────────
   // Fraction of non-undefined critical inputs
   const dataPoints = [
     rvol,
@@ -1870,7 +1873,7 @@ export function calculateSpikeProbability(params: {
   const validDataPoints = dataPoints.filter(v => v !== undefined && !Number.isNaN(v)).length;
   const dataQuality = validDataPoints / dataPoints.length;
 
-  // ── Confidence Level ──────────────────────────────────────────────────────────────────────────
+  // ── Confidence Level ──────────────────────────────────────────────────────
   let confidence: "HIGH" | "MEDIUM" | "LOW";
   if (signalAgreement >= 0.6 && dataQuality >= 0.7) {
     confidence = "HIGH";
@@ -1880,7 +1883,7 @@ export function calculateSpikeProbability(params: {
     confidence = "LOW";
   }
 
-  // ── Expected Magnitude (% spike if it occurs) ────────────────────────────────────────────
+  // ── Expected Magnitude (% spike if it occurs) ─────────────────────────────
   let expectedMagnitude: number;
   const isFiring = sqzState === "FIRING_LONG" || sqzState === "FIRING_SHORT";
   if (rvol >= 5.0 && isFiring) {
@@ -1898,7 +1901,7 @@ export function calculateSpikeProbability(params: {
   }
   expectedMagnitude = Math.max(2, Math.min(20, Math.round(expectedMagnitude * 10) / 10));
 
-  // ── Dominant Driver ───────────────────────────────────────────────────────────────────────────
+  // ── Dominant Driver ───────────────────────────────────────────────────────
   const contributions: { name: string; value: number }[] = [
     { name: "RVOL",     value: beta1_contribution },
     { name: "OI_SURGE", value: beta2_contribution },
