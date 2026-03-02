@@ -4,7 +4,6 @@ import { clsx } from "clsx";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -20,14 +19,10 @@ import {
 } from "@/components/ui/tooltip";
 import {
   RefreshCw,
-  TrendingUp,
-  TrendingDown,
   Zap,
   Target,
   AlertTriangle,
-  DollarSign,
   BarChart3,
-  Waves,
   Info,
   ChevronDown,
   ChevronUp,
@@ -158,8 +153,6 @@ interface ScreenerResponse {
 export function EnhancedScreener() {
   const [minPScore, setMinPScore] = useState<number>(0);
   const [minProbability, setMinProbability] = useState<number>(0);
-  const [hideExhaust, setHideExhaust] = useState(true);
-  const [phaseFilter, setPhaseFilter] = useState("ALL");
   const [sideFilter, setSideFilter] = useState("ALL");
   const [expandedRow, setExpandedRow] = useState<string | null>(null);
 
@@ -167,8 +160,6 @@ export function EnhancedScreener() {
     const params = new URLSearchParams({
       limit: "30",
       enrich: "true",
-      hideExhaust: hideExhaust.toString(),
-      phaseFilter: phaseFilter,
       sideFilter: sideFilter,
     });
     if (minPScore > 0) {
@@ -194,172 +185,6 @@ export function EnhancedScreener() {
     if (rate === undefined) return "N/A";
     const pct = rate * 100;
     return `${pct >= 0 ? "+" : ""}${pct.toFixed(4)}%`;
-  };
-
-  const getLocationBadge = (loc: string | undefined) => {
-    switch (loc) {
-      case "DISCOUNT":
-        return (
-          <Badge className="bg-emerald-500/20 text-emerald-400 border-emerald-500/30">
-            DISCOUNT
-          </Badge>
-        );
-      case "PREMIUM":
-        return (
-          <Badge className="bg-rose-500/20 text-rose-400 border-rose-500/30">
-            PREMIUM
-          </Badge>
-        );
-      case "EQUILIBRIUM":
-        return (
-          <Badge className="bg-blue-500/20 text-blue-400 border-blue-500/30">
-            EQUILIB
-          </Badge>
-        );
-      case "NEUTRAL":
-      default:
-        return (
-          <Badge className="bg-slate-500/20 text-slate-400 border-slate-500/30">
-            NEUTRAL
-          </Badge>
-        );
-    }
-  };
-
-  const getPhaseBadge = (phase: string | undefined) => {
-    switch (phase) {
-      case "ACCUMULATION":
-      case "ACCUM":
-        return (
-          <Badge className="bg-emerald-500/20 text-emerald-400 border-emerald-500/30">
-            ACCUM
-          </Badge>
-        );
-      case "DISTRIBUTION":
-        return (
-          <Badge className="bg-amber-500/20 text-amber-400 border-amber-500/30">
-            DISTRIB
-          </Badge>
-        );
-      case "BREAKOUT":
-        return (
-          <Badge className="bg-cyan-500/20 text-cyan-400 border-cyan-500/30 animate-pulse">
-            BREAKOUT
-          </Badge>
-        );
-      case "TREND":
-        return (
-          <Badge className="bg-blue-500/20 text-blue-400 border-blue-500/30">
-            TREND
-          </Badge>
-        );
-      case "EXHAUST":
-        return (
-          <Badge className="bg-rose-500/20 text-rose-400 border-rose-500/30">
-            EXHAUST
-          </Badge>
-        );
-      case "NEUTRAL":
-      case "UNKNOWN":
-      default:
-        return (
-          <Badge className="bg-slate-500/20 text-slate-400 border-slate-500/30">
-            NEUTRAL
-          </Badge>
-        );
-    }
-  };
-
-  const getEntryBadge = (
-    entry: string | undefined,
-    phase: string | undefined,
-  ) => {
-    const model = entry || getDefaultEntry(phase);
-    switch (model) {
-      case "BUY DIP":
-        return (
-          <Badge className="bg-emerald-500/20 text-emerald-400 border-emerald-500/30">
-            BUY DIP
-          </Badge>
-        );
-      case "SCALE IN":
-        return (
-          <Badge className="bg-teal-500/20 text-teal-400 border-teal-500/30">
-            SCALE IN
-          </Badge>
-        );
-      case "BOS ENTRY":
-        return (
-          <Badge className="bg-cyan-500/20 text-cyan-400 border-cyan-500/30 animate-pulse">
-            BOS
-          </Badge>
-        );
-      case "FVG ENTRY":
-        return (
-          <Badge className="bg-blue-500/20 text-blue-400 border-blue-500/30">
-            FVG
-          </Badge>
-        );
-      case "PULLBACK":
-        return (
-          <Badge className="bg-indigo-500/20 text-indigo-400 border-indigo-500/30">
-            PULLBACK
-          </Badge>
-        );
-      case "ADD":
-        return (
-          <Badge className="bg-violet-500/20 text-violet-400 border-violet-500/30">
-            ADD
-          </Badge>
-        );
-      case "TAKE PROFIT":
-        return (
-          <Badge className="bg-amber-500/20 text-amber-400 border-amber-500/30">
-            TP
-          </Badge>
-        );
-      case "SHORT SETUP":
-        return (
-          <Badge className="bg-rose-500/20 text-rose-400 border-rose-500/30">
-            SHORT
-          </Badge>
-        );
-      case "AVOID":
-        return (
-          <Badge className="bg-red-500/20 text-red-400 border-red-500/30">
-            AVOID
-          </Badge>
-        );
-      case "REVERSAL":
-        return (
-          <Badge className="bg-orange-500/20 text-orange-400 border-orange-500/30">
-            REVERSAL
-          </Badge>
-        );
-      default:
-        return (
-          <Badge className="bg-slate-500/20 text-slate-400 border-slate-500/30">
-            WAIT
-          </Badge>
-        );
-    }
-  };
-
-  const getDefaultEntry = (phase: string | undefined): string => {
-    switch (phase) {
-      case "ACCUMULATION":
-        return "BUY DIP";
-      case "BREAKOUT":
-        return "BOS ENTRY";
-      case "TREND":
-        return "PULLBACK";
-      case "DISTRIBUTION":
-        return "TAKE PROFIT";
-      case "EXHAUST":
-        return "AVOID";
-      default:
-        return "WAIT";
-    }
   };
 
   const getSpikeBadge = (score: number | undefined) => {
@@ -547,27 +372,6 @@ export function EnhancedScreener() {
             </div>
 
             <div className="flex items-center gap-2">
-              <Label htmlFor="phase" className="text-xs whitespace-nowrap">
-                Phase:
-              </Label>
-              <Select value={phaseFilter} onValueChange={setPhaseFilter}>
-                <SelectTrigger
-                  className="w-28 h-8"
-                  id="phase"
-                  data-testid="select-phase"
-                >
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="ALL">All</SelectItem>
-                  <SelectItem value="ACCUMULATION">Accumulation</SelectItem>
-                  <SelectItem value="BREAKOUT">Breakout</SelectItem>
-                  <SelectItem value="DISTRIBUTION">Distribution</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="flex items-center gap-2">
               <Label htmlFor="side" className="text-xs whitespace-nowrap">
                 Side:
               </Label>
@@ -587,17 +391,6 @@ export function EnhancedScreener() {
               </Select>
             </div>
 
-            <div className="flex items-center gap-2">
-              <Switch
-                id="hideExhaust"
-                checked={hideExhaust}
-                onCheckedChange={setHideExhaust}
-                data-testid="switch-hide-exhaust"
-              />
-              <Label htmlFor="hideExhaust" className="text-xs cursor-pointer">
-                Hide Exhaust
-              </Label>
-            </div>
           </div>
 
           {isLoading ? (
@@ -611,104 +404,8 @@ export function EnhancedScreener() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="bg-muted/30 border-b border-white/5 text-left text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
-                    <th className="px-2 py-2 text-center">
-                      <Tooltip>
-                        <TooltipTrigger className="flex items-center gap-1 cursor-help">
-                          BIAS <Info className="w-3 h-3" />
-                        </TooltipTrigger>
-                        <TooltipContent className="max-w-[280px]">
-                          <p className="text-xs">
-                            <strong>
-                              HTF Bias Logic (4H Supertrend + Funding):
-                            </strong>
-                            <br />
-                            <br />
-                            <strong>1. Supertrend (Primary):</strong>
-                            <br />
-                            ATR Period: 14, Multiplier: 3.5
-                            <br />
-                            Price above Supertrend = LONG
-                            <br />
-                            Price below Supertrend = SHORT
-                            <br />
-                            <br />
-                            <strong>2. Funding Rate (Confirmation):</strong>
-                            <br />
-                            Negative FR = Longs pay shorts (bullish)
-                            <br />
-                            Positive FR = Shorts pay longs (bearish)
-                            <br />
-                            <br />
-                            <strong>Confidence:</strong>
-                            <br />
-                            HIGH = Supertrend + FR align
-                            <br />
-                            MEDIUM = Supertrend only, FR neutral
-                            <br />
-                            LOW = Supertrend and FR conflict
-                          </p>
-                        </TooltipContent>
-                      </Tooltip>
-                    </th>
                     <th className="px-2 py-2">Symbol</th>
                     <th className="px-2 py-2 text-right">Price</th>
-                    <th className="px-2 py-2 text-center">
-                      <Tooltip>
-                        <TooltipTrigger className="flex items-center gap-1 cursor-help">
-                          LOC <Info className="w-3 h-3" />
-                        </TooltipTrigger>
-                        <TooltipContent>
-                          <p className="text-xs max-w-[200px]">
-                            <strong>Location:</strong> Where price is in 24h
-                            range.
-                            <br />
-                            DISCOUNT = bottom 33%, PREMIUM = top 33%
-                          </p>
-                        </TooltipContent>
-                      </Tooltip>
-                    </th>
-                    <th className="px-2 py-2 text-center">
-                      <Tooltip>
-                        <TooltipTrigger className="flex items-center gap-1 cursor-help">
-                          PHASE <Info className="w-3 h-3" />
-                        </TooltipTrigger>
-                        <TooltipContent>
-                          <p className="text-xs max-w-[200px]">
-                            <strong>Market Phase:</strong>
-                            <br />
-                            ACCUM = Accumulation (smart money buying)
-                            <br />
-                            BREAKOUT = Strong momentum move
-                            <br />
-                            DISTRIB = Distribution (selling)
-                            <br />
-                            EXHAUST = Fading momentum
-                          </p>
-                        </TooltipContent>
-                      </Tooltip>
-                    </th>
-                    <th className="px-2 py-2 text-center">
-                      <Tooltip>
-                        <TooltipTrigger className="flex items-center gap-1 cursor-help">
-                          ENTRY <Info className="w-3 h-3" />
-                        </TooltipTrigger>
-                        <TooltipContent>
-                          <p className="text-xs max-w-[200px]">
-                            <strong>Entry Model Setup:</strong>
-                            <br />
-                            BUY DIP / SCALE IN = Accumulation entries
-                            <br />
-                            BOS / FVG = Breakout entries
-                            <br />
-                            PULLBACK / ADD = Trend entries
-                            <br />
-                            TAKE PROFIT / SHORT = Distribution
-                            <br />
-                            AVOID / REVERSAL = Exhaustion
-                          </p>
-                        </TooltipContent>
-                      </Tooltip>
-                    </th>
                     <th className="px-2 py-2 text-center min-w-[80px]">
                       <Tooltip>
                         <TooltipTrigger className="flex items-center gap-1 cursor-help">
@@ -876,49 +573,6 @@ export function EnhancedScreener() {
                         }
                         data-testid={`row-enhanced-${signal.symbol}`}
                       >
-                        <td className="px-2 py-2 text-center">
-                          <Tooltip>
-                            <TooltipTrigger>
-                              <Badge
-                                className={clsx(
-                                  "font-bold text-[10px] px-2",
-                                  (signal.htfBias?.side ?? signal.side) ===
-                                    "LONG"
-                                    ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/30"
-                                    : "bg-rose-500/20 text-rose-400 border-rose-500/30",
-                                )}
-                              >
-                                {(signal.htfBias?.side ?? signal.side) ===
-                                "LONG" ? (
-                                  <TrendingUp className="w-3 h-3 mr-0.5" />
-                                ) : (
-                                  <TrendingDown className="w-3 h-3 mr-0.5" />
-                                )}
-                                {signal.htfBias?.side ?? signal.side} (4H)
-                              </Badge>
-                            </TooltipTrigger>
-                            <TooltipContent>
-                              <p className="text-xs">
-                                {signal.htfBias ? (
-                                  <>
-                                    <strong>Supertrend:</strong>{" "}
-                                    {signal.htfBias.supertrendBias}
-                                    <br />
-                                    <strong>Confidence:</strong>{" "}
-                                    {signal.htfBias.confidence}
-                                    <br />
-                                    <strong>Funding Confirms:</strong>{" "}
-                                    {signal.htfBias.fundingConfirms
-                                      ? "Yes"
-                                      : "No"}
-                                  </>
-                                ) : (
-                                  "Bias from scoring system (HTF data unavailable)"
-                                )}
-                              </p>
-                            </TooltipContent>
-                          </Tooltip>
-                        </td>
                         <td className="px-2 py-2 font-medium text-foreground">
                           <div className="flex items-center gap-1.5">
                             {signal.signalType === "HOT" && (
@@ -948,6 +602,13 @@ export function EnhancedScreener() {
                             <span className="font-mono tracking-tight">
                               {signal.symbol.replace("USDT", "")}
                             </span>
+                            {/* Bias indicator (demoted from own column) */}
+                            <span className={clsx(
+                              "text-[9px] ml-1 opacity-70",
+                              (signal.htfBias?.side ?? signal.side) === "LONG" ? "text-emerald-400" : "text-rose-400"
+                            )}>
+                              {(signal.htfBias?.side ?? signal.side) === "LONG" ? "↗" : "↘"}4H
+                            </span>
                           </div>
                         </td>
                         <td className="px-2 py-2 text-right font-mono text-xs">
@@ -963,18 +624,6 @@ export function EnhancedScreener() {
                             {signal.priceChange24h > 0 ? "+" : ""}
                             {signal.priceChange24h.toFixed(1)}%
                           </div>
-                        </td>
-                        <td className="px-2 py-2 text-center">
-                          {getLocationBadge(signal.priceLocation)}
-                        </td>
-                        <td
-                          className="px-2 py-2 text-
-                          center"
-                        >
-                          {getPhaseBadge(signal.marketPhase)}
-                        </td>
-                        <td className="px-2 py-2 text-center">
-                          {getEntryBadge(signal.entryModel, signal.marketPhase)}
                         </td>
                         {/* P(Spike) column — backend returns 0.0-1.0, display as percentage */}
                         <td className="px-2 py-2 text-center min-w-[80px]">
@@ -1242,7 +891,7 @@ export function EnhancedScreener() {
                       </tr>
                       {expandedRow === signal.symbol && (
                         <tr className="bg-muted/20">
-                          <td colSpan={17} className="px-4 py-3">
+                          <td colSpan={13} className="px-4 py-3">
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
                               <div className="space-y-2">
                                 <h4 className="font-semibold text-primary flex items-center gap-1">
