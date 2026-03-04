@@ -184,8 +184,8 @@ const KNOWN_LISTING_DATES: Record<string, number> = {
 
 /**
  * Get the first listing date for a symbol
- * Uses hardcoded known dates for popular coins as Binance API is geo-blocked
- * Results are cached to avoid repeated lookups
+ * Priority: (1) cache → (2) dynamic listing monitor → (3) hardcoded known dates → (4) Bitunix kline
+ * Dynamic detection replaces static list for new coins (<7 days)
  */
 export async function getSymbolListingDate(symbol: string): Promise<number | null> {
   // Check cache first
@@ -194,7 +194,21 @@ export async function getSymbolListingDate(symbol: string): Promise<number | nul
     return cachedDate;
   }
 
-  // Check hardcoded known dates
+  // Check dynamic listing monitor (Binance exchangeInfo + Upbit)
+  try {
+    const { getDynamicListingAge } = await import('./listing-monitor');
+    const dynamicAgeDays = getDynamicListingAge(symbol);
+    if (dynamicAgeDays !== undefined) {
+      const ts = Date.now() - (dynamicAgeDays * 24 * 60 * 60 * 1000);
+      listingDateCache.set(symbol, ts);
+      console.log(`[LISTING] ${symbol}: ${dynamicAgeDays} days old (from dynamic monitor)`);
+      return ts;
+    }
+  } catch {
+    // listing-monitor not available, fall through to hardcoded
+  }
+
+  // Check hardcoded known dates (fallback for established coins)
   const knownDate = KNOWN_LISTING_DATES[symbol];
   if (knownDate) {
     listingDateCache.set(symbol, knownDate);
