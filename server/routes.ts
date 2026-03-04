@@ -68,11 +68,15 @@ async function getUnifiedSymbolUniverse(rawData: any[]): Promise<any[]> {
     console.warn('[SYMBOLS] Could not fetch watchlist, proceeding without it');
   }
 
+  // Equity perpetuals to exclude (not crypto)
+  const EQUITY_PERPS = new Set(["TSLAUSDT", "INTCUSDT", "HOODSDT", "AAPLUSDT", "NVDAUSDT", "MSFTUSDT", "AMZNUSDT", "GOOGLUSDT", "METAUSDT", "COINUSDT"]);
+  
   const allSymbols = rawData.filter((t: any) => {
     const symbol = t.symbol || "";
     const price = parseFloat(t.lastPrice);
     const volume = parseFloat(t.quoteVol);
     if (symbol.includes("USDC") || (symbol.includes("USDT") && !symbol.endsWith("USDT"))) return false;
+    if (EQUITY_PERPS.has(symbol)) return false;
     return price > 0 && volume > 0 && !isNaN(price) && !isNaN(volume) && symbol.endsWith("USDT");
   });
 
@@ -92,7 +96,11 @@ async function getUnifiedSymbolUniverse(rawData: any[]): Promise<any[]> {
   const selectedSymbols = new Set([...MAJOR_SYMBOLS, ...watchlistSymbols]);
   const otherSymbols = allSymbols
     .filter((t: any) => !selectedSymbols.has(t.symbol))
-    .sort((a: any, b: any) => parseFloat(b.quoteVol) - parseFloat(a.quoteVol))
+    .sort((a: any, b: any) => {
+      const aChange = Math.abs(((parseFloat(a.lastPrice) - parseFloat(a.open)) / parseFloat(a.open)) * 100);
+      const bChange = Math.abs(((parseFloat(b.lastPrice) - parseFloat(b.open)) / parseFloat(b.open)) * 100);
+      return bChange - aChange;
+    })
     .slice(0, 50);
 
   // Priority 4: High movers (>10% change) not already selected - catch early spikes!
@@ -107,11 +115,50 @@ async function getUnifiedSymbolUniverse(rawData: any[]): Promise<any[]> {
     })
     .slice(0, 20);
 
+  // Priority 5: New Binance futures listings (< 7 days old) - auto-include
+  let newListingSymbols: any[] = [];
+  try {
+    const { getNewFuturesListings } = await import('./listing-monitor');
+    const newListings = await getNewFuturesListings();
+    newListingSymbols = allSymbols.filter((t: any) => {
+      if (selectedSymbols.has(t.symbol)) return false;
+      if (otherSymbols.some((o: any) => o.symbol === t.symbol)) return false;
+      if (highMovers.some((o: any) => o.symbol === t.symbol)) return false;
+      return newListings.has(t.symbol);
+    });
+    if (newListingSymbols.length > 0) {
+      console.log(`[SYMBOLS] New listings (< 7 days): ${newListingSymbols.map((s: any) => s.symbol).join(', ')}`);
+    }
+  } catch (err) {
+    console.warn('[SYMBOLS] New listing detection unavailable:', (err as Error).message);
+  }
+
+  // Priority 6: Korea exchange new listings (Upbit, < 7 days) - auto-include
+  let koreaNewSymbols: any[] = [];
+  try {
+    const { getUpbitNewListings } = await import('./listing-monitor');
+    const koreaListings = await getUpbitNewListings();
+    koreaNewSymbols = allSymbols.filter((t: any) => {
+      if (selectedSymbols.has(t.symbol)) return false;
+      if (otherSymbols.some((o: any) => o.symbol === t.symbol)) return false;
+      if (highMovers.some((o: any) => o.symbol === t.symbol)) return false;
+      if (newListingSymbols.some((o: any) => o.symbol === t.symbol)) return false;
+      return koreaListings.has(t.symbol);
+    });
+    if (koreaNewSymbols.length > 0) {
+      console.log(`[SYMBOLS] Korea new listings: ${koreaNewSymbols.map((s: any) => s.symbol).join(', ')}`);
+    }
+  } catch (err) {
+    console.warn('[SYMBOLS] Korea listing detection unavailable:', (err as Error).message);
+  }
+
   const symbolsToProcess = [
     ...majorSymbols,
     ...watchedSymbols,
     ...otherSymbols,
     ...highMovers,
+    ...newListingSymbols,
+    ...koreaNewSymbols,
   ];
   
   // Remove duplicates
@@ -120,7 +167,7 @@ async function getUnifiedSymbolUniverse(rawData: any[]): Promise<any[]> {
   );
 
   console.log(
-    `[SYMBOLS] Unified universe: ${majorSymbols.length} major, ${watchedSymbols.length} watched, ${otherSymbols.length} volume, ${highMovers.length} movers = ${uniqueSymbols.length} total`,
+    `[SYMBOLS] Unified universe: ${majorSymbols.length} major, ${watchedSymbols.length} watched, ${otherSymbols.length} top-change, ${highMovers.length} movers, ${newListingSymbols.length} new-listings, ${koreaNewSymbols.length} korea-new = ${uniqueSymbols.length} total`,
   );
 
   return uniqueSymbols;
@@ -1630,7 +1677,7 @@ export async function registerRoutes(
     }
   }
 
-  // ─── Background enrichment: builds enhanced signals cache ───────────────────────
+  // ─── Background enrichment: builds enhanced signals cache ────────────────────────────────────────────
   async function calculateEnhancedSignals() {
     if (isEnriching || cachedSignals.length === 0) return;
     isEnriching = true;
