@@ -1723,6 +1723,7 @@ export function calculateSpikeProbability(params: {
   currentPrice: number;
   spikeScore: number;             // Pre-computed 0-10 score (backward compat)
   bidAskVolumeRatio?: number;     // Optional order book imbalance
+  oiMcapRatio?: number;          // OI / Market Cap ratio (normalized OI magnitude)
 }): SpikeProbability {
   const { rvolData, oiData, squeezeData, fundingData, atrData } = params;
 
@@ -1747,20 +1748,35 @@ export function calculateSpikeProbability(params: {
   const beta1_contribution = 1.2 * x_rvol;
   logit += beta1_contribution;
 
-  // ── β₂: OI Surge (weight 0.8) ─────────────────────────────────────────────
-  // Rising OI + price move = new money entering = bullish signal
+  // ── β₂: OI Surge (weight 0.8→1.0 adaptive) ──────────────────────────────
+  // Gap #4: Normalize OI by market cap when available (OI/MCap ratio)
+  // Gap #1: Raise β₂ to 1.0 when OI is RISING confirmed
   let x_oi = 0;
   const oiZ = oiData.oiSurgeZScore;
-  if (!isNaN(oiZ)) {
-    if (oiZ > 2.0) x_oi = 2.0;
-    else if (oiZ > 1.0) x_oi = 1.2;
-    else if (oiZ > 0.5) x_oi = 0.6;
-    else if (oiZ < -1.0) x_oi = -0.5; // Falling OI = negative signal
+  
+  // OI/MCap ratio amplifier: small-cap with high OI = much stronger signal
+  let oiMcapMultiplier = 1.0;
+  if (params.oiMcapRatio !== undefined && params.oiMcapRatio > 0) {
+    if (params.oiMcapRatio > 0.10) oiMcapMultiplier = 1.8;       // OI > 10% of MCap = extremely leveraged
+    else if (params.oiMcapRatio > 0.05) oiMcapMultiplier = 1.5;  // OI > 5% of MCap = heavily leveraged
+    else if (params.oiMcapRatio > 0.02) oiMcapMultiplier = 1.2;  // OI > 2% of MCap = moderate
+    // OI < 2% of MCap = default multiplier 1.0
   }
-  // Direction reinforcement
-  if (oiData.oiDirection === "RISING") x_oi += 0.3;
+
+  if (!isNaN(oiZ)) {
+    if (oiZ > 2.0) x_oi = 2.0 * oiMcapMultiplier;
+    else if (oiZ > 1.0) x_oi = 1.2 * oiMcapMultiplier;
+    else if (oiZ > 0.5) x_oi = 0.6 * oiMcapMultiplier;
+    else if (oiZ < -1.0) x_oi = -0.5;
+  }
+  
+  // Direction reinforcement (stronger when RISING)
+  if (oiData.oiDirection === "RISING") x_oi += 0.4;
   else if (oiData.oiDirection === "FALLING") x_oi -= 0.2;
-  const beta2_contribution = 0.8 * x_oi;
+  
+  // Gap #1: Adaptive β₂ — raise from 0.8 to 1.0 when OI direction is confirmed RISING
+  const beta2_weight = oiData.oiDirection === "RISING" ? 1.0 : 0.8;
+  const beta2_contribution = beta2_weight * x_oi;
   logit += beta2_contribution;
 
   // ── β₃: BB/KC Squeeze (weight 1.5 for FIRING, 0.5 for SQUEEZE) ────────────
@@ -1814,6 +1830,16 @@ export function calculateSpikeProbability(params: {
   const beta7_contribution = 0.5 * x_atr;
   logit += beta7_contribution;
 
+  // ── Gap #5: FUEL × OI_RISING interaction term ────────────────────────────
+  // When a coin has FUEL tag (social/crowd activity) AND OI is RISING,
+  // the combination signals both retail attention + institutional positioning
+  let fuelOiInteraction = 0;
+  if (params.spikeScore >= 5 && oiData.oiDirection === "RISING") {
+    // spikeScore >= 5 is used as a proxy for FUEL-like conditions (high activity)
+    fuelOiInteraction = 0.5;
+  }
+  logit += fuelOiInteraction;
+
   // ── Order Book Imbalance bonus ─────────────────────────────────────────────
   const obImbalance = scoreOrderBookImbalance(params.bidAskVolumeRatio);
   logit += obImbalance.logitBonus;
@@ -1832,6 +1858,17 @@ export function calculateSpikeProbability(params: {
       vwapMultiplier = 0.9; // Price below VWAP: reduce upspike probability
     }
   }
+
+  // ── Gap #6: Deep Z-score mean-reversion bonus ────────────────────────────
+  // When Z < -5 AND VWAP = BULL → coin is deeply oversold but buying pressure present
+  // This catches mean-reversion setups like FARTCOIN (-12.1), LTC (-12.2)
+  let meanReversionBonus = 0;
+  if (rvolData.rvolZScore < -5 && vwapConfirmation === "BULLISH") {
+    meanReversionBonus = 0.4;
+  } else if (rvolData.rvolZScore < -3 && vwapConfirmation === "BULLISH") {
+    meanReversionBonus = 0.2;
+  }
+  logit += meanReversionBonus;
 
   // ── Compute raw probability ────────────────────────────────────────────────
   // Cap logit at 3.5 to prevent sigmoid saturation (sigmoid(3.5) ≈ 97%)
@@ -1910,6 +1947,8 @@ export function calculateSpikeProbability(params: {
     { name: "REGIME",   value: beta5_contribution },
     { name: "NEW_LISTING", value: beta6_contribution },
     { name: "ATR_EXPAND", value: beta7_contribution },
+    { name: "FUEL_OI", value: fuelOiInteraction },
+    { name: "MEAN_REVERT", value: meanReversionBonus },
   ];
   const dominant = contributions.reduce((a, b) => Math.abs(a.value) > Math.abs(b.value) ? a : b);
   const dominantDriver = dominant.name;
