@@ -20,6 +20,7 @@ interface SimpleKline {
   closeTime: number;
 }
 import { getBinanceFuturesData, getBinanceKlines, getSymbolListingDate, calculateAgeDays } from "./binance";
+import { getUpbitKoreaAlpha } from "./listing-monitor";
 import { getOKXMarketData, getOKXFundingRate, getOKXKlines } from "./okx";
 
 type PriceLocation = "DISCOUNT" | "NEUTRAL" | "PREMIUM";
@@ -1646,11 +1647,50 @@ export function calculateVWAP(klines: SimpleKline[]): number | undefined {
  * @param ageDays - Days since first detected listing (from Binance listing date)
  * @returns Object with alpha flag, confidence note, and logit bonus to add
  */
-export function detectKoreaListingAlpha(ageDays: number | undefined): {
+export function detectKoreaListingAlpha(
+  ageDays: number | undefined,
+  koreaData?: { isKoreaListed: boolean; volumeSoaring: boolean; kimchiPremium: boolean; depositSoaring: boolean }
+): {
   isNewKoreaListing: boolean;
   logitBonus: number;
   note: string;
 } {
+  // NEW: Real Upbit data check
+  if (koreaData?.isKoreaListed) {
+    let bonus = 0;
+    const reasons: string[] = [];
+
+    if (koreaData.kimchiPremium) {
+      bonus += 0.8;
+      reasons.push('kimchi premium active');
+    }
+    if (koreaData.volumeSoaring) {
+      bonus += 0.5;
+      reasons.push('volume soaring on Upbit');
+    }
+    if (koreaData.depositSoaring) {
+      bonus += 0.3;
+      reasons.push('deposit soaring');
+    }
+
+    // Even without flags, being Korea-listed with new age gives a bonus
+    if (bonus === 0 && ageDays !== undefined && ageDays <= 7) {
+      bonus = 0.5;
+      reasons.push(`new Korea listing (${ageDays}d)`);
+    }
+
+    if (bonus > 0) {
+      return {
+        isNewKoreaListing: true,
+        logitBonus: Math.min(1.5, bonus), // Cap to prevent sigmoid saturation
+        note: `Korea alpha: ${reasons.join(', ')}`,
+      };
+    }
+
+    return { isNewKoreaListing: false, logitBonus: 0, note: 'Korea-listed but no active signals' };
+  }
+
+  // Fallback: age-based proxy (for coins not yet checked against Upbit)
   if (ageDays === undefined) {
     return { isNewKoreaListing: false, logitBonus: 0, note: "age unknown" };
   }
@@ -1658,14 +1698,14 @@ export function detectKoreaListingAlpha(ageDays: number | undefined): {
     return {
       isNewKoreaListing: true,
       logitBonus: 0.8,
-      note: `Very new listing (${ageDays}d) — peak Korean exchange listing alpha window`,
+      note: `Very new listing (${ageDays}d) — peak listing alpha window`,
     };
   }
   if (ageDays <= 7) {
     return {
       isNewKoreaListing: true,
       logitBonus: 0.5,
-      note: `New listing (${ageDays}d) — within Korean exchange listing alpha window`,
+      note: `New listing (${ageDays}d) — within listing alpha window`,
     };
   }
   return { isNewKoreaListing: false, logitBonus: 0, note: "not a new listing" };
@@ -1724,13 +1764,14 @@ export function calculateSpikeProbability(params: {
   spikeScore: number;             // Pre-computed 0-10 score (backward compat)
   bidAskVolumeRatio?: number;     // Optional order book imbalance
   oiMcapRatio?: number;          // OI / Market Cap ratio (normalized OI magnitude)
+  koreaData?: { isKoreaListed: boolean; volumeSoaring: boolean; kimchiPremium: boolean; depositSoaring: boolean };
 }): SpikeProbability {
   const { rvolData, oiData, squeezeData, fundingData, atrData } = params;
 
-  // ── Sigmoid helper ────────────────────────────────────────────────────────
+  // ── Sigmoid helper ─────────────────────────────────────────────────────────────────────────
   const sigmoid = (z: number): number => 1 / (1 + Math.exp(-z));
 
-  // ── β₀: Intercept — base rate ~3% (sigmoid(-3.5) ≈ 0.030) ────────────────
+  // ── β₀: Intercept — base rate ~3% (sigmoid(-3.5) ≈ 0.030) ──────────────────────────────
   let logit = -3.5;
 
   // ── β₁: RVOL (weight 1.2 per z-score unit, but we use rvol ratio directly) ─
@@ -1748,7 +1789,7 @@ export function calculateSpikeProbability(params: {
   const beta1_contribution = 1.2 * x_rvol;
   logit += beta1_contribution;
 
-  // ── β₂: OI Surge (weight 0.8→1.0 adaptive) ──────────────────────────────
+  // ── β₂: OI Surge (weight 0.8→1.0 adaptive) ────────────────────────────────────────────
   // Gap #4: Normalize OI by market cap when available (OI/MCap ratio)
   // Gap #1: Raise β₂ to 1.0 when OI is RISING confirmed
   let x_oi = 0;
@@ -1779,7 +1820,7 @@ export function calculateSpikeProbability(params: {
   const beta2_contribution = beta2_weight * x_oi;
   logit += beta2_contribution;
 
-  // ── β₃: BB/KC Squeeze (weight 1.5 for FIRING, 0.5 for SQUEEZE) ────────────
+  // ── β₃: BB/KC Squeeze (weight 1.5 for FIRING, 0.5 for SQUEEZE) ────────────────────────
   let x_squeeze = 0;
   const { state: sqzState, squeezeIntensity, squeezeBars } = squeezeData;
   if (sqzState === "FIRING_LONG" || sqzState === "FIRING_SHORT") {
@@ -1814,23 +1855,23 @@ export function calculateSpikeProbability(params: {
   const beta5_contribution = 0.6 * x_regime;
   logit += beta5_contribution;
 
-  // ── β₆: Age / New Listing Alpha (weight 0.3) ──────────────────────────────
+  // ── β₆: Age / New Listing Alpha (weight 0.3) ────────────────────────────────────────────
   let x_age = 0;
-  const koreaAlpha = detectKoreaListingAlpha(params.ageDays);
+  const koreaAlpha = detectKoreaListingAlpha(params.ageDays, params.koreaData);
   if (params.ageDays !== undefined && params.ageDays < 7) x_age = 2.0;  // Korea listing window
   else if (params.ageDays !== undefined && params.ageDays < 30) x_age = 1.0;
   else if (params.ageDays !== undefined && params.ageDays < 90) x_age = 0.5;
   const beta6_contribution = 0.3 * x_age + koreaAlpha.logitBonus;
   logit += beta6_contribution;
 
-  // ── β₇: ATR Expansion (weight 0.5 when ratio > 1.5) ─────────────────────
+  // ── β₇: ATR Expansion (weight 0.5 when ratio > 1.5) ────────────────────────────────
   let x_atr = 0;
   if (atrData.expanding && atrData.atrRatio > 1.5) x_atr = 1.0;
   else if (atrData.expanding) x_atr = 0.5;
   const beta7_contribution = 0.5 * x_atr;
   logit += beta7_contribution;
 
-  // ── Gap #5: FUEL × OI_RISING interaction term ────────────────────────────
+  // ── Gap #5: FUEL × OI_RISING interaction term ──────────────────────────────────────────
   // When a coin has FUEL tag (social/crowd activity) AND OI is RISING,
   // the combination signals both retail attention + institutional positioning
   let fuelOiInteraction = 0;
@@ -1840,11 +1881,11 @@ export function calculateSpikeProbability(params: {
   }
   logit += fuelOiInteraction;
 
-  // ── Order Book Imbalance bonus ─────────────────────────────────────────────
+  // ── Order Book Imbalance bonus ────────────────────────────────────────────────────────
   const obImbalance = scoreOrderBookImbalance(params.bidAskVolumeRatio);
   logit += obImbalance.logitBonus;
 
-  // ── VWAP Confirmation (±10% multiplier on probability post-sigmoid) ────────
+  // ── VWAP Confirmation (±10% multiplier on probability post-sigmoid) ─────────────────────
   const vwap = calculateVWAP(params.klines);
   let vwapConfirmation: "BULLISH" | "BEARISH" | "NEUTRAL" = "NEUTRAL";
   let vwapMultiplier = 1.0;
@@ -1859,7 +1900,7 @@ export function calculateSpikeProbability(params: {
     }
   }
 
-  // ── Gap #6: Deep Z-score mean-reversion bonus ────────────────────────────
+  // ── Gap #6: Deep Z-score mean-reversion bonus ──────────────────────────────────────────
   // When Z < -5 AND VWAP = BULL → coin is deeply oversold but buying pressure present
   // This catches mean-reversion setups like FARTCOIN (-12.1), LTC (-12.2)
   let meanReversionBonus = 0;
@@ -1870,18 +1911,18 @@ export function calculateSpikeProbability(params: {
   }
   logit += meanReversionBonus;
 
-  // ── Compute raw probability ────────────────────────────────────────────────
+  // ── Compute raw probability ────────────────────────────────────────────────────────────────
   // Cap logit at 3.5 to prevent sigmoid saturation (sigmoid(3.5) ≈ 97%)
   // No coin should show >95% — that implies certainty which doesn't exist
   logit = Math.min(3.5, logit);
   let probability = sigmoid(logit) * vwapMultiplier;
   probability = Math.max(0, Math.min(0.95, probability)); // Hard cap at 95%
 
-  // ── Time Decay (default 0.8 for 1H klines, ~30min avg signal age) ─────────
+  // ── Time Decay (default 0.8 for 1H klines, ~30min avg signal age) ─────────────────
   // Full implementation would track signal timestamps; for now use fixed default.
   const timeDecay = 0.8;
 
-  // ── Signal Agreement / Confluence ─────────────────────────────────────────
+  // ── Signal Agreement / Confluence ──────────────────────────────────────────────────────
   // Count how many of the 7 signal dimensions are meaningfully "on"
   const signalThresholds = [
     rvol >= 2.0,                                                // RVOL elevated
@@ -1896,7 +1937,7 @@ export function calculateSpikeProbability(params: {
   const activeSignals = signalThresholds.filter(Boolean).length;
   const signalAgreement = activeSignals / definedSignals;
 
-  // ── Data Quality Score ─────────────────────────────────────────────────────
+  // ── Data Quality Score ────────────────────────────────────────────────────────────────────
   // Fraction of non-undefined critical inputs
   const dataPoints = [
     rvol,
@@ -1910,7 +1951,7 @@ export function calculateSpikeProbability(params: {
   const validDataPoints = dataPoints.filter(v => v !== undefined && !Number.isNaN(v)).length;
   const dataQuality = validDataPoints / dataPoints.length;
 
-  // ── Confidence Level ──────────────────────────────────────────────────────
+  // ── Confidence Level ──────────────────────────────────────────────────────────────────────
   let confidence: "HIGH" | "MEDIUM" | "LOW";
   if (signalAgreement >= 0.6 && dataQuality >= 0.7) {
     confidence = "HIGH";
@@ -1920,7 +1961,7 @@ export function calculateSpikeProbability(params: {
     confidence = "LOW";
   }
 
-  // ── Expected Magnitude (% spike if it occurs) ─────────────────────────────
+  // ── Expected Magnitude (% spike if it occurs) ───────────────────────────────────────────────
   let expectedMagnitude: number;
   const isFiring = sqzState === "FIRING_LONG" || sqzState === "FIRING_SHORT";
   if (rvol >= 5.0 && isFiring) {
@@ -1938,7 +1979,7 @@ export function calculateSpikeProbability(params: {
   }
   expectedMagnitude = Math.max(2, Math.min(20, Math.round(expectedMagnitude * 10) / 10));
 
-  // ── Dominant Driver ───────────────────────────────────────────────────────
+  // ── Dominant Driver ───────────────────────────────────────────────────────────────────────────
   const contributions: { name: string; value: number }[] = [
     { name: "RVOL",     value: beta1_contribution },
     { name: "OI_SURGE", value: beta2_contribution },
@@ -2402,6 +2443,15 @@ export async function enrichSignalWithCoinglass(
   // ═══════════════════════════════════════════════════════════════════
   // SPIKE PROBABILITY ENGINE — Logistic Sigmoid P(spike_15min)
   // ═══════════════════════════════════════════════════════════════════
+  // Fetch Korea alpha data for this symbol
+  let koreaData: { isKoreaListed: boolean; volumeSoaring: boolean; kimchiPremium: boolean; depositSoaring: boolean } | undefined;
+  try {
+    const koreaMap = await getUpbitKoreaAlpha();
+    koreaData = koreaMap.get(signal.symbol);
+  } catch (err) {
+    // Korea data unavailable, proceed without it
+  }
+
   const spikeProbability = calculateSpikeProbability({
     rvolData,
     oiData,
@@ -2414,6 +2464,7 @@ export async function enrichSignalWithCoinglass(
     currentPrice: signal.currentPrice,
     spikeScore,
     // bidAskVolumeRatio: undefined — wire in order book feed when available
+    koreaData,
   });
 
   if (spikeProbability.probability >= 0.3) {
