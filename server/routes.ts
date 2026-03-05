@@ -152,6 +152,70 @@ async function getUnifiedSymbolUniverse(rawData: any[]): Promise<any[]> {
     console.warn('[SYMBOLS] Korea listing detection unavailable:', (err as Error).message);
   }
 
+  // Priority 7: Binance Futures symbols not on Bitunix — catch new listings on Binance
+  let binanceOnlySymbols: any[] = [];
+  try {
+    const { getBinanceFuturesSymbols } = await import('./listing-monitor');
+    const binanceSymbols = await getBinanceFuturesSymbols();
+    const alreadySelected = new Set([
+      ...majorSymbols.map((s: any) => s.symbol),
+      ...watchedSymbols.map((s: any) => s.symbol),
+      ...otherSymbols.map((s: any) => s.symbol),
+      ...highMovers.map((s: any) => s.symbol),
+      ...newListingSymbols.map((s: any) => s.symbol),
+      ...koreaNewSymbols.map((s: any) => s.symbol),
+    ]);
+
+    // Find Binance symbols not in Bitunix rawData
+    const bitunixSymbols = new Set(allSymbols.map((s: any) => s.symbol));
+    const missingFromBitunix: string[] = [];
+    for (const sym of binanceSymbols) {
+      if (!bitunixSymbols.has(sym) && !alreadySelected.has(sym)) {
+        missingFromBitunix.push(sym);
+      }
+    }
+
+    // For missing symbols, create minimal entries with Binance ticker data
+    if (missingFromBitunix.length > 0) {
+      console.log(`[SYMBOLS] Binance-only symbols not on Bitunix: ${missingFromBitunix.join(', ')}`);
+      // These will need Binance price data — fetch from Binance ticker
+      try {
+        const resp = await fetch('https://fapi.binance.com/fapi/v1/ticker/24hr', {
+          headers: { 'User-Agent': 'Giiq-Screener/1.0' },
+          signal: AbortSignal.timeout(10000),
+        });
+        if (resp.ok) {
+          const tickers = await resp.json() as Array<{
+            symbol: string; lastPrice: string; priceChangePercent: string;
+            volume: string; quoteVolume: string; openPrice: string;
+            highPrice: string; lowPrice: string;
+          }>;
+          const tickerMap = new Map(tickers.map(t => [t.symbol, t]));
+          for (const sym of missingFromBitunix.slice(0, 10)) { // Cap at 10 to limit API load
+            const ticker = tickerMap.get(sym);
+            if (ticker && parseFloat(ticker.lastPrice) > 0) {
+              binanceOnlySymbols.push({
+                symbol: sym,
+                lastPrice: ticker.lastPrice,
+                open: ticker.openPrice,
+                high24h: ticker.highPrice,
+                low24h: ticker.lowPrice,
+                quoteVol: ticker.quoteVolume,
+                vol: ticker.volume,
+                priceChange24h: parseFloat(ticker.priceChangePercent),
+                _source: 'binance-backfill',
+              });
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('[SYMBOLS] Binance ticker backfill failed:', (err as Error).message);
+      }
+    }
+  } catch (err) {
+    console.warn('[SYMBOLS] Binance symbol fetch unavailable:', (err as Error).message);
+  }
+
   const symbolsToProcess = [
     ...majorSymbols,
     ...watchedSymbols,
@@ -159,6 +223,7 @@ async function getUnifiedSymbolUniverse(rawData: any[]): Promise<any[]> {
     ...highMovers,
     ...newListingSymbols,
     ...koreaNewSymbols,
+    ...binanceOnlySymbols,
   ];
   
   // Remove duplicates
@@ -167,7 +232,7 @@ async function getUnifiedSymbolUniverse(rawData: any[]): Promise<any[]> {
   );
 
   console.log(
-    `[SYMBOLS] Unified universe: ${majorSymbols.length} major, ${watchedSymbols.length} watched, ${otherSymbols.length} top-change, ${highMovers.length} movers, ${newListingSymbols.length} new-listings, ${koreaNewSymbols.length} korea-new = ${uniqueSymbols.length} total`,
+    `[SYMBOLS] Unified universe: ${majorSymbols.length} major, ${watchedSymbols.length} watched, ${otherSymbols.length} top-change, ${highMovers.length} movers, ${newListingSymbols.length} new-listings, ${koreaNewSymbols.length} korea-new, ${binanceOnlySymbols.length} binance-only = ${uniqueSymbols.length} total`,
   );
 
   return uniqueSymbols;
