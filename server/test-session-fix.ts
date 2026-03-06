@@ -1,170 +1,267 @@
 /**
- * test-session-fix.ts — Verification script for the HKT session/killzone fix.
- *
- * Run with: npx tsx server/test-session-fix.ts
- * (or compile and run with tsc + node)
+ * test-session-fix.ts — QA validation for ICT Killzone session configuration.
  *
  * Tests:
- * 1. time-utils.ts functions
- * 2. session-config.ts classifier against known HKT times
- * 3. Edge cases (midnight wrap, DST transitions)
- * 4. Real-time sanity check for 2026-03-06 ~13:55 HKT
+ * 1. Session & Killzone table for 2026-03-06 (EST winter)
+ * 2. Point-in-time checks at specific HKT times
+ * 3. Real-time sanity check (~14:19 HKT)
+ * 4. Sample report labels
+ * 5. DST transition (summer/EDT) checks
  */
 
-import { nowUtc, toHkt, getHktHourMinute, getHktHour, formatHktTime, formatHktDateTime } from "./time-utils";
-import { classifySession, getSessionSchedule } from "./session-config";
+import { classifySession, getSessionSchedule, getSessionScheduleTable } from "./session-config";
+import type { SessionClassification } from "./session-config";
 
-let passed = 0;
-let failed = 0;
-
-function assert(condition: boolean, msg: string) {
-  if (condition) {
-    passed++;
-    console.log(`  ✓ ${msg}`);
-  } else {
-    failed++;
-    console.log(`  ✗ FAIL: ${msg}`);
+function assert(cond: boolean, msg: string): void {
+  if (!cond) {
+    console.error(`❌ FAIL: ${msg}`);
+    process.exit(1);
   }
+  console.log(`✅ PASS: ${msg}`);
 }
 
-console.log("═══════════════════════════════════════════════════════════");
-console.log("  Giiq Screener — Session Time & Killzone Fix Verification");
-console.log("═══════════════════════════════════════════════════════════");
-console.log("");
-
-// ─── Test 1: time-utils ────────────────────────────────────────────────────
-console.log("── Test 1: time-utils.ts ──────────────────────────────────");
-
-// 05:55 UTC = 13:55 HKT
-const t1 = new Date("2026-03-06T05:55:00.000Z");
-const hm1 = getHktHourMinute(t1);
-assert(hm1.hour === 13 && hm1.minute === 55, `05:55 UTC → ${hm1.hour}:${hm1.minute} HKT (expect 13:55)`);
-
-// 16:30 UTC = 00:30 HKT (midnight wrap)
-const t2 = new Date("2026-03-06T16:30:00.000Z");
-const hm2 = getHktHourMinute(t2);
-assert(hm2.hour === 0 && hm2.minute === 30, `16:30 UTC → ${hm2.hour}:${hm2.minute} HKT (expect 00:30)`);
-
-// 00:00 UTC = 08:00 HKT
-const t3 = new Date("2026-03-06T00:00:00.000Z");
-const hm3 = getHktHourMinute(t3);
-assert(hm3.hour === 8 && hm3.minute === 0, `00:00 UTC → ${hm3.hour}:${hm3.minute} HKT (expect 08:00)`);
-
-// 20:00 UTC = 04:00 HKT (next day)
-const t4 = new Date("2026-03-06T20:00:00.000Z");
-const hm4 = getHktHourMinute(t4);
-assert(hm4.hour === 4 && hm4.minute === 0, `20:00 UTC → ${hm4.hour}:${hm4.minute} HKT (expect 04:00)`);
-
-// formatHktTime
-assert(formatHktTime(t1) === "13:55 HKT", `formatHktTime(05:55 UTC) = "${formatHktTime(t1)}" (expect "13:55 HKT")`);
-
-// Bug #1 old code would produce: 20 + 8 = 28 instead of 4
-const buggyResult = t4.getUTCHours() + 8;
-const fixedResult = ((t4.getUTCHours() + 8) % 24);
-assert(buggyResult === 28, `OLD buggy code: 20+8 = ${buggyResult} (confirming bug exists)`);
-assert(fixedResult === 4, `NEW fixed code: (20+8)%24 = ${fixedResult} (correct)`);
-
-console.log("");
-
-// ─── Test 2: Session Classification ─────────────────────────────────────────
-console.log("── Test 2: Session Classification ─────────────────────────");
-
-// Asia Killzone: 08:00–09:30 HKT → UTC 00:00–01:30
-const asiaKZ = new Date("2026-03-06T00:30:00.000Z"); // 08:30 HKT
-const asiaResult = classifySession(asiaKZ);
-assert(asiaResult.sessionName === "Asia Killzone", `08:30 HKT → ${asiaResult.sessionName} (expect Asia Killzone)`);
-assert(asiaResult.isKillzone === true, `08:30 HKT → killzone=${asiaResult.isKillzone} (expect true)`);
-assert(asiaResult.sessionLabel.includes("Asia Session"), `Label: "${asiaResult.sessionLabel}" contains "Asia Session"`);
-
-// Asia Extended: 09:30–12:00 HKT → UTC 01:30–04:00
-const asiaExt = new Date("2026-03-06T03:00:00.000Z"); // 11:00 HKT
-const asiaExtResult = classifySession(asiaExt);
-assert(asiaExtResult.sessionName === "Asia Extended", `11:00 HKT → ${asiaExtResult.sessionName} (expect Asia Extended)`);
-assert(asiaExtResult.isKillzone === false, `11:00 HKT → killzone=${asiaExtResult.isKillzone} (expect false)`);
-
-// Off-Hours: 13:55 HKT (between Asia and London)
-const offHours = new Date("2026-03-06T05:55:00.000Z"); // 13:55 HKT
-const offResult = classifySession(offHours);
-assert(offResult.sessionName === "Off-Hours Watch", `13:55 HKT → ${offResult.sessionName} (expect Off-Hours Watch)`);
-assert(offResult.isKillzone === false, `13:55 HKT → killzone=${offResult.isKillzone} (expect false)`);
-
-// London Killzone (Winter, before March 29 2026): 16:00–18:00 HKT → UTC 08:00–10:00
-// March 6 is before UK DST switch (last Sunday of March 2026 = March 29)
-const londonKZ = new Date("2026-03-06T08:30:00.000Z"); // 16:30 HKT
-const londonResult = classifySession(londonKZ);
-assert(londonResult.sessionName === "London Killzone", `16:30 HKT → ${londonResult.sessionName} (expect London Killzone)`);
-assert(londonResult.isKillzone === true, `16:30 HKT → killzone=${londonResult.isKillzone} (expect true)`);
-assert(londonResult.sessionLabel.includes("London Tea Time"), `Label: "${londonResult.sessionLabel}" contains "London Tea Time"`);
-
-// US Killzone (Winter / EST, before March 8 2026): 22:30–00:00 HKT → UTC 14:30–16:00
-// March 6 is before US DST switch (2nd Sunday of March 2026 = March 8)
-const usKZ = new Date("2026-03-06T15:00:00.000Z"); // 23:00 HKT
-const usResult = classifySession(usKZ);
-assert(usResult.sessionName === "US Killzone", `23:00 HKT → ${usResult.sessionName} (expect US Killzone)`);
-assert(usResult.isKillzone === true, `23:00 HKT → killzone=${usResult.isKillzone} (expect true)`);
-assert(usResult.sessionLabel.includes("Golden Tank"), `Label: "${usResult.sessionLabel}" contains "Golden Tank"`);
-
-// US Killzone edge: 22:30 HKT exactly
-const usKZEdge = new Date("2026-03-06T14:30:00.000Z"); // 22:30 HKT
-const usEdgeResult = classifySession(usKZEdge);
-assert(usEdgeResult.sessionName === "US Killzone", `22:30 HKT → ${usEdgeResult.sessionName} (expect US Killzone)`);
-
-console.log("");
-
-// ─── Test 3: DST Transitions ────────────────────────────────────────────────
-console.log("── Test 3: DST Transitions ────────────────────────────────");
-
-// After US DST (March 8 2026): US Killzone shifts to 21:30–23:00 HKT
-const postUSDST = new Date("2026-03-09T13:45:00.000Z"); // 21:45 HKT, March 9 (after US DST)
-const postUSDSTResult = classifySession(postUSDST);
-assert(postUSDSTResult.sessionName === "US Killzone", `21:45 HKT (post-US-DST) → ${postUSDSTResult.sessionName} (expect US Killzone)`);
-
-// After UK DST (March 29 2026): London Killzone shifts to 15:00–17:00 HKT
-const postUKDST = new Date("2026-03-30T07:30:00.000Z"); // 15:30 HKT, March 30 (after UK DST)
-const postUKDSTResult = classifySession(postUKDST);
-assert(postUKDSTResult.sessionName === "London Killzone", `15:30 HKT (post-UK-DST) → ${postUKDSTResult.sessionName} (expect London Killzone)`);
-
-// Pre-UK DST: 15:30 HKT should be Off-Hours (London doesn't start until 16:00)
-const preUKDST = new Date("2026-03-06T07:30:00.000Z"); // 15:30 HKT, March 6 (before UK DST)
-const preUKDSTResult = classifySession(preUKDST);
-assert(preUKDSTResult.sessionName === "Off-Hours Watch", `15:30 HKT (pre-UK-DST) → ${preUKDSTResult.sessionName} (expect Off-Hours Watch)`);
-
-console.log("");
-
-// ─── Test 4: Real-Time Sanity (2026-03-06 ~13:55 HKT) ──────────────────────
-console.log("── Test 4: Real-Time Sanity Check ─────────────────────────");
-
-const realNow = new Date();
-const realClassification = classifySession(realNow);
-const realHm = getHktHourMinute(realNow);
-
-console.log(`  Current UTC:    ${realNow.toISOString()}`);
-console.log(`  Computed HKT:   ${realHm.hour}:${String(realHm.minute).padStart(2, '0')}`);
-console.log(`  HKT formatted:  ${formatHktTime(realNow)}`);
-console.log(`  HKT datetime:   ${formatHktDateTime(realNow)}`);
-console.log(`  Session name:   ${realClassification.sessionName}`);
-console.log(`  Session label:  ${realClassification.sessionLabel}`);
-console.log(`  Is killzone:    ${realClassification.isKillzone}`);
-console.log("");
-
-// ─── Test 5: Session Schedule Table ─────────────────────────────────────────
-console.log("── Test 5: Session Schedule Table (current DST context) ───");
-
-const schedule = getSessionSchedule(realNow);
-console.log("");
-console.log("  | Session              | HKT Start | HKT End | UTC Start | UTC End | Killzone |");
-console.log("  |----------------------|-----------|---------|-----------|---------|----------|");
-for (const s of schedule) {
-  console.log(`  | ${s.label.padEnd(20)} | ${s.hktStart.padEnd(9)} | ${s.hktEnd.padEnd(7)} | ${s.utcStart.padEnd(9)} | ${s.utcEnd.padEnd(7)} | ${s.isKillzone ? 'YES' : 'no '}      |`);
+/** Helper: create a UTC Date that corresponds to a given HKT hour:minute on a given date. */
+function hktToUtc(year: number, month: number, day: number, hktH: number, hktM: number): Date {
+  // HKT = UTC + 8, so UTC = HKT - 8
+  let utcH = hktH - 8;
+  let utcDay = day;
+  let utcMonth = month;
+  if (utcH < 0) {
+    utcH += 24;
+    utcDay -= 1;
+    // Simple case: handle day wrap (good enough for testing)
+    if (utcDay < 1) {
+      utcMonth -= 1;
+      if (utcMonth < 1) {
+        utcMonth = 12;
+        year -= 1;
+      }
+      // Use 28 for Feb simplicity, exact day doesn't matter for these tests
+      const daysInMonth = [0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+      utcDay = daysInMonth[utcMonth];
+    }
+  }
+  return new Date(Date.UTC(year, utcMonth - 1, utcDay, utcH, hktM, 0));
 }
-console.log("  | Off-Hours Watch      | (all other times)                                    |");
+
+console.log("═══════════════════════════════════════════════════════════════");
+console.log("  Giiq Screener — ICT Killzone QA Report");
+console.log("  Date: 2026-03-06 (EST / Winter — US DST not yet active)");
+console.log("═══════════════════════════════════════════════════════════════\n");
+
+// ─── 1. Session & Killzone Table ────────────────────────────────────────────
+
+console.log("── 1. Session & Killzone Schedule Table (2026-03-06, EST) ──\n");
+
+const testDate = new Date(Date.UTC(2026, 2, 6, 6, 19, 0)); // ~14:19 HKT
+const table = getSessionScheduleTable(testDate);
+
+console.log("| Name                          | HKT Start | HKT End | UTC Start | UTC End |");
+console.log("|-------------------------------|-----------|---------|-----------|---------|");
+for (const row of table) {
+  console.log(`| ${row.name.padEnd(29)} | ${row.hktStart}     | ${row.hktEnd}   | ${row.utcStart}     | ${row.utcEnd}   |`);
+}
 console.log("");
 
-// ─── Summary ────────────────────────────────────────────────────────────────
-console.log("═══════════════════════════════════════════════════════════");
-console.log(`  Results: ${passed} passed, ${failed} failed`);
-console.log("═══════════════════════════════════════════════════════════");
+// ─── 2. Point-in-time Checks ────────────────────────────────────────────────
 
-if (failed > 0) {
-  process.exit(1);
+console.log("── 2. Point-in-time Checks ──\n");
+
+interface TestCase {
+  label: string;
+  hktH: number;
+  hktM: number;
+  expectedSession: string;
+  expectedIsKillzone: boolean;
+  expectedKillzoneName: string | null;
 }
+
+const pointTests: TestCase[] = [
+  {
+    label: "09:30 HKT → Asia Session, Asia Kill Zone",
+    hktH: 9, hktM: 30,
+    expectedSession: "Asia",
+    expectedIsKillzone: true,
+    expectedKillzoneName: "Asia",
+  },
+  {
+    label: "15:30 HKT → London Session, London Kill Zone",
+    hktH: 15, hktM: 30,
+    expectedSession: "London",
+    expectedIsKillzone: true,
+    expectedKillzoneName: "London",
+  },
+  {
+    label: "20:30 HKT → New York Session, NY AM Kill Zone",
+    hktH: 20, hktM: 30,
+    expectedSession: "NewYork",
+    expectedIsKillzone: true,
+    expectedKillzoneName: "NY_AM",
+  },
+  {
+    label: "02:30 HKT (next day) → New York Session, NY PM Kill Zone",
+    hktH: 2, hktM: 30,
+    expectedSession: "NewYork",
+    expectedIsKillzone: true,
+    expectedKillzoneName: "NY_PM",
+  },
+];
+
+for (const tc of pointTests) {
+  // Use March 6 for standard times, March 7 for "next day" times (02:30)
+  const day = tc.hktH < 8 ? 7 : 6;
+  const utc = hktToUtc(2026, 3, day, tc.hktH, tc.hktM);
+  const result = classifySession(utc);
+
+  console.log(`  ${tc.label}`);
+  console.log(`    UTC:          ${utc.toISOString()}`);
+  console.log(`    sessionName:  ${result.sessionName}`);
+  console.log(`    isKillzone:   ${result.isKillzone}`);
+  console.log(`    killzoneName: ${result.killzoneName}`);
+  console.log(`    sessionLabel: ${result.sessionLabel}`);
+  console.log("");
+
+  assert(result.sessionName === tc.expectedSession,
+    `${tc.label} → sessionName = ${result.sessionName} (expected ${tc.expectedSession})`);
+  assert(result.isKillzone === tc.expectedIsKillzone,
+    `${tc.label} → isKillzone = ${result.isKillzone} (expected ${tc.expectedIsKillzone})`);
+  assert(result.killzoneName === tc.expectedKillzoneName,
+    `${tc.label} → killzoneName = ${result.killzoneName} (expected ${tc.expectedKillzoneName})`);
+}
+
+// ─── 3. Real-time Sanity (~14:19 HKT on 2026-03-06) ────────────────────────
+
+console.log("\n── 3. Real-time Sanity Check ──\n");
+
+const nowResult = classifySession(testDate);
+console.log(`  HKT time:      ${nowResult.hktTime}`);
+console.log(`  sessionName:   ${nowResult.sessionName}`);
+console.log(`  isKillzone:    ${nowResult.isKillzone}`);
+console.log(`  killzoneName:  ${nowResult.killzoneName}`);
+console.log(`  sessionLabel:  ${nowResult.sessionLabel}`);
+console.log("");
+
+// 14:19 HKT is in Asia Session (08:00–17:00) during EST, but NOT in Asia Kill Zone (09:00–11:00)
+assert(nowResult.sessionName === "Asia",
+  `14:19 HKT → sessionName = ${nowResult.sessionName} (expected Asia)`);
+assert(nowResult.isKillzone === false,
+  `14:19 HKT → isKillzone = ${nowResult.isKillzone} (expected false)`);
+assert(nowResult.killzoneName === null,
+  `14:19 HKT → killzoneName = ${nowResult.killzoneName} (expected null)`);
+assert(nowResult.sessionLabel === "Asia Session",
+  `14:19 HKT → sessionLabel = "${nowResult.sessionLabel}" (expected "Asia Session")`);
+
+// ─── 4. Sample Report Labels ────────────────────────────────────────────────
+
+console.log("\n── 4. Sample Report Labels ──\n");
+
+const labelTests = [
+  { hktH: 9, hktM: 15, day: 6, expected: "Asia Kill Zone (09:00–11:00 HKT)" },
+  { hktH: 16, hktM: 15, day: 6, expected: "London Kill Zone (15:00–18:00 HKT)" },
+  { hktH: 21, hktM: 15, day: 6, expected: "New York AM Kill Zone (20:00–23:00 HKT)" },
+];
+
+for (const lt of labelTests) {
+  const utc = hktToUtc(2026, 3, lt.day, lt.hktH, lt.hktM);
+  const result = classifySession(utc);
+  console.log(`  ${String(lt.hktH).padStart(2, "0")}:${String(lt.hktM).padStart(2, "0")} HKT → "${result.sessionLabel}"`);
+  assert(result.sessionLabel === lt.expected,
+    `Label at ${lt.hktH}:${lt.hktM} HKT = "${result.sessionLabel}" (expected "${lt.expected}")`);
+}
+
+// ─── 5. Non-killzone session labels ─────────────────────────────────────────
+
+console.log("\n── 5. Non-killzone Session Labels ──\n");
+
+const nonKzTests = [
+  { hktH: 12, hktM: 0, day: 6, expectedSession: "Asia", expectedLabel: "Asia Session" },
+  { hktH: 19, hktM: 0, day: 6, expectedSession: "London", expectedLabel: "London Session" },
+  { hktH: 0, hktM: 30, day: 7, expectedSession: "NewYork", expectedLabel: "New York Session" },
+  { hktH: 7, hktM: 0, day: 6, expectedSession: "Off-Hours", expectedLabel: "Off-Hours Watch" },
+];
+
+for (const t of nonKzTests) {
+  const utc = hktToUtc(2026, 3, t.day, t.hktH, t.hktM);
+  const result = classifySession(utc);
+  console.log(`  ${String(t.hktH).padStart(2, "0")}:${String(t.hktM).padStart(2, "0")} HKT → sessionName="${result.sessionName}", label="${result.sessionLabel}"`);
+  assert(result.sessionName === t.expectedSession,
+    `${t.hktH}:${t.hktM} HKT → sessionName = ${result.sessionName} (expected ${t.expectedSession})`);
+  assert(result.sessionLabel === t.expectedLabel,
+    `${t.hktH}:${t.hktM} HKT → sessionLabel = "${result.sessionLabel}" (expected "${t.expectedLabel}")`);
+  assert(result.isKillzone === false,
+    `${t.hktH}:${t.hktM} HKT → isKillzone = ${result.isKillzone} (expected false)`);
+}
+
+// ─── 6. EDT (Summer) DST Check ──────────────────────────────────────────────
+
+console.log("\n── 6. EDT (Summer) DST Validation ──\n");
+
+// Use June 15, 2026 — well into EDT
+const edtTests: TestCase[] = [
+  {
+    label: "08:30 HKT (EDT) → Asia Session, Asia Kill Zone",
+    hktH: 8, hktM: 30,
+    expectedSession: "Asia",
+    expectedIsKillzone: true,
+    expectedKillzoneName: "Asia",
+  },
+  {
+    label: "14:30 HKT (EDT) → London Session, London Kill Zone",
+    hktH: 14, hktM: 30,
+    expectedSession: "London",
+    expectedIsKillzone: true,
+    expectedKillzoneName: "London",
+  },
+  {
+    label: "19:30 HKT (EDT) → New York Session, NY AM Kill Zone",
+    hktH: 19, hktM: 30,
+    expectedSession: "NewYork",
+    expectedIsKillzone: true,
+    expectedKillzoneName: "NY_AM",
+  },
+  {
+    label: "01:30 HKT (EDT) → New York Session, NY PM Kill Zone",
+    hktH: 1, hktM: 30,
+    expectedSession: "NewYork",
+    expectedIsKillzone: true,
+    expectedKillzoneName: "NY_PM",
+  },
+];
+
+for (const tc of edtTests) {
+  const day = tc.hktH < 8 ? 16 : 15; // June 15/16
+  const utc = hktToUtc(2026, 6, day, tc.hktH, tc.hktM);
+  const result = classifySession(utc);
+
+  console.log(`  ${tc.label}`);
+  console.log(`    UTC:          ${utc.toISOString()}`);
+  console.log(`    sessionName:  ${result.sessionName}`);
+  console.log(`    isKillzone:   ${result.isKillzone}`);
+  console.log(`    killzoneName: ${result.killzoneName}`);
+  console.log(`    sessionLabel: ${result.sessionLabel}`);
+  console.log("");
+
+  assert(result.sessionName === tc.expectedSession,
+    `EDT ${tc.label} → sessionName = ${result.sessionName} (expected ${tc.expectedSession})`);
+  assert(result.isKillzone === tc.expectedIsKillzone,
+    `EDT ${tc.label} → isKillzone = ${result.isKillzone} (expected ${tc.expectedIsKillzone})`);
+  assert(result.killzoneName === tc.expectedKillzoneName,
+    `EDT ${tc.label} → killzoneName = ${result.killzoneName} (expected ${tc.expectedKillzoneName})`);
+}
+
+// ─── 7. EDT Schedule Table ──────────────────────────────────────────────────
+
+console.log("\n── 7. EDT (Summer) Schedule Table ──\n");
+
+const edtDate = new Date(Date.UTC(2026, 5, 15, 6, 0, 0)); // June 15 14:00 HKT
+const edtTable = getSessionScheduleTable(edtDate);
+
+console.log("| Name                          | HKT Start | HKT End | UTC Start | UTC End |");
+console.log("|-------------------------------|-----------|---------|-----------|---------|");
+for (const row of edtTable) {
+  console.log(`| ${row.name.padEnd(29)} | ${row.hktStart}     | ${row.hktEnd}   | ${row.utcStart}     | ${row.utcEnd}   |`);
+}
+
+console.log("\n═══════════════════════════════════════════════════════════════");
+console.log("  All tests passed! ✅");
+console.log("═══════════════════════════════════════════════════════════════");

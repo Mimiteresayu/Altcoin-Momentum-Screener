@@ -2,7 +2,7 @@ import type { Express } from "express";
 import type { Server } from "http";
 import { storage, getStorage } from "./storage";
 import { getHktHour, getHktHourMinute, formatHktTime, formatHktDateTime } from "./time-utils";
-import { classifySession, getSessionSchedule } from "./session-config";
+import { classifySession, getSessionSchedule, getSessionScheduleTable } from "./session-config";
 import { isDatabaseAvailable, getConnectionError } from "./db";
 import { api } from "@shared/routes";
 import { notifyNewSignals, isDiscordConfigured } from "./discord";
@@ -2282,10 +2282,10 @@ export async function registerRoutes(
   // SESSION & TIME (HKT) ENDPOINTS
   // ============================================
 
-  /** GET /api/session — Current session classification in HKT */
+  /** GET /api/session — Current session classification in HKT (ICT Killzones) */
   app.get("/api/session", (req, res) => {
     const classification = classifySession();
-    const schedule = getSessionSchedule();
+    const schedule = getSessionScheduleTable();
     res.json({
       current: classification,
       schedule,
