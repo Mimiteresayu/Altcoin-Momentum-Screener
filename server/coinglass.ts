@@ -239,7 +239,7 @@ export async function getOrderbookWalls(
   try {
       const pair = `${symbol.toUpperCase()}USDT`;
       const raw = await binanceRequest<any>(`/fapi/v1/depth?symbol=${pair}&limit=50`);
-      const data = [...(raw.bids||[]).map((b: any) => ({price: parseFloat(b[0]), amount: parseFloat(b[1]), side: "buy"})), ...(raw.asks||[]).map((a: any) => ({price: parseFloat(a[0]), amount: parseFloat(a[1]), side: "sell"}))];
+      const data = [...(raw.bids||[]).map((b: any) => ({price: parseFloat(b[0]), amount: parseFloat(b[1]), side: "bid" as const})), ...(raw.asks||[]).map((a: any) => ({price: parseFloat(a[0]), amount: parseFloat(a[1]), side: "ask" as const}))];
 
     const walls: OrderbookWall[] = [];
     if (!data || !Array.isArray(data)) return walls;
@@ -249,7 +249,7 @@ export async function getOrderbookWalls(
         walls.push({
           price: order.price,
           amount: order.amount,
-          side: order.side === "buy" ? "bid" : "ask",
+          side: order.side as "bid" | "ask",
         });
       }
     });
@@ -632,16 +632,20 @@ export async function getEnhancedMarketData(
       liquidationAnalysis.totalLongLiquidation += level.longLiquidation;
       liquidationAnalysis.totalShortLiquidation += level.shortLiquidation;
 
-      if (level.longLiquidation > maxLong.amount) {
-        maxLong = { price: level.price, amount: level.longLiquidation };
-      }
-      if (level.shortLiquidation > maxShort.amount) {
-        maxShort = { price: level.price, amount: level.shortLiquidation };
+      // Skip price=0 entries (aggregated data without price level) for maxPain
+      if (level.price > 0) {
+        if (level.longLiquidation > maxLong.amount) {
+          maxLong = { price: level.price, amount: level.longLiquidation };
+        }
+        if (level.shortLiquidation > maxShort.amount) {
+          maxShort = { price: level.price, amount: level.shortLiquidation };
+        }
       }
     });
 
-    liquidationAnalysis.maxPainLong = maxLong.price;
-    liquidationAnalysis.maxPainShort = maxShort.price;
+    // Only set maxPain if we found valid price-level data (not aggregated price=0)
+    if (maxLong.price > 0) liquidationAnalysis.maxPainLong = maxLong.price;
+    if (maxShort.price > 0) liquidationAnalysis.maxPainShort = maxShort.price;
 
     const ratio =
       liquidationAnalysis.totalLongLiquidation /

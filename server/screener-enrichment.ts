@@ -7,6 +7,7 @@ import {
   type EnhancedMarketData,
   type LiquidationMapData,
 } from "./coinglass";
+import { DataProviderManager } from "./data-provider-manager";
 import { bitunixTradeService, BitunixTradeService } from "./bitunix-trade";
 
 // Simple kline interface for internal use
@@ -117,6 +118,65 @@ export interface SpikeProbability {
   spikeScore: number;           // Backward-compatible 0-10 score
   vwapConfirmation: "BULLISH" | "BEARISH" | "NEUTRAL"; // Price vs VWAP
   koreaListingAlpha: boolean;   // True if new Korean exchange listing detected
+}
+
+// ─── Sigmoid Helpers (Phase 0 → Phase 1.5 smooth wrappers) ──────────────────
+// Replace hard-coded step functions with smooth curves that preserve the same
+// output range and shape but eliminate discontinuities.
+
+/** Standard logistic sigmoid. */
+const _sig = (z: number): number => 1 / (1 + Math.exp(-z));
+
+/**
+ * RVOL sigmoid: maps rvol ratio to 0→2.5 contribution.
+ * Midpoint at rvol=2.0, steepness=2.5.  Gives ~2.5 at rvol≥3, ~0 at rvol<1.
+ */
+export function rvolSigmoid(rvol: number): number {
+  return 2.5 * _sig(2.5 * (rvol - 2.0));
+}
+
+/**
+ * OI z-score sigmoid: maps oiZ to -0.5→2.0 contribution.
+ * Centred at oiZ=1.0 for the positive branch.
+ */
+export function oiZScoreSigmoid(oiZ: number): number {
+  if (isNaN(oiZ)) return 0;
+  if (oiZ >= 0) return 2.0 * _sig(2.0 * (oiZ - 1.0));
+  // Negative OI z-score → mild drag capped at -0.5
+  return -0.5 * _sig(2.0 * (-oiZ - 1.0));
+}
+
+/**
+ * Squeeze intensity sigmoid: maps intensity (0→~3) to 0→1.0 addition.
+ * Used when state === SQUEEZE.  squeezeBars contribute logarithmically.
+ */
+export function squeezeIntensitySigmoid(intensity: number, squeezeBars: number): number {
+  const baseSqueeze = 0.5 + _sig(3.0 * (intensity - 0.5)) * 0.5;
+  const barBonus = Math.min(0.4, Math.log1p(squeezeBars) * 0.12);
+  return baseSqueeze + barBonus;
+}
+
+/**
+ * ATR ratio clamp sigmoid: maps atrRatio (typically 0.5→3) to 0→1.0.
+ * Midpoint at atrRatio=1.5, steep enough that ratio>2 saturates near 1.
+ */
+export function atrRatioClampSigmoid(atrRatio: number): number {
+  return _sig(3.0 * (atrRatio - 1.5));
+}
+
+/**
+ * Funding anomaly smooth curve: maps fundingAnomaly to 0→0.6 contribution.
+ * Only active when signal === SQUEEZE_FUEL; returns negative for OVERCROWDED_LONG.
+ */
+export function fundingAnomalySmoothCurve(
+  signal: string,
+  fundingAnomaly: number
+): number {
+  if (signal === "SQUEEZE_FUEL") {
+    return 0.4 * Math.min(1.5, fundingAnomaly) * _sig(3.0 * (fundingAnomaly - 0.3));
+  }
+  if (signal === "OVERCROWDED_LONG") return -0.3;
+  return 0;
 }
 
 export function calculatePriceLocation(
@@ -1774,18 +1834,11 @@ export function calculateSpikeProbability(params: {
   // ── β₀: Intercept — base rate ~3% (sigmoid(-3.5) ≈ 0.030) ──────────────────────────────
   let logit = -3.5;
 
-  // ── β₁: RVOL (weight 1.2 per z-score unit, but we use rvol ratio directly) ─
-  // RVOL ≥ 3x is the #1 predictor. Map to a continuous contribution.
+  // ── β₁: RVOL (weight 1.2, smooth sigmoid mapping) ─────────────────────────
   const { rvol, rvolZScore } = rvolData;
-  let x_rvol = 0;
-  if (rvol >= 5.0) x_rvol = 2.0;       // Extreme: strong contribution but may be mid-spike
-  else if (rvol >= 3.0) x_rvol = 2.5;  // Sweet spot: pre-spike peak signal
-  else if (rvol >= 2.0) x_rvol = 1.8;
-  else if (rvol >= 1.5) x_rvol = 1.1;
-  else if (rvol >= 1.2) x_rvol = 0.5;
-  // z-score bonus for statistical outliers
-  if (rvolZScore > 3.0) x_rvol += 0.4;
-  else if (rvolZScore > 2.0) x_rvol += 0.2;
+  let x_rvol = rvolSigmoid(rvol);
+  // z-score bonus for statistical outliers (smooth blend)
+  if (rvolZScore > 2.0) x_rvol += 0.2 * Math.min(1, (rvolZScore - 2.0));
   const beta1_contribution = 1.2 * x_rvol;
   logit += beta1_contribution;
 
@@ -1805,10 +1858,7 @@ export function calculateSpikeProbability(params: {
   }
 
   if (!isNaN(oiZ)) {
-    if (oiZ > 2.0) x_oi = 2.0 * oiMcapMultiplier;
-    else if (oiZ > 1.0) x_oi = 1.2 * oiMcapMultiplier;
-    else if (oiZ > 0.5) x_oi = 0.6 * oiMcapMultiplier;
-    else if (oiZ < -1.0) x_oi = -0.5;
+    x_oi = oiZScoreSigmoid(oiZ) * oiMcapMultiplier;
   }
   
   // Direction reinforcement (stronger when RISING)
@@ -1826,20 +1876,14 @@ export function calculateSpikeProbability(params: {
   if (sqzState === "FIRING_LONG" || sqzState === "FIRING_SHORT") {
     x_squeeze = 1.5; // Highest precision signal — squeeze just released
   } else if (sqzState === "SQUEEZE") {
-    // In-squeeze: score by intensity and duration
-    x_squeeze = 0.5 + squeezeIntensity * 0.3 + Math.min(0.4, squeezeBars * 0.04);
+    x_squeeze = squeezeIntensitySigmoid(squeezeIntensity, squeezeBars);
   }
   const beta3_contribution = x_squeeze; // β₃ already embedded in x_squeeze scaling
   logit += beta3_contribution;
 
-  // ── β₄: Funding Anomaly (weight 0.4 for squeeze fuel, -0.3 for overcrowded) ─
-  let x_funding = 0;
+  // ── β₄: Funding Anomaly (smooth curve) ─────────────────────────────────────
   const { fundingSignal, fundingAnomaly } = fundingData;
-  if (fundingSignal === "SQUEEZE_FUEL") {
-    x_funding = 0.4 * Math.min(1.5, fundingAnomaly);
-  } else if (fundingSignal === "OVERCROWDED_LONG") {
-    x_funding = -0.3; // Longs crowded = squeeze risk downward
-  }
+  const x_funding = fundingAnomalySmoothCurve(fundingSignal, fundingAnomaly);
   logit += x_funding;
 
   // ── β₅: Regime / ER (weight 0.6 for consolidation-to-trend transition) ────
@@ -1864,10 +1908,8 @@ export function calculateSpikeProbability(params: {
   const beta6_contribution = 0.3 * x_age + koreaAlpha.logitBonus;
   logit += beta6_contribution;
 
-  // ── β₇: ATR Expansion (weight 0.5 when ratio > 1.5) ────────────────────────────────
-  let x_atr = 0;
-  if (atrData.expanding && atrData.atrRatio > 1.5) x_atr = 1.0;
-  else if (atrData.expanding) x_atr = 0.5;
+  // ── β₇: ATR Expansion (smooth sigmoid mapping) ────────────────────────────────
+  let x_atr = atrData.expanding ? atrRatioClampSigmoid(atrData.atrRatio) : 0;
   const beta7_contribution = 0.5 * x_atr;
   logit += beta7_contribution;
 
@@ -2235,6 +2277,29 @@ export async function enrichSignalWithCoinglass(
   } else if (enhancedData?.positioningAnalysis?.longShortRatio !== undefined) {
     longShortRatio = enhancedData.positioningAnalysis.longShortRatio;
     lsrBias = enhancedData.positioningAnalysis.trend;
+  }
+
+  // TIER 3 FALLBACK: DataProviderManager (CoinGlass V4 → Coinalyze → Binance Free)
+  // Only fires if OKX and CoinGlass both failed to provide key data
+  if (fundingRate === undefined || longShortRatio === undefined) {
+    try {
+      const dpm = DataProviderManager.getInstance();
+      const providerData = await dpm.getData(signal.symbol);
+      if (providerData.source !== "none") {
+        if (fundingRate === undefined && providerData.fundingRate !== null) {
+          fundingRate = providerData.fundingRate;
+          fundingBias = fundingRate < -0.0001 ? "bullish" : fundingRate > 0.0003 ? "bearish" : "neutral";
+          console.log(`[ENRICHMENT] ${symbol} - FR via ${providerData.source}: ${(fundingRate * 100).toFixed(4)}%`);
+        }
+        if (longShortRatio === undefined && providerData.longShortRatio !== null) {
+          longShortRatio = providerData.longShortRatio;
+          lsrBias = longShortRatio > 1.1 ? "long_dominant" : longShortRatio < 0.9 ? "short_dominant" : "balanced";
+          console.log(`[ENRICHMENT] ${symbol} - L/S via ${providerData.source}: ${longShortRatio.toFixed(2)}`);
+        }
+      }
+    } catch (err) {
+      console.log(`[ENRICHMENT] ${symbol} - DataProviderManager fallback failed:`, err);
+    }
   }
   
   // Calculate Volume Profile POC (Point of Control) from 4H klines

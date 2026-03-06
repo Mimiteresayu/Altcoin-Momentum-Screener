@@ -33,6 +33,8 @@ import {
 import { getOKXKlines, getOKXFundingRate } from "./okx";
 import { getSymbolListingDate, calculateAgeDays } from "./binance";
 import { listingAlphaModel, ListingFeatures, ListingPrediction } from "./ml/listing-alpha-model";
+import { analyzeCoil, type CoilSignal, type MarketData as CoilMarketData } from "./coil-signal";
+import { logSnapshot, buildSnapshotRow, flushSnapshots } from "./ml-snapshot-logger";
 
 interface Kline {
   openTime: number;
@@ -1414,14 +1416,33 @@ export async function registerRoutes(
           // MAJOR: Always include BTC/ETH regardless of volume
           const isMajorQualified = isMajor;
 
-          // COIL criteria: Compression before spike — low vol, tight price range, neutral RSI
-          // Mind Map: volSpike < 0.8, priceChange -5% to +8%, RSI 40-60
-          const isCoil =
-            volumeSpikeRatio < 0.8 &&
-            priceChange24h >= -5 &&
-            priceChange24h <= 8 &&
-            rsi >= 40 &&
-            rsi <= 60;
+          // COIL criteria: Full COIL analysis from coil-signal.ts
+          // Fallback to simple heuristic if kline data insufficient
+          let isCoil = false;
+          let coilResult: CoilSignal | null = null;
+          try {
+            if (klines4H.length >= 20) {
+              const coilInput: CoilMarketData = {
+                symbol: item.symbol,
+                closes: klines4H.map(k => k.close),
+                volumes: klines4H.map(k => k.volume),
+                highs: klines4H.map(k => k.high),
+                lows: klines4H.map(k => k.low),
+                volume24hUsd: parseFloat(item.quoteVol || '0'),
+              };
+              coilResult = analyzeCoil(coilInput);
+              isCoil = coilResult.phase === 'COIL_READY' || coilResult.phase === 'COIL_TRIGGER';
+            }
+          } catch { /* COIL analysis failed, fall through to heuristic */ }
+          if (!isCoil) {
+            // Simple heuristic fallback: low vol, tight price range, neutral RSI
+            isCoil =
+              volumeSpikeRatio < 0.8 &&
+              priceChange24h >= -5 &&
+              priceChange24h <= 8 &&
+              rsi >= 40 &&
+              rsi <= 60;
+          }
 
           // Determine signal type (priority order: HOT > MAJOR > ACTIVE > PRE > COIL)
           let signalType: "HOT" | "ACTIVE" | "PRE" | "COIL" | "MAJOR" | null = null;
@@ -1866,6 +1887,12 @@ export async function registerRoutes(
             positionSize: Math.round(mlPrediction.recommendedPositionSize * 100)
           };
         } catch { /* ML failed, continue */ }
+
+        // ML Snapshot logging — fail-soft, never breaks enrichment
+        try {
+          const snapshotRow = buildSnapshotRow(symbol, signalType, signal);
+          logSnapshot(snapshotRow);
+        } catch { /* snapshot logging failed, continue */ }
 
         signals.push(signal);
       }

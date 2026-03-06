@@ -15,7 +15,7 @@ type FetchResponse = Response;
 // ─── Constants ──────────────────────────────────────────────────────────────
 
 const COINGLASS_BASE_URL = 'https://open-api-v4.coinglass.com';
-const API_KEY = process.env.COINGLASS_API_KEY ?? 'd4fc92ce5a584faaa1d4d7fa9f3cbdf3';
+const API_KEY = process.env.COINGLASS_API_KEY ?? '';
 
 /** Max requests per minute per Startup plan */
 const MAX_REQ_PER_MIN = 80;
