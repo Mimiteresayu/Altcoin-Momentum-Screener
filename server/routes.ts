@@ -1,6 +1,8 @@
 import type { Express } from "express";
 import type { Server } from "http";
 import { storage, getStorage } from "./storage";
+import { getHktHour, getHktHourMinute, formatHktTime, formatHktDateTime } from "./time-utils";
+import { classifySession, getSessionSchedule } from "./session-config";
 import { isDatabaseAvailable, getConnectionError } from "./db";
 import { api } from "@shared/routes";
 import { notifyNewSignals, isDiscordConfigured } from "./discord";
@@ -1182,7 +1184,7 @@ export async function registerRoutes(
         rsi14: features?.rsi14 || 55,
         exchangeNetflow: features?.exchangeNetflow || 0.1,
         whaleTransactions24h: features?.whaleTransactions24h || 20,
-        hourOfDay: now.getUTCHours() + 8, // HKT
+        hourOfDay: ((now.getUTCHours() + 8) % 24), // HKT (UTC+8, mod 24 for midnight wrap)
         dayOfWeek: now.getDay(),
         isKoreaTradingHours: now.getUTCHours() >= 0 && now.getUTCHours() < 9, // 9-18 KST = 0-9 UTC
         kimchiPremium: features?.kimchiPremium || 0.02,
@@ -2274,6 +2276,21 @@ export async function registerRoutes(
       console.error("Error generating daily report:", error);
       res.status(500).json({ message: "Failed to generate daily report" });
     }
+  });
+
+  // ============================================
+  // SESSION & TIME (HKT) ENDPOINTS
+  // ============================================
+
+  /** GET /api/session — Current session classification in HKT */
+  app.get("/api/session", (req, res) => {
+    const classification = classifySession();
+    const schedule = getSessionSchedule();
+    res.json({
+      current: classification,
+      schedule,
+      serverUtc: new Date().toISOString(),
+    });
   });
 
   // ============================================

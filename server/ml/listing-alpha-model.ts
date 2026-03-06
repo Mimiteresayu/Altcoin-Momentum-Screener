@@ -395,7 +395,7 @@ export class ListingAlphaModel {
     minutesToPeak: number
   ): { start: number; end: number } {
     const now = new Date();
-    const hkHour = now.getHours();
+    const hkHour = ((now.getUTCHours() + 8) % 24); // HKT (UTC+8)
     const koreaOpenHKT = 8;
 
     if (features.targetExchange === 'upbit' || features.targetExchange === 'bithumb') {

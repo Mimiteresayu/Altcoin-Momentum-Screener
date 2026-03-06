@@ -312,8 +312,8 @@ export interface TrainingDataPoint {
 }
 
 export function listingEventToTrainingData(event: ListingEvent): TrainingDataPoint {
-  const hourOfDay = event.listingDate.getHours();
-  const dayOfWeek = event.listingDate.getDay();
+  const hourOfDay = ((event.listingDate.getUTCHours() + 8) % 24); // HKT (UTC+8)
+  const dayOfWeek = event.listingDate.getUTCDay();
   const isKoreaTradingHours = hourOfDay >= 8 && hourOfDay < 17;
   
   const return1h = event.priceAtListing > 0 
