@@ -23,7 +23,7 @@ export async function getThesis(req: Request, res: Response) {
     const universe = filterUniverse(fd.coins);
     const c = universe.find((x) => x.symbol.toUpperCase() === symbol);
     if (!c) {
-      res.status(404).json({ error: `symbol ${symbol} not in universe (Fire Dog short_score >= 80 gate)` });
+      res.status(404).json({ error: `symbol ${symbol} not in universe (second-screener short_score >= 80 gate)` });
       return;
     }
 

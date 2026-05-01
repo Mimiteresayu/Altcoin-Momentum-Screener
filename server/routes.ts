@@ -17,6 +17,12 @@ import {
   getChildTrades,
 } from "./confluence/api";
 import { getThesis } from "./ai/thesis-api";
+import {
+  requireCockpitAuth,
+  getCockpitLogin,
+  postCockpitLogin,
+  postCockpitLogout,
+} from "./middleware/cockpit-auth";
 import { pionexService } from "./exchanges/pionex";
 import { binanceSpotService } from "./exchanges/binance-spot";
 import { setStartEquity } from "./risk/kill-switch";
@@ -1158,11 +1164,19 @@ export async function registerRoutes(
   // Best-effort: seed kill-switch start equity from Bitunix when ready
   setStartEquity(0);
 
-  app.get("/api/confluence/latest", getLatestConfluence);
-  app.get("/api/risk/kill-state", getKillStateHandler);
-  app.post("/api/risk/kill-clear", clearKill);
-  app.get("/api/trades/children", getChildTrades);
-  app.get("/api/ai/thesis", getThesis);
+  // Login routes (public — used to obtain auth cookie)
+  app.get("/cockpit-login", getCockpitLogin);
+  app.post("/cockpit-login", postCockpitLogin);
+  app.post("/cockpit-logout", postCockpitLogout);
+
+  // Private cockpit page + private APIs (gated by COCKPIT_PASSWORD)
+  // Match /cockpit and any sub-path (SPA may use sub-routes later)
+  app.get(/^\/cockpit(\/.*)?$/, requireCockpitAuth, (_req, _res, next) => next());
+  app.get("/api/confluence/latest", requireCockpitAuth, getLatestConfluence);
+  app.get("/api/risk/kill-state", requireCockpitAuth, getKillStateHandler);
+  app.post("/api/risk/kill-clear", requireCockpitAuth, clearKill);
+  app.get("/api/trades/children", requireCockpitAuth, getChildTrades);
+  app.get("/api/ai/thesis", requireCockpitAuth, getThesis);
 
   // Health check endpoint with database status
   app.get("/api/health", async (req, res) => {

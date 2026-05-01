@@ -53,7 +53,7 @@ export default function TradingCockpit() {
           <div>
             <h1 className="text-2xl font-bold">Trading Cockpit</h1>
             <p className="text-sm text-muted-foreground">
-              Fire Dog × Altcoin Screener × Qimen confluence · 30-min refresh
+              Altcoin Momentum + QMDJ · Private cockpit · 30-min refresh
             </p>
           </div>
           <div className="text-xs text-muted-foreground">
@@ -74,8 +74,8 @@ export default function TradingCockpit() {
                   <thead className="sticky top-0 bg-card text-muted-foreground">
                     <tr>
                       <th className="text-left py-2">Symbol</th>
-                      <th>FD-S</th>
-                      <th>FD-L</th>
+                      <th>S2-S</th>
+                      <th>S2-L</th>
                       <th>FUEL</th>
                       <th>Daily</th>
                       <th>SMC</th>

@@ -101,9 +101,9 @@ Schema:
   const userMsg = `Token: ${input.symbol}
 Setup: ${setupType}
 Confluence breakdown:
-- Fire Dog short_score: ${input.firedogShort} (gate >= 80)
-- Fire Dog long_score: ${input.firedogLong}
-- Altcoin Screener FUEL: ${input.fuel}
+- Second-screener short_score: ${input.firedogShort} (gate >= 80)
+- Second-screener long_score: ${input.firedogLong}
+- Primary screener FUEL: ${input.fuel}
 - Daily bottom + vol: ${input.daily}
 - SMC structures: ${input.smc}
 - Total: ${input.total}/100
