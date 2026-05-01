@@ -10,6 +10,15 @@ import { initializeWebSocket, getConnectedClientsCount } from "./websocket";
 import { backtestingService } from "./backtest";
 import { autotradeService } from "./autotrade";
 import { bitunixTradeService } from "./bitunix-trade";
+import {
+  getLatestConfluence,
+  getKillState as getKillStateHandler,
+  clearKill,
+  getChildTrades,
+} from "./confluence/api";
+import { pionexService } from "./exchanges/pionex";
+import { binanceSpotService } from "./exchanges/binance-spot";
+import { setStartEquity } from "./risk/kill-switch";
 import { backtestEngine, BacktestSignal, autoStartBacktestFromScreener, type ScreenerSignalForBacktest } from "./backtest-engine";
 import { continuousBacktestEngine } from "./continuous-backtest";
 import axios from "axios";
@@ -1141,6 +1150,17 @@ export async function registerRoutes(
   }).catch(err => {
     console.log('[ML] Model load error, using heuristics:', err.message);
   });
+
+  // ===== Confluence / Risk routes (feat/fire-dog-yuth-confluence) =====
+  pionexService.initialize();
+  binanceSpotService.initialize();
+  // Best-effort: seed kill-switch start equity from Bitunix when ready
+  setStartEquity(0);
+
+  app.get("/api/confluence/latest", getLatestConfluence);
+  app.get("/api/risk/kill-state", getKillStateHandler);
+  app.post("/api/risk/kill-clear", clearKill);
+  app.get("/api/trades/children", getChildTrades);
 
   // Health check endpoint with database status
   app.get("/api/health", async (req, res) => {
