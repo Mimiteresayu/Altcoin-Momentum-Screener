@@ -23,7 +23,7 @@ declare global {
  */
 export function TradingViewChart({
   symbol,
-  exchange = "BINANCE",
+  exchange = "BITUNIX",
   interval = "60",
   height = 480,
   isPerp = true,
