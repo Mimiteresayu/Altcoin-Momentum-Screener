@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useMemo } from "react";
 
 interface Props {
   symbol: string;            // e.g. "ZEREBROUSDT"
@@ -8,18 +8,17 @@ interface Props {
   isPerp?: boolean;          // append .P for perpetual
 }
 
-declare global {
-  interface Window {
-    TradingView?: any;
-  }
-}
-
 /**
- * Free TradingView Advanced Chart widget (iframe).
- * Pro account just gives nicer features; embed itself is free.
+ * Bitunix-priced chart via TradingView's iframe embed.
  *
- * To upgrade to Charting Library (with overlay support for entry/stop lines),
- * apply at https://www.tradingview.com/charting-library/ (free for indie devs).
+ * Why iframe instead of tv.js widget script:
+ *   - tv.js widget often fails to resolve `BITUNIX:XXXUSDT.P` cleanly when
+ *     the script-loaded widget runs symbol-search; iframe embed resolves
+ *     the symbol on TradingView's server-side and renders directly.
+ *   - No global TradingView object; no race conditions; no script tag leaks.
+ *
+ * The "Open in Bitunix" link below jumps to the actual Bitunix trading page
+ * for the same pair so the user can place orders on the same chart they see.
  */
 export function TradingViewChart({
   symbol,
@@ -28,55 +27,61 @@ export function TradingViewChart({
   height = 480,
   isPerp = true,
 }: Props) {
-  const ref = useRef<HTMLDivElement>(null);
+  const tvSymbol = `${exchange}:${symbol}${isPerp ? ".P" : ""}`;
 
-  useEffect(() => {
-    if (!ref.current) return;
-    ref.current.innerHTML = "";
+  const src = useMemo(() => {
+    const params = new URLSearchParams({
+      symbol: tvSymbol,
+      interval,
+      hidesidetoolbar: "0",
+      hidetoptoolbar: "0",
+      symboledit: "1",
+      saveimage: "0",
+      toolbarbg: "151924",
+      studies: "RSI@tv-basicstudies,Volume@tv-basicstudies",
+      theme: "dark",
+      style: "1",
+      timezone: "Asia/Hong_Kong",
+      withdateranges: "1",
+      hideideas: "1",
+      locale: "en",
+      utm_source: "altcoin-cockpit",
+      utm_medium: "widget",
+    });
+    return `https://s.tradingview.com/widgetembed/?${params.toString()}`;
+  }, [tvSymbol, interval]);
 
-    const tvSymbol = `${exchange}:${symbol}${isPerp ? ".P" : ""}`;
+  // Bitunix native trading page (same pair) for "open in Bitunix" jump
+  const bitunixHref = `https://www.bitunix.com/contract-trade/${symbol}`;
 
-    const container = document.createElement("div");
-    container.id = `tv_${Math.random().toString(36).slice(2)}`;
-    container.style.height = `${height}px`;
-    container.style.width = "100%";
-    ref.current.appendChild(container);
-
-    const loadWidget = () => {
-      if (!window.TradingView || !ref.current) return;
-      try {
-        new window.TradingView.widget({
-          autosize: false,
-          symbol: tvSymbol,
-          interval,
-          timezone: "Asia/Hong_Kong",
-          theme: "dark",
-          style: "1",
-          locale: "en",
-          enable_publishing: false,
-          allow_symbol_change: true,
-          hide_legend: false,
-          save_image: false,
-          studies: ["RSI@tv-basicstudies", "Volume@tv-basicstudies"],
-          container_id: container.id,
+  return (
+    <div className="rounded-lg overflow-hidden bg-[#151924] border border-zinc-800">
+      <iframe
+        title={`TradingView ${tvSymbol}`}
+        src={src}
+        style={{
           width: "100%",
-          height,
-        });
-      } catch (e) {
-        console.error("[TV] widget error", e);
-      }
-    };
-
-    if (window.TradingView) {
-      loadWidget();
-    } else {
-      const script = document.createElement("script");
-      script.src = "https://s3.tradingview.com/tv.js";
-      script.async = true;
-      script.onload = loadWidget;
-      document.body.appendChild(script);
-    }
-  }, [symbol, exchange, interval, height, isPerp]);
-
-  return <div ref={ref} style={{ minHeight: height }} className="rounded-lg overflow-hidden" />;
+          height: `${height}px`,
+          border: 0,
+          display: "block",
+        }}
+        allowTransparency
+        allowFullScreen
+      />
+      <div className="flex items-center justify-between px-3 py-2 text-xs text-zinc-400">
+        <span>
+          Bitunix {symbol}
+          {isPerp ? " Perp" : ""} · {interval === "D" ? "1D" : `${interval}m`}
+        </span>
+        <a
+          href={bitunixHref}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-emerald-400 hover:text-emerald-300 underline-offset-2 hover:underline"
+        >
+          Open in Bitunix →
+        </a>
+      </div>
+    </div>
+  );
 }
