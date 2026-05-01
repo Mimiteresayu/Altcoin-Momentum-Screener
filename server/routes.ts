@@ -16,6 +16,7 @@ import {
   clearKill,
   getChildTrades,
 } from "./confluence/api";
+import { getThesis } from "./ai/thesis-api";
 import { pionexService } from "./exchanges/pionex";
 import { binanceSpotService } from "./exchanges/binance-spot";
 import { setStartEquity } from "./risk/kill-switch";
@@ -1161,6 +1162,7 @@ export async function registerRoutes(
   app.get("/api/risk/kill-state", getKillStateHandler);
   app.post("/api/risk/kill-clear", clearKill);
   app.get("/api/trades/children", getChildTrades);
+  app.get("/api/ai/thesis", getThesis);
 
   // Health check endpoint with database status
   app.get("/api/health", async (req, res) => {
