@@ -1,5 +1,21 @@
 import crypto from "crypto";
 
+/** Convert Bitunix interval string to milliseconds. */
+function parseIntervalMs(interval: string): number {
+  const m = interval.match(/^(\d+)([smhdwM])$/);
+  if (!m) return 60_000;
+  const n = parseInt(m[1], 10);
+  switch (m[2]) {
+    case "s": return n * 1000;
+    case "m": return n * 60_000;
+    case "h": return n * 3_600_000;
+    case "d": return n * 86_400_000;
+    case "w": return n * 604_800_000;
+    case "M": return n * 30 * 86_400_000;
+    default: return 60_000;
+  }
+}
+
 // ============= INTERFACES =============
 
 export interface Kline {
@@ -100,41 +116,47 @@ export class BitunixTradeService {
     limit: number = 100,
   ): Promise<Kline[]> {
     try {
-      const endpoint = "/api/v1/market/kline";
+      // Bitunix futures klines live on fapi.bitunix.com — NOT api.bitunix.com.
+      // Public, no key, no geo-block. Returns array-of-objects newest-first.
+      const endpoint = "https://fapi.bitunix.com/api/v1/futures/market/kline";
       const params = new URLSearchParams({
-        symbol: symbol,
-        interval: interval,
+        symbol,
+        interval,
         limit: limit.toString(),
       });
 
-      const url = `${this.baseUrl}${endpoint}?${params.toString()}`;
-      const response = await fetch(url);
-
+      const response = await fetch(`${endpoint}?${params.toString()}`);
       if (!response.ok) {
-        console.error(`[BITUNIX] Kline fetch failed: ${response.status}`);
+        console.error(`[BITUNIX] Kline fetch failed for ${symbol}: ${response.status}`);
         return [];
       }
 
       const data = await response.json();
-
-      // Transform response to Kline format
-      if (data.data && Array.isArray(data.data)) {
-        return data.data.map((k: any) => ({
-          openTime: k[0],
-          open: k[1],
-          high: k[2],
-          low: k[3],
-          close: k[4],
-          volume: k[5],
-          closeTime: k[6],
-          quoteVolume: k[7],
-          trades: k[8],
-          takerBuyBaseVolume: k[9],
-          takerBuyQuoteVolume: k[10],
-        }));
+      if (data?.code !== 0 || !Array.isArray(data?.data)) {
+        console.error(`[BITUNIX] Kline non-zero code for ${symbol}: ${data?.code} ${data?.msg}`);
+        return [];
       }
 
-      return [];
+      // Bitunix returns NEWEST FIRST — reverse so callers see chronological order
+      // (klines[length-1] = most recent candle, which is what SMC / detectors expect).
+      const intervalMs = parseIntervalMs(interval);
+      const candles: Kline[] = data.data.map((k: any) => {
+        const openTime = Number(k.time);
+        return {
+          openTime,
+          open: String(k.open),
+          high: String(k.high),
+          low: String(k.low),
+          close: String(k.close),
+          volume: String(k.baseVol),
+          closeTime: openTime + intervalMs - 1,
+          quoteVolume: String(k.quoteVol),
+          trades: 0,
+          takerBuyBaseVolume: "0",
+          takerBuyQuoteVolume: "0",
+        } as Kline;
+      });
+      return candles.reverse();
     } catch (error) {
       console.error("[BITUNIX] Error fetching klines:", error);
       return [];
