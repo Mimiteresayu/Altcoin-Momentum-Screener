@@ -18,7 +18,9 @@
  * Bitunix TradingView overlay.
  */
 import type { Request, Response } from "express";
-import { getFireDogRankings, filterUniverse } from "../scrapers/firedog";
+import { getSignalBySymbol } from "../screener/signal-store";
+import { getFundingRate as fetchFunding } from "../coinglass";
+import { calculateFundingAnomaly } from "../screener-enrichment";
 import { getQimenPan } from "../qimen/sidecar";
 import { extractSmcFeatures } from "../smc/features";
 import { detectAltcoinSetup } from "../altcoin-setup/setup-detector";
@@ -67,35 +69,45 @@ export async function getThesis(req: Request, res: Response) {
       return;
     }
 
-    const fd = await getFireDogRankings();
-    const universe = filterUniverse(fd.coins);
-    const coin = universe.find((x) => x.symbol.toUpperCase() === symbol);
+    const coin = getSignalBySymbol(symbol);
     if (!coin) {
       res.status(404).json({
-        error: `symbol ${symbol} not in universe (Fire Dog short_score gate)`,
+        error: `symbol ${symbol} not in current screener universe`,
       });
       return;
     }
 
     // gather inputs in parallel
-    const [smc, qimen, klines] = await Promise.all([
+    const [smc, qimen, klines, fundingArr] = await Promise.all([
       extractSmcFeatures(symbol, "1d", 120).catch(() => null),
       getQimenPan(symbol).catch(() => null),
       bitunix.getKlines(symbol, "1d", 120).catch(() => []),
+      fetchFunding(symbol.replace(/USDT$/i, "")).catch(() => [] as any[]),
     ]);
+
+    const fundingRow = (fundingArr ?? []).find((x: any) => x.exchange?.toLowerCase() === "binance")
+      ?? (fundingArr ?? [])[0];
+    const fundingRate = fundingRow?.fundingRate ?? 0;
+    const fundingSignal = calculateFundingAnomaly(fundingRate).fundingSignal;
 
     const setup = klines.length >= 30
       ? await detectAltcoinSetup(symbol, klines, "1d")
       : null;
-    const side: "LONG" | "SHORT" = setup?.side ?? "LONG";
+    // Prefer screener side; fall back to setup detector.
+    const side: "LONG" | "SHORT" = (coin.side as "LONG" | "SHORT") ?? setup?.side ?? "LONG";
 
     // funnel
     const funnel = runFunnel({
       symbol,
-      bitunixTradeable: true, // already in Bitunix universe by construction
-      firedog: coin,
-      fundingSignal: "NEUTRAL",  // TODO: wire to screener-enrichment
-      fundingRate: 0,
+      bitunixTradeable: true, // already in screener universe by construction
+      screener: {
+        symbol,
+        signalStrength: coin.signalStrength,
+        signalType: coin.signalType,
+        side: coin.side as "LONG" | "SHORT" | undefined,
+      },
+      fundingSignal,
+      fundingRate,
       smc,
       qimen,
       side,
@@ -131,10 +143,10 @@ export async function getThesis(req: Request, res: Response) {
         pan: qimen,
         smc,
         screenerContext: {
-          firedogShort: coin.shortScore,
-          firedogLong: coin.longScore,
-          fuel: 0,
-          daily: 0,
+          firedogShort: coin.signalStrength * 20, // back-compat: rough mapping
+          firedogLong: coin.signalStrength * 20,
+          fuel: typeof coin.volumeSpikeRatio === "number" ? Math.min(100, coin.volumeSpikeRatio * 10) : 0,
+          daily: typeof coin.priceChange24h === "number" ? Math.min(100, coin.priceChange24h) : 0,
           smcCount: smc.unfilledFvgs.length + smc.recentOrderBlocks.length,
           confluenceTotal: grade ? grade.factorCount * 16.6 : 0,
         },

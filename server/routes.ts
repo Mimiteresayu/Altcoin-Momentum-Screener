@@ -17,6 +17,7 @@ import {
   getChildTrades,
 } from "./confluence/api";
 import { getThesis } from "./ai/thesis-api";
+import { setSignals as setScreenerSignals } from "./screener/signal-store";
 import {
   requireCockpitAuth,
   getCockpitLogin,
@@ -1748,6 +1749,8 @@ export async function registerRoutes(
       });
 
       cachedSignals = sortedSignals;
+      // Mirror to the cross-module store so the cockpit pipeline sees them.
+      setScreenerSignals(sortedSignals as any);
 
       // Count by signal type
       const typeCount = {

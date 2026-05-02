@@ -18,9 +18,16 @@
  *   - The funnel does not penalise for setup direction.
  */
 
-import type { FireDogCoin } from "../scrapers/firedog";
 import type { SmcFeatures } from "../smc/features";
 import type { QimenPan } from "../qimen/sidecar";
+
+/** Lightweight altcoin universe row from the in-house screener. */
+export interface ScreenerCoin {
+  symbol: string;
+  signalStrength: number;       // 0-5 from in-house screener
+  signalType?: string;          // HOT | MAJOR | ACTIVE | PRE | COIL
+  side?: "LONG" | "SHORT";
+}
 
 // 八門 classification (locked architecture)
 const JI_DOORS = ["生", "開", "休", "景"] as const;       // 吉門
@@ -40,14 +47,15 @@ export function classifyDoor(door: string): DoorClass {
 export interface FunnelInput {
   symbol: string;
   bitunixTradeable: boolean;     // L1
-  firedog?: FireDogCoin | null;  // L2
+  /** In-house screener row (replaces Fire Dog as the L2 universe gate). */
+  screener?: ScreenerCoin | null;  // L2
   fundingSignal?: "SQUEEZE_FUEL" | "OVERCROWDED_LONG" | "NEUTRAL"; // L3
   fundingRate?: number;
   smc?: SmcFeatures | null;      // L4
   qimen?: QimenPan | null;       // L5
   side: "LONG" | "SHORT";        // descriptive, used for location alignment
   thresholds?: {
-    minShortScore?: number;      // default 60
+    minSignalStrength?: number;  // default 2 (out of 5)
     fundingMaxRate?: number;     // default -0.0001 (i.e. negative funding)
     requireSmcFvg?: boolean;     // default true
     requireSmcStructure?: boolean; // default true
@@ -94,7 +102,7 @@ function hasValidStructure(smc: SmcFeatures): boolean {
 
 export function runFunnel(input: FunnelInput): FunnelResult {
   const t = input.thresholds ?? {};
-  const minShort = t.minShortScore ?? 60;
+  const minStrength = t.minSignalStrength ?? 2;
   const fundingMax = t.fundingMaxRate ?? -0.0001;
   const requireFvg = t.requireSmcFvg ?? true;
   const requireStruct = t.requireSmcStructure ?? true;
@@ -109,19 +117,19 @@ export function runFunnel(input: FunnelInput): FunnelResult {
     reason: input.bitunixTradeable ? "在 Bitunix 永續名單" : "未上 Bitunix 永續",
   });
 
-  // L2 Altcoin 篩選 — firedog short_score >= 60
-  const fd = input.firedog;
-  const l2Passed = !!fd && fd.shortScore >= minShort;
+  // L2 Altcoin 篩選 — in-house screener strength >= minStrength
+  const sc = input.screener;
+  const l2Passed = !!sc && sc.signalStrength >= minStrength;
   layers.push({
     layer: "L2",
     name: "Altcoin 篩選",
     passed: l2Passed,
-    reason: !fd
-      ? "無 Fire Dog 數據"
+    reason: !sc
+      ? "無 screener 數據"
       : l2Passed
-      ? `short_score=${fd.shortScore.toFixed(0)} ≥ ${minShort}`
-      : `short_score=${fd.shortScore.toFixed(0)} < ${minShort}`,
-    data: fd ? { shortScore: fd.shortScore } : undefined,
+      ? `${sc.signalType ?? "signal"} 強度 ${sc.signalStrength}/5 ≥ ${minStrength}`
+      : `強度 ${sc.signalStrength}/5 < ${minStrength}`,
+    data: sc ? { signalStrength: sc.signalStrength, signalType: sc.signalType } : undefined,
   });
 
   // L3 資金費率擠壓

@@ -4,7 +4,7 @@
  * Top-level entry point for the auto-trade pipeline.
  *
  * Pipeline (locked architecture):
- *   1. Fetch Fire Dog snapshot — universe of Bitunix-tradeable altcoins.
+ *   1. Read in-house pre-spike screener snapshot — universe of altcoins.
  *   2. For each symbol:
  *        a. Run 5-layer FUNNEL (binary pass/skip).
  *        b. Detect 6-factor altcoin setup (5 patterns + Qimen 三吉).
@@ -21,7 +21,7 @@
  * NOTE: This orchestrator returns rich per-symbol decisions for the cockpit;
  * the executor is provided by the caller as ctx.executeTrade.
  */
-import { getFireDogRankings, filterUniverse } from "../scrapers/firedog";
+import { getSignals } from "../screener/signal-store";
 import { canOpenTrade, recordOpen } from "../risk/kill-switch";
 import { checkSpreadAndDepth } from "../execution/spread-check";
 import { extractSmcFeatures } from "../smc/features";
@@ -87,9 +87,11 @@ export interface OrchestratorRunResult {
 }
 
 export async function runOrchestrator(ctx: OrchestratorContext): Promise<OrchestratorRunResult> {
-  const fd = await getFireDogRankings();
-  // filterUniverse uses FIREDOG_SHORT_MIN env (default lowered to 60 in v2 funnel)
-  const universe = filterUniverse(fd.coins);
+  const screenerSignals = getSignals();
+  // Top altcoins from in-house screener (already pre-ranked by signalStrength + type).
+  const universe = [...screenerSignals]
+    .sort((a, b) => (b.signalStrength ?? 0) - (a.signalStrength ?? 0))
+    .slice(0, 30);
   const decisions: SymbolDecision[] = [];
   let executed = 0;
 
@@ -120,13 +122,19 @@ export async function runOrchestrator(ctx: OrchestratorContext): Promise<Orchest
     // detect setup (need klines)
     const klines = await bitunix.getKlines(coin.symbol, "1d", 120).catch(() => []);
     const setup = klines.length >= 30 ? await detectAltcoinSetup(coin.symbol, klines, "1d") : null;
-    const side: "LONG" | "SHORT" = setup?.side ?? "LONG";
+    // Use screener side as primary (pre-spike screener already classified).
+    const side: "LONG" | "SHORT" = coin.side ?? setup?.side ?? "LONG";
 
     // run funnel
     const funnel = runFunnel({
       symbol: coin.symbol,
       bitunixTradeable: tradeable,
-      firedog: coin,
+      screener: {
+        symbol: coin.symbol,
+        signalStrength: coin.signalStrength,
+        signalType: coin.signalType,
+        side: coin.side,
+      },
       fundingSignal: funding.signal,
       fundingRate: funding.rate,
       smc,
@@ -270,8 +278,8 @@ export async function runOrchestrator(ctx: OrchestratorContext): Promise<Orchest
   }
 
   return {
-    fetchedAt: fd.fetchedAt,
-    candidates: fd.coins.length,
+    fetchedAt: Date.now(),
+    candidates: screenerSignals.length,
     passedFunnel: decisions.filter((d) => d.funnel.passed).length,
     executed,
     decisions,
