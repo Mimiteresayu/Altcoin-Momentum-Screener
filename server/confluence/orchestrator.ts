@@ -33,6 +33,9 @@ import { calculateRiskSize } from "../sizing/risk-sizer";
 import { fetchBitunixSymbolMaxLeverage } from "../sizing/leverage-guard";
 import { recordPlan } from "../variance/variance-tracker";
 import { BitunixTradeService } from "../bitunix-trade";
+import { calculateFundingAnomaly } from "../screener-enrichment";
+import { getOKXFundingRate } from "../okx";
+import { getBitunixFundingRate } from "../exchanges/bitunix-public";
 
 const bitunix = new BitunixTradeService();
 bitunix.initialize();
@@ -112,12 +115,35 @@ export async function runOrchestrator(ctx: OrchestratorContext): Promise<Orchest
     }
 
     // gather inputs in parallel
-    const [tradeable, smc, qimen, funding] = await Promise.all([
+    const [tradeable, smc, qimen] = await Promise.all([
       ctx.isBitunixTradeable(coin.symbol),
       extractSmcFeatures(coin.symbol, "1d", 120).catch(() => null),
       getQimenPan(coin.symbol).catch(() => null),
-      ctx.getFundingRate(coin.symbol).catch(() => ({ rate: 0, signal: "NEUTRAL" as const })),
     ]);
+
+    // Funding: prefer enriched screener row, then OKX, then Bitunix public,
+    // then any caller-provided override. All free, no CoinGlass.
+    let funding: { rate: number; signal: "SQUEEZE_FUEL" | "OVERCROWDED_LONG" | "NEUTRAL" } = {
+      rate: 0,
+      signal: "NEUTRAL",
+    };
+    if (typeof (coin as any).fundingRate === "number") {
+      const rate = (coin as any).fundingRate as number;
+      funding = { rate, signal: calculateFundingAnomaly(rate).fundingSignal };
+    } else {
+      const base = coin.symbol.replace(/USDT$/i, "");
+      const okx = await getOKXFundingRate(base).catch(() => null);
+      if (typeof okx === "number" && !Number.isNaN(okx)) {
+        funding = { rate: okx, signal: calculateFundingAnomaly(okx).fundingSignal };
+      } else {
+        const bx = await getBitunixFundingRate(coin.symbol).catch(() => null);
+        if (bx) {
+          funding = { rate: bx.fundingRate, signal: calculateFundingAnomaly(bx.fundingRate).fundingSignal };
+        } else if (ctx.getFundingRate) {
+          funding = await ctx.getFundingRate(coin.symbol).catch(() => funding);
+        }
+      }
+    }
 
     // detect setup (need klines)
     const klines = await bitunix.getKlines(coin.symbol, "1d", 120).catch(() => []);

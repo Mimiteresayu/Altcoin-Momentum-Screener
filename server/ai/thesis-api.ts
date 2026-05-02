@@ -19,7 +19,8 @@
  */
 import type { Request, Response } from "express";
 import { getSignalBySymbol } from "../screener/signal-store";
-import { getFundingRate as fetchFunding } from "../coinglass";
+import { getBitunixFundingRate } from "../exchanges/bitunix-public";
+import { getOKXFundingRate } from "../okx";
 import { calculateFundingAnomaly } from "../screener-enrichment";
 import { getQimenPan } from "../qimen/sidecar";
 import { extractSmcFeatures } from "../smc/features";
@@ -78,16 +79,27 @@ export async function getThesis(req: Request, res: Response) {
     }
 
     // gather inputs in parallel
-    const [smc, qimen, klines, fundingArr] = await Promise.all([
+    const [smc, qimen, klines] = await Promise.all([
       extractSmcFeatures(symbol, "1d", 120).catch(() => null),
       getQimenPan(symbol).catch(() => null),
       bitunix.getKlines(symbol, "1d", 120).catch(() => []),
-      fetchFunding(symbol.replace(/USDT$/i, "")).catch(() => [] as any[]),
     ]);
 
-    const fundingRow = (fundingArr ?? []).find((x: any) => x.exchange?.toLowerCase() === "binance")
-      ?? (fundingArr ?? [])[0];
-    const fundingRate = fundingRow?.fundingRate ?? 0;
+    // Funding: prefer enriched screener row (from OKX),
+    // then OKX direct, then Bitunix public. All free, no CoinGlass.
+    let fundingRate: number = 0;
+    if (typeof (coin as any).fundingRate === "number") {
+      fundingRate = (coin as any).fundingRate as number;
+    } else {
+      const base = symbol.replace(/USDT$/i, "");
+      const okxRate = await getOKXFundingRate(base).catch(() => null);
+      if (typeof okxRate === "number" && !Number.isNaN(okxRate)) {
+        fundingRate = okxRate;
+      } else {
+        const fr = await getBitunixFundingRate(symbol).catch(() => null);
+        fundingRate = fr?.fundingRate ?? 0;
+      }
+    }
     const fundingSignal = calculateFundingAnomaly(fundingRate).fundingSignal;
 
     const setup = klines.length >= 30

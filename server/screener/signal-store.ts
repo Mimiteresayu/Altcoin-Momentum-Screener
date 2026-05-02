@@ -25,6 +25,10 @@ export interface InHouseSignal {
   tpLevels?: Array<{ label: string; price: number; pct: number; reason: string }>;
   htfBias?: { side: "LONG" | "SHORT"; confidence: string };
   leadingIndicators?: Record<string, unknown>;
+  // Funding rate fields (populated by screener when COINGLASS_API_KEY is set,
+  // otherwise undefined and the cockpit will fall back to Bitunix public API).
+  fundingRate?: number;
+  fundingSignal?: "SQUEEZE_FUEL" | "OVERCROWDED_LONG" | "NEUTRAL";
   // ...any other fields are ignored by the cockpit
   [k: string]: unknown;
 }

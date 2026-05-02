@@ -1889,7 +1889,10 @@ export async function registerRoutes(
           if (listingTimestamp) signal.ageDays = calculateAgeDays(listingTimestamp);
         } catch { /* skip */ }
 
-        if (process.env.COINGLASS_API_KEY && i < enrichLimit) {
+        // Enrichment uses OKX as primary (free, no geo-block) and falls back to CoinGlass
+        // only if its key is set. Run unconditionally so funding / FUEL signals work
+        // without paying for CoinGlass.
+        if (i < enrichLimit) {
           try {
             const enrichedData = await enrichSignalWithCoinglass(signal, high24h, low24h,
               signal.aur !== undefined ? { aur: signal.aur, aurZScore: signal.aurZScore ?? 0, aurRising: classicSignal.aurRising ?? false, aurSlope: classicSignal.aurSlope ?? 0 } : undefined);
@@ -1956,6 +1959,29 @@ export async function registerRoutes(
       });
       cachedEnhancedSignals = signals;
       enhancedLastUpdated = new Date();
+
+      // Mirror enriched signals into the cockpit signal-store, MERGING
+      // OKX-derived fundingRate / fundingSignal onto the existing rows so
+      // the L3 funnel reads them without a re-fetch.
+      const enrichedBySymbol = new Map<string, any>();
+      for (const s of signals) enrichedBySymbol.set(s.symbol, s);
+      const merged = cachedSignals.map((row: any) => {
+        const e = enrichedBySymbol.get(row.symbol);
+        if (!e) return row;
+        return {
+          ...row,
+          fundingRate: typeof e.fundingRate === "number" ? e.fundingRate : row.fundingRate,
+          fundingSignal: e.fundingSignal ?? row.fundingSignal,
+          longShortRatio: typeof e.longShortRatio === "number" ? e.longShortRatio : row.longShortRatio,
+          priceLocation: e.priceLocation ?? row.priceLocation,
+          marketPhase: e.marketPhase ?? row.marketPhase,
+          entryModel: e.entryModel ?? row.entryModel,
+          spikeScore: e.spikeScore ?? row.spikeScore,
+          spikeProbability: e.spikeProbability ?? row.spikeProbability,
+        };
+      });
+      setScreenerSignals(merged as any);
+
       console.log(`[ENHANCED-CACHE] Background enrichment done: ${signals.length} signals in ${((Date.now() - startTime) / 1000).toFixed(1)}s`);
     } catch (err: any) {
       console.error(`[ENHANCED-CACHE] Error:`, err?.message || err);

@@ -22,26 +22,39 @@ import { detectAltcoinSetup } from "../altcoin-setup/setup-detector";
 import { gradeAltcoinSetup } from "./score";
 import { runFunnel } from "../funnel/funnel-filter";
 import { BitunixTradeService } from "../bitunix-trade";
-import { getFundingRate as fetchFunding } from "../coinglass";
 import { calculateFundingAnomaly } from "../screener-enrichment";
 import { getSignals, getSignalsUpdatedAt } from "../screener/signal-store";
+import { getBitunixFundingRate } from "../exchanges/bitunix-public";
+import { getOKXFundingRate } from "../okx";
 
-/** Pull funding rate from CoinGlass (V4) → Binance fallback, return rate + signal. */
-async function getFundingForSymbol(symbol: string): Promise<{
+/**
+ * Get funding rate for a coin — all FREE sources, no CoinGlass needed.
+ *   1. Screener row (already enriched by enhanced screener via OKX) — no extra HTTP call.
+ *   2. OKX public API (broad altcoin coverage, no geo-block, no key).
+ *   3. Bitunix public API (covers Bitunix-listed perps, no key).
+ */
+async function getFundingForCoin(coin: { symbol: string; fundingRate?: number; fundingSignal?: string }): Promise<{
   rate: number;
   signal: "SQUEEZE_FUEL" | "OVERCROWDED_LONG" | "NEUTRAL";
 }> {
-  try {
-    const base = symbol.replace(/USDT$/i, "");
-    const arr = await fetchFunding(base);
-    if (!arr || arr.length === 0) return { rate: 0, signal: "NEUTRAL" };
-    const row = arr.find((x) => x.exchange?.toLowerCase() === "binance") ?? arr[0];
-    const rate = row.fundingRate ?? 0;
-    const cls = calculateFundingAnomaly(rate);
-    return { rate, signal: cls.fundingSignal };
-  } catch {
-    return { rate: 0, signal: "NEUTRAL" };
+  if (typeof coin.fundingRate === "number") {
+    const cls = calculateFundingAnomaly(coin.fundingRate);
+    return { rate: coin.fundingRate, signal: cls.fundingSignal };
   }
+  // Try OKX first (broader altcoin coverage)
+  const base = coin.symbol.replace(/USDT$/i, "");
+  try {
+    const okxRate = await getOKXFundingRate(base);
+    if (typeof okxRate === "number" && !Number.isNaN(okxRate)) {
+      const cls = calculateFundingAnomaly(okxRate);
+      return { rate: okxRate, signal: cls.fundingSignal };
+    }
+  } catch { /* fall through */ }
+  // Bitunix fallback
+  const fr = await getBitunixFundingRate(coin.symbol);
+  if (!fr) return { rate: 0, signal: "NEUTRAL" };
+  const cls = calculateFundingAnomaly(fr.fundingRate);
+  return { rate: fr.fundingRate, signal: cls.fundingSignal };
 }
 
 const bitunix = new BitunixTradeService();
@@ -75,7 +88,7 @@ export async function getLatestConfluence(_req: Request, res: Response) {
           extractSmcFeatures(c.symbol, "1d", 120).catch(() => null),
           getQimenPan(c.symbol).catch(() => null),
           bitunix.getKlines(c.symbol, "1d", 120).catch(() => []),
-          getFundingForSymbol(c.symbol),
+          getFundingForCoin(c),
         ]);
         const setup = klines.length >= 30
           ? await detectAltcoinSetup(c.symbol, klines, "1d")
