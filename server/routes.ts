@@ -1182,6 +1182,18 @@ export async function registerRoutes(
   // Health check endpoint with database status
   app.get("/api/health", async (req, res) => {
     const dbStatus = isDatabaseAvailable();
+
+    // Probe Qimen sidecar liveness (non-blocking; 1.5s budget)
+    const qimenUrl = process.env.QIMEN_SIDECAR_URL || "http://localhost:8765";
+    let qimen: any = { url: qimenUrl, enabled: process.env.QIMEN_ENABLED ?? "true" };
+    try {
+      const r = await fetch(`${qimenUrl}/health`, { signal: AbortSignal.timeout(1500) });
+      qimen.status = r.status;
+      qimen.body = await r.text().then(t => t.slice(0, 300)).catch(() => null);
+    } catch (e: any) {
+      qimen.error = e?.message || String(e);
+    }
+
     res.json({
       status: "ok",
       timestamp: new Date().toISOString(),
@@ -1193,7 +1205,8 @@ export async function registerRoutes(
       signals: {
         cached: cachedSignals.length,
         lastUpdated: lastUpdated.toISOString()
-      }
+      },
+      qimen,
     });
   });
 
