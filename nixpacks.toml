@@ -1,0 +1,48 @@
+# Nixpacks build config for Railway / Nixpacks deployment.
+# ----------------------------------------------------------
+# This image must contain:
+#   - Node 20+ for the main Express + Vite app
+#   - Python 3.11+ for the Qimen sidecar (server/qimen/sidecar.py)
+#   - kinqimen 0.0.6.6 (installed with --no-deps because its setup.py is broken)
+#   - sxtwl 2.0.6 + ephem 4.2.1 (kinqimen's runtime deps, installed manually)
+#
+# Process model:
+#   start.sh launches:
+#     1. python server/qimen/sidecar.py  (port 8765)
+#     2. node dist/index.cjs              (main app, talks to sidecar via QIMEN_SIDECAR_URL)
+#
+# Required env vars at runtime:
+#   QIMEN_SIDECAR_URL=http://localhost:8765
+#   QIMEN_LON=114.17
+#   QIMEN_ENABLED=true
+#   DEEPSEEK_PRO_FOR_QIMEN_ONLY=true
+
+[phases.setup]
+nixPkgs = ["nodejs_20", "python311", "python311Packages.pip", "gcc"]
+
+[phases.install]
+# 1. Node deps (npm ci, deterministic)
+# 2. Python deps:
+#    - sxtwl + ephem first (concrete pinned versions)
+#    - kinqimen with --no-deps (setup.py declares versions that don't exist on PyPI)
+cmds = [
+  "npm ci",
+  "python3.11 -m pip install --upgrade pip",
+  "python3.11 -m pip install sxtwl==2.0.6 ephem==4.2.1",
+  "python3.11 -m pip install --no-deps kinqimen==0.0.6.6",
+]
+
+[phases.build]
+cmds = ["npm run build"]
+
+[start]
+# Use a simple shell script to run both processes; if either dies, the
+# container exits and Railway will restart.
+cmd = "bash start.sh"
+
+[variables]
+NODE_ENV = "production"
+QIMEN_SIDECAR_URL = "http://localhost:8765"
+QIMEN_LON = "114.17"
+QIMEN_ENABLED = "true"
+QIMEN_SIDECAR_PORT = "8765"

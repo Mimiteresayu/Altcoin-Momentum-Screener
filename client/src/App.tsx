@@ -5,9 +5,10 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import Dashboard from "@/pages/Dashboard";
 import Backtest from "@/pages/Backtest";
+import TradingCockpit from "@/pages/TradingCockpit";
 import NotFound from "@/pages/not-found";
 import { Button } from "@/components/ui/button";
-import { Activity, LineChart } from "lucide-react";
+import { Activity, LineChart, Crosshair } from "lucide-react";
 import { clsx } from "clsx";
 
 function NavLink({ href, children, icon }: { href: string; children: React.ReactNode; icon: React.ReactNode }) {
@@ -40,6 +41,9 @@ function Navigation() {
       <NavLink href="/backtest" icon={<LineChart className="w-4 h-4" />}>
         Backtest
       </NavLink>
+      <NavLink href="/cockpit" icon={<Crosshair className="w-4 h-4" />}>
+        Cockpit
+      </NavLink>
     </nav>
   );
 }
@@ -49,6 +53,7 @@ function Router() {
     <Switch>
       <Route path="/" component={Dashboard} />
       <Route path="/backtest" component={Backtest} />
+      <Route path="/cockpit" component={TradingCockpit} />
       <Route path="/:rest*" component={NotFound} />
     </Switch>
   );
