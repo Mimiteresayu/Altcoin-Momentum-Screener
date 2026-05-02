@@ -18,6 +18,24 @@ import { detectAltcoinSetup } from "../altcoin-setup/setup-detector";
 import { gradeAltcoinSetup } from "./score";
 import { runFunnel } from "../funnel/funnel-filter";
 import { BitunixTradeService } from "../bitunix-trade";
+import { getFundingRate as fetchFunding } from "../coinglass";
+import { calculateFundingAnomaly } from "../screener-enrichment";
+
+/** Pull funding rate from CoinGlass (V4) → Binance fallback, return rate + signal. */
+async function getFundingForSymbol(symbol: string): Promise<{ rate: number; signal: "SQUEEZE_FUEL" | "OVERCROWDED_LONG" | "NEUTRAL" }> {
+  try {
+    const base = symbol.replace(/USDT$/i, "");
+    const arr = await fetchFunding(base);
+    if (!arr || arr.length === 0) return { rate: 0, signal: "NEUTRAL" };
+    // pick Binance row first, otherwise first entry
+    const row = arr.find((x) => x.exchange?.toLowerCase() === "binance") ?? arr[0];
+    const rate = row.fundingRate ?? 0;
+    const cls = calculateFundingAnomaly(rate);
+    return { rate, signal: cls.fundingSignal };
+  } catch {
+    return { rate: 0, signal: "NEUTRAL" };
+  }
+}
 
 const bitunix = new BitunixTradeService();
 bitunix.initialize();
@@ -33,10 +51,11 @@ export async function getLatestConfluence(_req: Request, res: Response) {
 
     for (const c of universe) {
       try {
-        const [smc, qimen, klines] = await Promise.all([
+        const [smc, qimen, klines, funding] = await Promise.all([
           extractSmcFeatures(c.symbol, "1d", 120).catch(() => null),
           getQimenPan(c.symbol).catch(() => null),
           bitunix.getKlines(c.symbol, "1d", 120).catch(() => []),
+          getFundingForSymbol(c.symbol),
         ]);
         const setup = klines.length >= 30
           ? await detectAltcoinSetup(c.symbol, klines, "1d")
@@ -47,8 +66,8 @@ export async function getLatestConfluence(_req: Request, res: Response) {
           symbol: c.symbol,
           bitunixTradeable: true,
           firedog: c,
-          fundingSignal: "NEUTRAL",
-          fundingRate: 0,
+          fundingSignal: funding.signal,
+          fundingRate: funding.rate,
           smc,
           qimen,
           side,
