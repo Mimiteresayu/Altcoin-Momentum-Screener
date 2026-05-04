@@ -54,6 +54,22 @@ LON = float(os.environ.get("QIMEN_LON", "114.17"))   # Hong Kong default
 kinqimen = None
 HAS_KINQIMEN = False
 KINQIMEN_ERR = None
+
+# Tier 1: stub-config safety net (Sora's fix). If kinqimen.py does bare
+# `import config` at module-load time and our sys.path trick below races,
+# a stub `config` module already exists in sys.modules so the import resolves.
+try:
+    import types as _types
+    if "config" not in sys.modules:
+        _stub_config = _types.ModuleType("config")
+        _stub_config.LONGITUDE = LON
+        _stub_config.LATITUDE = 22.32
+        _stub_config.TIMEZONE = 8
+        sys.modules["config"] = _stub_config
+except Exception as _stub_err:  # pragma: no cover
+    print(f"[QIMEN] WARN — stub config setup failed: {_stub_err}", file=sys.stderr)
+
+# Tier 2: real package import via importlib (loads kinqimen's own config.py).
 try:
     import importlib.util as _ilu
     import os as _os
@@ -72,6 +88,16 @@ try:
 except Exception as e:
     KINQIMEN_ERR = f"{type(e).__name__}: {e}"
     print(f"[QIMEN] WARN — kinqimen not importable: {KINQIMEN_ERR}", file=sys.stderr)
+    # Tier 3: last-ditch — plain `from kinqimen import kinqimen` (works when
+    # the package's __init__ DOES re-export it on certain versions).
+    try:
+        from kinqimen import kinqimen as _kq_fallback   # type: ignore
+        kinqimen = _kq_fallback
+        HAS_KINQIMEN = True
+        KINQIMEN_ERR = None
+        print("[QIMEN] kinqimen loaded via fallback path", file=sys.stderr)
+    except Exception as e2:
+        KINQIMEN_ERR = f"primary: {KINQIMEN_ERR} | fallback: {type(e2).__name__}: {e2}"
 
 
 # ---------------------------------------------------------------------------
@@ -176,6 +202,45 @@ def score_symbol(symbol: str, utc_dt: dt.datetime | None = None) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Triple-Good Palace detection (三吉同宮) — Sora's contribution
+# A palace is "triple-good" when its 門 (door), 星 (star) AND 神 (god) are
+# ALL auspicious. Strong tactical entry signal under Yuth's method.
+# ---------------------------------------------------------------------------
+GOOD_DOORS = {"休", "生", "開"}
+GOOD_STARS = {"心", "輔", "禽"}
+GOOD_GODS  = {"符", "陰", "合"}
+
+
+def detect_triple_good(pan: dict) -> list[dict]:
+    """Return one entry per outer palace ranked by good_count desc.
+    Each entry: {trigram, palace_num, door, star, god, good_count, is_triple}.
+    """
+    doors = pan.get("門", {}) or {}
+    stars = pan.get("星", {}) or {}
+    gods  = pan.get("神", {}) or {}
+    out = []
+    for trigram, palace_num in TRIGRAM_TO_PALACE.items():
+        if palace_num == 5:   # skip 中宮
+            continue
+        d = doors.get(trigram, "")
+        s = stars.get(trigram, "")
+        g = gods.get(trigram, "")
+        cnt = 0
+        if any(gd in d for gd in GOOD_DOORS): cnt += 1
+        if any(gs in s for gs in GOOD_STARS): cnt += 1
+        if any(gg in g for gg in GOOD_GODS):  cnt += 1
+        out.append({
+            "trigram": trigram,
+            "palace_num": palace_num,
+            "door": d, "star": s, "god": g,
+            "good_count": cnt,
+            "is_triple": cnt == 3,
+        })
+    out.sort(key=lambda x: x["good_count"], reverse=True)
+    return out
+
+
+# ---------------------------------------------------------------------------
 # HTTP server
 # ---------------------------------------------------------------------------
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -195,12 +260,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return
             if url.path == "/pan":
                 pan = calc_pan()
+                # enrich with triple-good ranking so cockpit can surface it
+                pan["triple_good"] = detect_triple_good(pan)
                 self._json(pan)
                 return
             if url.path == "/score":
                 qs = parse_qs(url.query)
                 symbol = qs.get("symbol", ["BTCUSDT"])[0]
                 result = score_symbol(symbol)
+                # add triple_good to the score response too — doesn't break
+                # the existing schema, just adds a field consumers can read.
+                result["triple_good"] = detect_triple_good(result.get("pan_raw", {}))
                 self._json(result)
                 return
             self._json({"error": "not found"}, status=404)
