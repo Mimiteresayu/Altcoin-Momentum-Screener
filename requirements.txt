@@ -1,0 +1,5 @@
+kinqimen==0.0.6.6
+sxtwl
+ephem
+fastapi
+uvicorn

@@ -82,11 +82,13 @@ export async function getLatestConfluence(_req: Request, res: Response) {
 
     const rows: any[] = [];
 
+    // Pan is global (same 時辰 for every symbol) — fetch once, reuse.
+    const qimen = await getQimenPan().catch(() => null);
+
     for (const c of universe) {
       try {
-        const [smc, qimen, klines, funding] = await Promise.all([
+        const [smc, klines, funding] = await Promise.all([
           extractSmcFeatures(c.symbol, "1d", 120).catch(() => null),
-          getQimenPan(c.symbol).catch(() => null),
           bitunix.getKlines(c.symbol, "1d", 120).catch(() => []),
           getFundingForCoin(c),
         ]);
@@ -130,7 +132,16 @@ export async function getLatestConfluence(_req: Request, res: Response) {
           setupType: grade?.setupType ?? "—",
           ictLocation: smc?.ictLocation ?? "unknown",
           currentPrice: smc?.currentPrice ?? c.currentPrice ?? null,
-          qimenDoor: qimen?.yongshen_cell.door ?? null,
+          // Qimen enrichment — sidecar contributes the same global pan to every row
+          qimenDoor: qimen?.yongshen_cell?.door ?? null,
+          qimenPalace: qimen?.yongshen_palace ?? null,
+          qimenPaiju: qimen?.paiju ?? null,
+          qimenGanzhi: qimen?.ganzhi ?? null,
+          qimenJieqi: qimen?.jieqi ?? null,
+          qimenShikong: qimen?.shikong ?? null,
+          qimenMaxing: qimen?.maxing ?? null,
+          qimenPatterns: qimen?.patterns?.slice(0, 4) ?? null,
+          qimenLoaded: !!qimen?.kinqimen_loaded,
         });
       } catch (err: any) {
         rows.push({

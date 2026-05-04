@@ -4,21 +4,46 @@ import { QimenSmcCard } from "@/components/trading-cards/QimenSmcCard";
 import { KillSwitchCard } from "@/components/trading-cards/KillSwitchCard";
 import { ChildTradesCard } from "@/components/trading-cards/ChildTradesCard";
 
-// v2 schema from /api/confluence/latest
+// v3 schema from /api/confluence/latest — in-house screener + free funding chain
+interface QimenPatternBrief {
+  trigram: string;
+  palace_num: number;
+  good_count: number;
+  is_triple: boolean;
+  has_maxing: boolean;
+  is_shikong: boolean;
+  tags: string[];
+  door: string;
+  star: string;
+  god: string;
+}
+
 interface ConfluenceRow {
   symbol: string;
   side: "LONG" | "SHORT";
-  firedogShort: number;
-  firedogLong: number;
+  signalType?: string;
+  signalStrength?: number;
   funnelPassed: boolean;
   failedAt?: string;
+  failedReason?: string;
+  fundingRate?: number;
+  fundingSignal?: "SQUEEZE_FUEL" | "OVERCROWDED_LONG" | "NEUTRAL";
   factorCount: number;
   gradeLetter: "A+" | "A" | "B" | "C" | "REJECT" | "—";
   sizeMultiplier: number;
   setupType: string;
   ictLocation: string;
   currentPrice: number | null;
+  // Qimen enrichment — may all be null when sidecar offline
   qimenDoor: string | null;
+  qimenPalace?: string | null;
+  qimenPaiju?: string | null;
+  qimenGanzhi?: string | null;
+  qimenJieqi?: string | null;
+  qimenShikong?: string[] | null;
+  qimenMaxing?: string | null;
+  qimenPatterns?: QimenPatternBrief[] | null;
+  qimenLoaded?: boolean;
   error?: string;
 }
 
@@ -100,6 +125,7 @@ export default function TradingCockpit() {
                       <th>品級</th>
                       <th className="text-left">Setup</th>
                       <th>用神門</th>
+                      <th>格局</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -137,6 +163,24 @@ export default function TradingCockpit() {
                         </td>
                         <td className="text-[10px] truncate max-w-[120px]">{r.setupType}</td>
                         <td className="text-center">{r.qimenDoor || "—"}</td>
+                        <td className="text-[10px] text-center">
+                          {r.qimenPatterns && r.qimenPatterns.length > 0 && r.qimenPatterns[0].tags.length > 0 ? (
+                            <span
+                              className={
+                                r.qimenPatterns[0].is_triple
+                                  ? "text-yellow-400 font-medium"
+                                  : r.qimenPatterns[0].has_maxing
+                                  ? "text-emerald-400"
+                                  : "text-muted-foreground"
+                              }
+                              title={r.qimenPatterns[0].tags.join(" / ")}
+                            >
+                              {r.qimenPatterns[0].tags.join("·")}
+                            </span>
+                          ) : (
+                            "—"
+                          )}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
