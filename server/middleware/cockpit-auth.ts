@@ -24,9 +24,37 @@ const COOKIE_MAX_AGE_MS = 90 * 24 * 60 * 60 * 1000; // 90 days
 
 function getPassword(): string | null {
   const p = process.env.COCKPIT_PASSWORD;
+  console.log(
+    `[cockpit-auth] getPassword() called — COCKPIT_PASSWORD: ${
+      p === undefined
+        ? "undefined"
+        : p === null
+        ? "null"
+        : p.length === 0
+        ? '""(empty string)'
+        : `[REDACTED] (length: ${p.length})`
+    }`
+  );
   if (!p || p.length < 4) return null;
   return p;
 }
+
+// Startup diagnostic — runs once when the module is first imported.
+(function logStartupAuthState() {
+  const raw = process.env.COCKPIT_PASSWORD;
+  if (raw && raw.length >= 4) {
+    console.log(`[cockpit-auth] COCKPIT_PASSWORD configured: true (length: ${raw.length})`);
+    console.log("[cockpit-auth] Auth gate is ACTIVE");
+  } else if (raw !== undefined) {
+    console.log(
+      `[cockpit-auth] COCKPIT_PASSWORD present but too short (length: ${raw.length}, minimum: 4) — treating as unset`
+    );
+    console.log("[cockpit-auth] Auth gate is BYPASSED");
+  } else {
+    console.log("[cockpit-auth] COCKPIT_PASSWORD not configured");
+    console.log("[cockpit-auth] Auth gate is BYPASSED");
+  }
+})();
 
 function sign(timestamp: number, password: string): string {
   return crypto.createHmac("sha256", password).update(String(timestamp)).digest("hex");
@@ -74,12 +102,16 @@ function isAuthed(req: Request): boolean {
 export function requireCockpitAuth(req: Request, res: Response, next: NextFunction) {
   const password = getPassword();
   if (!password) {
-    if (process.env.NODE_ENV === "production") {
-      console.warn("[cockpit-auth] COCKPIT_PASSWORD not set — private routes are OPEN");
-    }
+    console.warn(
+      `[cockpit-auth] requireCockpitAuth: password NOT configured — allowing request through (${req.method} ${req.path})`
+    );
     return next();
   }
-  if (isAuthed(req)) return next();
+  const authed = isAuthed(req);
+  console.log(
+    `[cockpit-auth] requireCockpitAuth: password configured ✓ — request ${authed ? "AUTHENTICATED" : "NOT authenticated"} (${req.method} ${req.path})`
+  );
+  if (authed) return next();
 
   // API request -> 401 JSON
   if (req.path.startsWith("/api/")) {
