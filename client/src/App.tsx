@@ -8,7 +8,7 @@ import Backtest from "@/pages/Backtest";
 import TradingCockpit from "@/pages/TradingCockpit";
 import NotFound from "@/pages/not-found";
 import { Button } from "@/components/ui/button";
-import { Activity, LineChart, Crosshair } from "lucide-react";
+import { Activity, LineChart } from "lucide-react";
 import { clsx } from "clsx";
 
 function NavLink({ href, children, icon }: { href: string; children: React.ReactNode; icon: React.ReactNode }) {
@@ -34,15 +34,13 @@ function NavLink({ href, children, icon }: { href: string; children: React.React
 
 function Navigation() {
   return (
+    // Cockpit is intentionally omitted from public nav — access via hidden entry on the Signal page
     <nav className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 bg-card/90 backdrop-blur-md border border-white/10 rounded-full px-2 py-1.5 flex gap-1 shadow-xl shadow-black/20">
       <NavLink href="/" icon={<Activity className="w-4 h-4" />}>
         Signals
       </NavLink>
       <NavLink href="/backtest" icon={<LineChart className="w-4 h-4" />}>
         Backtest
-      </NavLink>
-      <NavLink href="/cockpit" icon={<Crosshair className="w-4 h-4" />}>
-        Cockpit
       </NavLink>
     </nav>
   );
