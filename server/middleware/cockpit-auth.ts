@@ -127,6 +127,8 @@ export function requireCockpitAuth(req: Request, res: Response, next: NextFuncti
  */
 export function getCockpitLogin(req: Request, res: Response) {
   const password = getPassword();
+  console.log(`[cockpit-auth] getCockpitLogin: password check result: ${password ? `[REDACTED] (length: ${password.length})` : 'null'}`);
+  console.log(`[cockpit-auth] getCockpitLogin: process.env.COCKPIT_PASSWORD = ${process.env.COCKPIT_PASSWORD ? `[REDACTED] (length: ${process.env.COCKPIT_PASSWORD.length})` : 'undefined'}`);
   if (!password) {
     res.status(503).send("Cockpit auth not configured. Set COCKPIT_PASSWORD env var.");
     return;
