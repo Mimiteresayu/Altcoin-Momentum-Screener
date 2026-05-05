@@ -7,6 +7,7 @@ import Dashboard from "@/pages/Dashboard";
 import Backtest from "@/pages/Backtest";
 import TradingCockpit from "@/pages/TradingCockpit";
 import NotFound from "@/pages/not-found";
+import PasswordGate from "@/components/auth/PasswordGate";
 import { Button } from "@/components/ui/button";
 import { Activity, LineChart, Crosshair } from "lucide-react";
 import { clsx } from "clsx";
@@ -63,8 +64,10 @@ function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
-        <Router />
-        <Navigation />
+        <PasswordGate>
+          <Router />
+          <Navigation />
+        </PasswordGate>
         <Toaster />
       </TooltipProvider>
     </QueryClientProvider>

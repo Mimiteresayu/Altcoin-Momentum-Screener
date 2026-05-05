@@ -18,6 +18,7 @@
  */
 import type { Request, Response, NextFunction } from "express";
 import crypto from "crypto";
+import { isAuthed as isAuthedNew } from "./auth";
 
 const COOKIE_NAME = "cockpit_auth";
 const COOKIE_MAX_AGE_MS = 90 * 24 * 60 * 60 * 1000; // 90 days
@@ -64,8 +65,11 @@ function isAuthed(req: Request): boolean {
   const password = getPassword();
   if (!password) return true; // bypass if not configured
   const token = parseCookie(req);
-  if (!token) return false;
-  return verifyToken(token, password);
+  if (token && verifyToken(token, password)) return true;
+  // Bridge: also accept the new cockpit_session cookie set by /api/auth/login.
+  // Lets users authed through PasswordGate hit legacy-guarded endpoints
+  // (/api/risk/*, /api/trades/*) without re-login.
+  return isAuthedNew(req);
 }
 
 /**

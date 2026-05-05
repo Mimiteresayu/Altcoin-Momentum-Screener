@@ -24,6 +24,13 @@ import {
   postCockpitLogin,
   postCockpitLogout,
 } from "./middleware/cockpit-auth";
+import {
+  requireAuth,
+  loginRateLimiter,
+  postLogin,
+  postLogout,
+  getStatus as getAuthStatus,
+} from "./middleware/auth";
 import { pionexService } from "./exchanges/pionex";
 import { binanceSpotService } from "./exchanges/binance-spot";
 import { setStartEquity } from "./risk/kill-switch";
@@ -1165,19 +1172,34 @@ export async function registerRoutes(
   // Best-effort: seed kill-switch start equity from Bitunix when ready
   setStartEquity(0);
 
-  // Login routes (public — used to obtain auth cookie)
+  // Legacy HTML login (kept for backward compatibility — server-rendered form)
   app.get("/cockpit-login", getCockpitLogin);
   app.post("/cockpit-login", postCockpitLogin);
   app.post("/cockpit-logout", postCockpitLogout);
 
-  // Private cockpit page + private APIs (gated by COCKPIT_PASSWORD)
-  // Match /cockpit and any sub-path (SPA may use sub-routes later)
-  app.get(/^\/cockpit(\/.*)?$/, requireCockpitAuth, (_req, _res, next) => next());
-  app.get("/api/confluence/latest", requireCockpitAuth, getLatestConfluence);
+  // ===== JSON Auth API (feat/yuth-confluence · password gate) =====
+  // Frontend PasswordGate calls these; cookie name = cockpit_session
+  app.post("/api/auth/login", loginRateLimiter, postLogin);
+  app.post("/api/auth/logout", postLogout);
+  app.get("/api/auth/status", getAuthStatus);
+
+  // Path-prefix gates — every current/future endpoint under these is guarded
+  app.use("/api/cockpit", requireAuth);
+  app.use("/api/confluence", requireAuth);
+  app.use("/api/ai", requireAuth);
+  app.use("/api/qimen", requireAuth);
+  app.use("/api/thesis", requireAuth);
+
+  // /cockpit SPA page — NO server-side redirect; PasswordGate (frontend)
+  // handles the modal UX. Backend API gates above enforce the actual security.
+  // Endpoint registrations — prefix middlewares above already enforce auth
+  // for /api/confluence and /api/ai. Legacy guard on /api/risk + /api/trades
+  // accepts both cockpit_auth (legacy) and cockpit_session (new) cookies.
+  app.get("/api/confluence/latest", getLatestConfluence);
   app.get("/api/risk/kill-state", requireCockpitAuth, getKillStateHandler);
   app.post("/api/risk/kill-clear", requireCockpitAuth, clearKill);
   app.get("/api/trades/children", requireCockpitAuth, getChildTrades);
-  app.get("/api/ai/thesis", requireCockpitAuth, getThesis);
+  app.get("/api/ai/thesis", getThesis);
 
   // Health check endpoint with database status
   app.get("/api/health", async (req, res) => {
