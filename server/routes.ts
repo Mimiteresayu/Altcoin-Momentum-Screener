@@ -1171,36 +1171,8 @@ export async function registerRoutes(
   app.post("/cockpit-logout", postCockpitLogout);
 
   // Private cockpit page + private APIs (gated by COCKPIT_PASSWORD)
-  app.get("/cockpit", requireCockpitAuth, (req, res) => {
-    res.setHeader("Content-Type", "text/html; charset=utf-8");
-    res.send(`<!doctype html>
-<html><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Cockpit</title>
-<style>
-  *{box-sizing:border-box}
-  body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display',sans-serif;background:#0b0b0f;color:#e4e4e7;margin:0;padding:20px}
-  .container{max-width:1200px;margin:0 auto}
-  h1{font-size:28px;margin:0 0 12px;font-weight:600}
-  .sub{font-size:14px;color:#a1a1aa;margin-bottom:24px}
-  .card{background:#16161d;border:1px solid #27272a;border-radius:12px;padding:20px;margin-bottom:16px}
-  .logout{display:inline-block;margin-top:16px;padding:10px 16px;background:#ef4444;color:#fff;border:0;border-radius:8px;font-weight:600;cursor:pointer;font-size:14px;text-decoration:none}
-  .logout:hover{background:#dc2626}
-</style>
-</head><body>
-<div class="container">
-  <h1>🎛️ Cockpit</h1>
-  <div class="sub">Private control panel · Session authenticated</div>
-  <div class="card">
-    <p>Welcome to Cockpit. This is a password-protected area for advanced controls.</p>
-    <p>Features coming soon...</p>
-    <form method="POST" action="/cockpit-logout" style="display:inline">
-      <button type="submit" class="logout">Logout</button>
-    </form>
-  </div>
-</div>
-</body></html>`);
-  });
+  // Pass through to the Vite/SPA server so React Router renders TradingCockpit.
+  app.get("/cockpit", requireCockpitAuth, (_req, _res, next) => next());
   app.get("/api/confluence/latest", requireCockpitAuth, getLatestConfluence);
   app.get("/api/risk/kill-state", requireCockpitAuth, getKillStateHandler);
   app.post("/api/risk/kill-clear", requireCockpitAuth, clearKill);
