@@ -26,7 +26,7 @@ export default function Dashboard() {
   // Hidden Easter egg: Ctrl+Shift+C navigates to the admin cockpit
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     if (e.ctrlKey && e.shiftKey && e.key === "C") {
-      navigate("/cockpit");
+      window.location.href = "/cockpit-login";
     }
   }, [navigate]);
 
@@ -138,7 +138,7 @@ export default function Dashboard() {
             <Tooltip>
               <TooltipTrigger asChild>
                 <button
-                  onClick={() => navigate("/cockpit")}
+                  onClick={() => { window.location.href = "/cockpit-login"; }}
                   className="opacity-[0.08] hover:opacity-30 transition-opacity duration-300 text-muted-foreground p-1 rounded focus:outline-none"
                   aria-label="System settings"
                   tabIndex={-1}
