@@ -1,14 +1,16 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
+import { useLocation } from "wouter";
 import { useTickers, useRefreshSignals } from "@/hooks/use-market-data";
 import { SignalTable } from "@/components/SignalTable";
 import { EnhancedScreener } from "@/components/EnhancedScreener";
 import { WatchlistSidebar } from "@/components/WatchlistSidebar";
 import { MetricCard } from "@/components/MetricCard";
 import { CommentSection } from "@/components/CommentSection";
-import { Activity, BarChart3, Target, Layers, Zap, RefreshCw, Clock, Waves, Crown, Radar } from "lucide-react";
+import { Activity, BarChart3, Target, Layers, Zap, RefreshCw, Clock, Waves, Crown, Radar, Settings2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { queryClient } from "@/lib/queryClient";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 function getHKTime() {
   return new Date().toLocaleTimeString('en-HK', { timeZone: 'Asia/Hong_Kong', hour12: false });
@@ -19,6 +21,19 @@ export default function Dashboard() {
   const refreshSignals = useRefreshSignals();
   const [countdown, setCountdown] = useState("");
   const [hkTime, setHkTime] = useState(getHKTime());
+  const [, navigate] = useLocation();
+
+  // Hidden Easter egg: Ctrl+Shift+C navigates to the admin cockpit
+  const handleKeyDown = useCallback((e: KeyboardEvent) => {
+    if (e.ctrlKey && e.shiftKey && e.key === "C") {
+      navigate("/cockpit");
+    }
+  }, [navigate]);
+
+  useEffect(() => {
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [handleKeyDown]);
 
   // Clear cache on mount to force fresh data
   useEffect(() => {
@@ -118,6 +133,23 @@ export default function Dashboard() {
                 HKT {hkTime}
               </span>
             </div>
+
+            {/* Hidden admin entry point — intentionally low-visibility; password gate is the real auth layer */}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={() => navigate("/cockpit")}
+                  className="opacity-[0.08] hover:opacity-30 transition-opacity duration-300 text-muted-foreground p-1 rounded focus:outline-none"
+                  aria-label="System settings"
+                  tabIndex={-1}
+                >
+                  <Settings2 className="w-3.5 h-3.5" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" className="text-[10px]">
+                System
+              </TooltipContent>
+            </Tooltip>
           </div>
         </div>
       </header>
