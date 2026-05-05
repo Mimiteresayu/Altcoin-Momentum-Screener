@@ -1138,6 +1138,7 @@ export async function registerRoutes(
   httpServer: Server,
   app: Express,
 ): Promise<Server> {
+  console.log('[routes] registerRoutes() called - starting route registration');
   let cachedSignals: any[] = [];
   let isCalculating = false;
   let lastUpdated: Date = new Date();
@@ -1166,8 +1167,12 @@ export async function registerRoutes(
   setStartEquity(0);
 
   // Login routes (public — used to obtain auth cookie)
+  console.log('[routes] registering GET /cockpit-login');
   app.get("/cockpit-login", getCockpitLogin);
+  console.log('[routes] GET /cockpit-login registered successfully');
+  console.log('[routes] registering POST /cockpit-login');
   app.post("/cockpit-login", postCockpitLogin);
+  console.log('[routes] POST /cockpit-login registered successfully');
   app.post("/cockpit-logout", postCockpitLogout);
 
   // Private cockpit page + private APIs (gated by COCKPIT_PASSWORD)
@@ -3702,5 +3707,6 @@ export async function registerRoutes(
     }
   });
 
+  console.log('[routes] registerRoutes() completed - all routes registered');
   return httpServer;
 }
